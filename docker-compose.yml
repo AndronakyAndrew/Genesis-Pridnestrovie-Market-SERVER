@@ -40,6 +40,15 @@ services:
       Jwt__Audience: ${JWT_AUDIENCE}
       # Ключ HMAC для хеширования IP (сырой IP в базе не хранится).
       Security__IpHashKey: ${IPHASH_KEY}
+      # SMTP для писем подтверждения (пусто -> отправка в лог, dev).
+      Smtp__Host: ${SMTP_HOST}
+      Smtp__Port: ${SMTP_PORT:-587}
+      Smtp__User: ${SMTP_USER}
+      Smtp__Password: ${SMTP_PASSWORD}
+      Smtp__From: ${SMTP_FROM:-no-reply@genesis-market.md}
+      Smtp__UseSsl: ${SMTP_USE_SSL:-true}
+      # Что обязательно для публикации: None | Email | Phone | Both.
+      Publishing__RequiredVerification: ${PUBLISHING_REQUIRED_VERIFICATION:-Email}
       # CORS — строка origin-ов через запятую.
       Cors__AllowedOrigins: ${CORS_ALLOWED_ORIGINS}
     ports:

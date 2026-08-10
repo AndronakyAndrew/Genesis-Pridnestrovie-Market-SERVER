@@ -76,3 +76,13 @@ public enum UserRole
     Moderator,
     Admin
 }
+
+/// <summary>
+/// Канал подтверждения (код). В БД хранится строкой.
+/// Единый механизм для почты и телефона.
+/// </summary>
+public enum VerificationChannel
+{
+    Email,
+    Phone
+}

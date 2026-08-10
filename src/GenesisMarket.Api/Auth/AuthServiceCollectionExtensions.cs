@@ -15,8 +15,9 @@ public static class AuthServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.Section));
-        services.Configure<PhoneVerificationOptions>(
-            configuration.GetSection(PhoneVerificationOptions.Section));
+        services.Configure<VerificationOptions>(configuration.GetSection(VerificationOptions.Section));
+        services.Configure<SmtpOptions>(configuration.GetSection(SmtpOptions.Section));
+        services.Configure<PublishingOptions>(configuration.GetSection(PublishingOptions.Section));
 
         var jwt = configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
 
@@ -31,11 +32,23 @@ public static class AuthServiceCollectionExtensions
         services.AddMemoryCache();
 
         services.AddSingleton<IIpHasher, HmacIpHasher>();
-        services.AddSingleton<ISmsSender, DevSmsSender>();
         services.AddSingleton<IAuthRateLimiter, MemoryAuthRateLimiter>();
         services.AddSingleton<ITokenService, JwtTokenService>();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
         services.AddScoped<SecurityStampValidator>();
+
+        // ---- Подтверждение контактов (почта/телефон) ----
+        // SMS пока заглушка (лог); e-mail — реальный SMTP, если задан Smtp:Host,
+        // иначе dev-лог (код виден локально).
+        services.AddSingleton<ISmsSender, DevSmsSender>();
+        if (string.IsNullOrWhiteSpace(configuration["Smtp:Host"]))
+            services.AddSingleton<IEmailSender, LogEmailSender>();
+        else
+            services.AddSingleton<IEmailSender, SmtpEmailSender>();
+
+        services.AddSingleton<IVerificationSender, VerificationSender>();
+        services.AddScoped<VerificationService>();
+        services.AddSingleton<IPublishingPolicy, PublishingPolicy>();
 
         var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key));
 

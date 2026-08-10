@@ -98,7 +98,7 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
    Ключ подписи JWT (`Jwt__Key`) и ключ хеширования IP (`Security__IpHashKey`) — только из окружения; без `Jwt__Key` приложение не стартует.
 9. **Все даты — UTC**, `DateTimeOffset` в коде, `timestamptz` в БД.
 10. **Роль — только из claim токена.** Никогда не читать роль из тела/заголовка/query. При регистрации роль всегда `User`.
-11. **Публиковать объявления может только пользователь с подтверждённым по SMS телефоном** (`User.PhoneVerified`). Проверка — на сервере.
+11. **Публикация объявлений требует подтверждённого контакта.** Какой именно — задаётся конфигом `Publishing:RequiredVerification` (`None|Email|Phone|Both`); на проде — `Email`. Проверка на сервере через `IPublishingPolicy`, не на фронте.
 
 Целостность данных подстрахована **CHECK-констрейнтами на уровне БД** (длины полей, цена ≥ 0,
 согласованность `Price`/`PriceType`) — они сработают, даже если валидация в коде пропустит ошибку.
@@ -161,13 +161,38 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 3. Подтверждение почты и обобщённый механизм верификации
+
+**Что сделано:**
+- Механизм кодов **обобщён на оба канала**: одна сущность `VerificationCode` (`Channel` = Email/Phone, `Target`) вместо отдельной телефонной таблицы; общий `VerificationService` (генерация, хеш, кулдаун, лимит попыток, выставление флага) и диспетчер `IVerificationSender`.
+- Добавлен флаг `User.EmailVerified`; эндпоинты `POST /api/me/email/{send-code,verify}` (симметрично телефону `/api/me/phone/...`), формат — 6-значный код.
+- Отправка почты — `IEmailSender`: `SmtpEmailSender` (System.Net.Mail при заданном `Smtp:Host`) с dev-фолбэком `LogEmailSender` (пишет код в лог, локально работает без SMTP).
+- **Гейт публикации вынесен в конфиг** `Publishing:RequiredVerification` (`None|Email|Phone|Both`), проверка через `IPublishingPolicy`. На проде — `Email`.
+- Миграция `EmailVerificationAndGeneralize` (drop `phone_verification_codes`, add `users.EmailVerified`, create `verification_codes`).
+- Тесты: почтовый флоу end-to-end (send→verify→публикация 201) и гейт (403 без подтверждения).
+
+**Почему именно так:**
+- **Обобщение вместо дублирования** — почта и телефон делят один код-механизм; добавить/убрать канал = конфиг, а не копипаст.
+- **Телефон отложен, но остаётся** — на старте прод требует только почту (её проще доставить со своего сервера через SMTP, без платного SMS-оператора). Включить телефон обратно — сменой `Publishing:RequiredVerification`, без правок кода.
+- **Dev-фолбэк почты в лог** — локальная разработка и тесты не требуют живого SMTP; код виден в логах (`[DEV EMAIL] …`).
+
+**Ключевые файлы:** `Api/Auth/VerificationService.cs`, `Api/Auth/VerificationSender.cs`,
+`Api/Auth/EmailSender.cs`, `Api/Auth/PublishingPolicy.cs`,
+`Api/Controllers/{VerificationControllerBase,EmailVerificationController,PhoneVerificationController}.cs`,
+`Domain/Entities/VerificationCode.cs`, `Infrastructure/Persistence/Migrations/*_EmailVerificationAndGeneralize.cs`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
   в репозитории отсутствует; текущие 42 подкатегории — заглушка, заменить на реальный список.
 - **Бакет MinIO `listings` не создаётся автоматически** — сейчас создаётся вручную (шаг 3 запуска).
   TODO: init-контейнер `mc` или «ensure bucket» при старте API.
-- **SMS — заглушка `DevSmsSender`**: код не отправляется реально, а пишется в лог (`[DEV SMS] …`).
-  Для прода — вторая реализация `ISmsSender` (SMS-провайдер или Telegram/Viber-бот), ключ через env.
+- **SMS — заглушка `DevSmsSender`** (код в лог `[DEV SMS] …`). Подтверждение телефона доступно,
+  но на проде не гейтит публикацию (гейт = почта). Реальная отправка — вторая реализация `ISmsSender`
+  (SMS-провайдер или Telegram/Viber-бот).
+- **Почта через `System.Net.Mail.SmtpClient`** — базовый вариант на старте; при пустом `Smtp:Host`
+  код пишется в лог (`[DEV EMAIL] …`). Позже разумно перейти на MailKit.
 - **Блок-лист паролей — курируемое подмножество**, не полный top-1000. Расширить `Auth/common-passwords.txt`.
 - **Rate-limit — in-memory** (на инстанс). При нескольких инстансах API нужен общий стор (напр. Redis).

@@ -108,9 +108,62 @@ public class AuthTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
         Assert.DoesNotContain("\"role\"", body, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Email_verification_gate_and_flow()
+    {
+        var email = Unique("emailflow");
+        await factory.SeedUserAsync(email, GoodPassword, phoneVerified: false, emailVerified: false);
+        var client = factory.CreateClient();
+        var access = await LoginAndGetAccessToken(client, email, GoodPassword);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", access);
+
+        // Гейт: без подтверждения почты публикация запрещена (Publishing=Email).
+        Assert.Equal(HttpStatusCode.Forbidden, (await CreateListing(client)).StatusCode);
+
+        var send = await client.PostAsync("/api/me/email/send-code", null);
+        Assert.Equal(HttpStatusCode.OK, send.StatusCode);
+
+        var code = factory.LastCode(email.ToLowerInvariant());
+        Assert.NotNull(code);
+
+        var verify = await client.PostAsJsonAsync("/api/me/email/verify", new { code });
+        Assert.Equal(HttpStatusCode.OK, verify.StatusCode);
+
+        // После подтверждения почты публикация разрешена.
+        Assert.Equal(HttpStatusCode.Created, (await CreateListing(client)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Email_verify_with_wrong_code_is_rejected()
+    {
+        var email = Unique("emailwrong");
+        await factory.SeedUserAsync(email, GoodPassword, emailVerified: false);
+        var client = factory.CreateClient();
+        var access = await LoginAndGetAccessToken(client, email, GoodPassword);
+        client.DefaultRequestHeaders.Authorization = new("Bearer", access);
+
+        await client.PostAsync("/api/me/email/send-code", null);
+        var resp = await client.PostAsJsonAsync("/api/me/email/verify", new { code = "000000" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
     // ---- helpers ----
 
     private static string Unique(string prefix) => $"{prefix}-{Guid.NewGuid():N}@test.io";
+
+    private static Task<HttpResponseMessage> CreateListing(HttpClient client) =>
+        client.PostAsJsonAsync("/api/listings", new
+        {
+            title = "Диван угловой",
+            description = "Почти новый диван",
+            price = 3000,
+            priceType = "fixed",
+            category = "home",
+            subcategoryId = 18,
+            city = "bendery",
+            condition = "used"
+        });
 
     private static async Task<string> LoginAndGetAccessToken(HttpClient client, string email, string password)
     {

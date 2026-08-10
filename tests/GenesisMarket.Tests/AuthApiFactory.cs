@@ -1,11 +1,14 @@
+using GenesisMarket.Api.Auth;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Auth;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -36,12 +39,27 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         await db.Database.MigrateAsync();
     }
 
-    protected override void ConfigureWebHost(IWebHostBuilder builder) =>
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
         builder.UseEnvironment("Development");
+        // Подменяем отправитель кодов на перехватывающий — читаем код в тесте.
+        builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IVerificationSender>();
+            services.AddSingleton<CapturingVerificationSender>();
+            services.AddSingleton<IVerificationSender>(
+                sp => sp.GetRequiredService<CapturingVerificationSender>());
+        });
+    }
+
+    /// <summary>Последний код, «отправленный» на указанную цель (email/телефон).</summary>
+    public string? LastCode(string target) =>
+        Services.GetRequiredService<CapturingVerificationSender>().Last(target);
 
     /// <summary>Прямое создание пользователя в БД (в обход register) для сценариев тестов.</summary>
     public async Task<Guid> SeedUserAsync(
-        string email, string password, bool banned = false, bool phoneVerified = true)
+        string email, string password,
+        bool banned = false, bool phoneVerified = true, bool emailVerified = false)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -54,6 +72,7 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             Role = UserRole.User,
             PhoneE164 = "+37312345678",
             PhoneVerified = phoneVerified,
+            EmailVerified = emailVerified,
             IsBanned = banned,
             Profile = new Profile { DisplayName = "Тестовый", City = City.Tiraspol }
         };

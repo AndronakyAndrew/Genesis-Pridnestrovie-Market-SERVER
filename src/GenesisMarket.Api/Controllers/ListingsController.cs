@@ -1,3 +1,4 @@
+using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
@@ -14,7 +15,7 @@ namespace GenesisMarket.Api.Controllers;
 /// телефоном; редактировать/удалять — только владелец.
 /// (Полноценный JWT добавляется на шаге 2; здесь владелец берётся из claim.)
 /// </summary>
-public class ListingsController(AppDbContext db) : ApiControllerBase
+public class ListingsController(AppDbContext db, IPublishingPolicy publishing) : ApiControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ListingResponse>>> GetAll(CancellationToken ct)
@@ -56,11 +57,11 @@ public class ListingsController(AppDbContext db) : ApiControllerBase
         if (user is null)
             return Problem(title: "Требуется авторизация", statusCode: StatusCodes.Status401Unauthorized);
 
-        // Анти-фрод: публикация только после подтверждения телефона по SMS.
-        if (!user.PhoneVerified)
-            return Problem(
-                title: "Требуется подтверждение телефона по SMS",
-                statusCode: StatusCodes.Status403Forbidden);
+        // Анти-фрод: публикация только после требуемого подтверждения контакта
+        // (политика в конфиге Publishing: на проде — почта).
+        var (canPublish, reason) = publishing.CanPublish(user);
+        if (!canPublish)
+            return Problem(title: reason, statusCode: StatusCodes.Status403Forbidden);
 
         // Подкатегория должна существовать и относиться к указанной категории.
         var subcategoryOk = await db.Subcategories.AnyAsync(

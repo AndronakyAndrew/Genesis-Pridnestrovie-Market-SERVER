@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace GenesisMarket.Api.Contracts;
 
-public record VerifyPhoneRequest(
+public record VerifyCodeRequest(
     [Required] string Code);
 
 /// <summary>Ответ на запрос кода: когда код истечёт (сам код не возвращается).</summary>
