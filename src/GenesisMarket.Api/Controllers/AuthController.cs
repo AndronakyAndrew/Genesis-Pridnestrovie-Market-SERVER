@@ -7,6 +7,7 @@ using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace GenesisMarket.Api.Controllers;
 
@@ -21,7 +22,8 @@ public class AuthController(
     ITokenService tokenService,
     IRefreshTokenService refreshTokens,
     IAuthRateLimiter rateLimiter,
-    SecurityStampValidator securityStamp) : ApiControllerBase
+    SecurityStampValidator securityStamp,
+    IOptions<PhoneOptions> phoneOptions) : ApiControllerBase
 {
     // Один и тот же текст на неверный email и неверный пароль (анти-перечисление).
     private const string LoginError = "Неверный email или пароль";
@@ -38,7 +40,7 @@ public class AuthController(
         if (PasswordError(request.Password) is { } pwdError)
             return pwdError;
 
-        var phone = PhoneNumber.Normalize(request.Phone);
+        var phone = PhoneNumber.Normalize(request.Phone, phoneOptions.Value.AllowOtherCountries);
         if (phone is null)
             return Problem(title: "Некорректный номер телефона", statusCode: StatusCodes.Status400BadRequest);
 
