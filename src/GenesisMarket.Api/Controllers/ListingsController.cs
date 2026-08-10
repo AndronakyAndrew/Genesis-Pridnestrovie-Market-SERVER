@@ -1,7 +1,9 @@
+using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -13,7 +15,7 @@ namespace GenesisMarket.Api.Controllers;
 /// телефоном; редактировать/удалять — только владелец.
 /// (Полноценный JWT добавляется на шаге 2; здесь владелец берётся из claim.)
 /// </summary>
-public class ListingsController(AppDbContext db) : ApiControllerBase
+public class ListingsController(AppDbContext db, IPublishingPolicy publishing) : ApiControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ListingResponse>>> GetAll(CancellationToken ct)
@@ -40,6 +42,7 @@ public class ListingsController(AppDbContext db) : ApiControllerBase
         return Ok(Map(listing));
     }
 
+    [Authorize]
     [HttpPost]
     public async Task<ActionResult<ListingResponse>> Create(
         CreateListingRequest request,
@@ -54,11 +57,11 @@ public class ListingsController(AppDbContext db) : ApiControllerBase
         if (user is null)
             return Problem(title: "Требуется авторизация", statusCode: StatusCodes.Status401Unauthorized);
 
-        // Анти-фрод: публикация только после подтверждения телефона по SMS.
-        if (!user.PhoneVerified)
-            return Problem(
-                title: "Требуется подтверждение телефона по SMS",
-                statusCode: StatusCodes.Status403Forbidden);
+        // Анти-фрод: публикация только после требуемого подтверждения контакта
+        // (политика в конфиге Publishing: на проде — почта).
+        var (canPublish, reason) = publishing.CanPublish(user);
+        if (!canPublish)
+            return Problem(title: reason, statusCode: StatusCodes.Status403Forbidden);
 
         // Подкатегория должна существовать и относиться к указанной категории.
         var subcategoryOk = await db.Subcategories.AnyAsync(
@@ -95,6 +98,7 @@ public class ListingsController(AppDbContext db) : ApiControllerBase
         return CreatedAtAction(nameof(GetById), new { id = listing.Id }, Map(listing));
     }
 
+    [Authorize]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {

@@ -5,9 +5,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Блок-лист частых паролей — встроенный ресурс -->
+    <EmbeddedResource Include="Auth\common-passwords.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- EF Core 10 + Npgsql (PostgreSQL 17) -->
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0" />
+
+    <!-- Хеширование паролей (собственная аутентификация, без ASP.NET Identity) -->
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
 
     <!-- Хранилище фото: S3-совместимый MinIO -->
     <PackageReference Include="Minio" Version="6.0.4" />

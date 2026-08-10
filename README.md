@@ -95,7 +95,10 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 6. **`ViewsCount`** меняется только через `Listing.RegisterView()` / отдельный атомарный UPDATE, не присваиванием извне.
 7. **Id в сиде `subcategories` стабильны** — на них ссылается FK `listings.SubcategoryId`. Правка — отдельной миграцией.
 8. **Секреты — только через env/`.env`** (в `.gitignore`). В `appsettings.json` секретов нет.
+   Ключ подписи JWT (`Jwt__Key`) и ключ хеширования IP (`Security__IpHashKey`) — только из окружения; без `Jwt__Key` приложение не стартует.
 9. **Все даты — UTC**, `DateTimeOffset` в коде, `timestamptz` в БД.
+10. **Роль — только из claim токена.** Никогда не читать роль из тела/заголовка/query. При регистрации роль всегда `User`.
+11. **Публикация объявлений требует подтверждённого контакта.** Какой именно — задаётся конфигом `Publishing:RequiredVerification` (`None|Email|Phone|Both`); на проде — `Email`. Проверка на сервере через `IPublishingPolicy`, не на фронте.
 
 Целостность данных подстрахована **CHECK-констрейнтами на уровне БД** (длины полей, цена ≥ 0,
 согласованность `Price`/`PriceType`) — они сработают, даже если валидация в коде пропустит ошибку.
@@ -129,11 +132,92 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 2. Аутентификация (JWT + BCrypt) и подтверждение телефона по SMS
+
+**Что сделано:**
+- Собственная аутентификация (ASP.NET Identity не используется). Сущности `RefreshToken`, `PhoneVerificationCode` (миграция `AddAuth`).
+- Пароли: BCrypt `EnhancedHashPassword`/`EnhancedVerify`, workFactor из конфига, пересчёт хеша при `NeedsRehash`, длина **8..72 байта UTF-8**, блок-лист частых паролей.
+- JWT (HS256, 15 мин): claims `sub`/`role`/`sstamp`/`jti` (email в токен не кладём); валидация с `ClockSkew=0`, явным `HS256`, и событием `OnTokenValidated`, сверяющим `SecurityStamp` и бан через `IMemoryCache` (TTL 30с).
+- Refresh (30 дней): 32 байта → base64url наружу, в БД только SHA-256; ротация при каждом обновлении; повторное использование отозванного токена → отзыв всей цепочки.
+- Эндпоинты `/api/auth/{register,login,refresh,logout,logout-all,change-password}`.
+- Подтверждение телефона **из профиля**, не при регистрации: `POST /api/me/phone/send-code` (сервер генерит код и «шлёт» SMS) + `/verify`. Без подтверждения нельзя публиковать объявления.
+- Тесты (Testcontainers): идентичный ответ на неверный email/пароль, инвалидация токена после бана, отзыв цепочки при повторном refresh, отклонение 73-байтного пароля, отсутствие `PasswordHash`/`SecurityStamp`/`Role` в теле ответа.
+
+**Почему именно так:**
+- **Анти-энумерация:** один и тот же 401 и текст на неверный email и пароль; при отсутствии пользователя всё равно выполняется `Verify` против фиктивного хеша (нет timing-разницы); регистрация с занятым email даёт тот же нейтральный ответ, что и успешная (поэтому register **не** авторизует и не возвращает токены/юзера).
+- **`sstamp` + короткий кэш:** без сверки SecurityStamp logout-all/смена пароля/бан не действовали бы до истечения access-токена (15 мин). Кэш 30с (в тестах 0 — мгновенно).
+- **Refresh только хешем в БД + ротация + детект повтора** — украденный токен нельзя переиспользовать незаметно; повтор палит кражу и рвёт всю цепочку.
+- **Длина пароля в байтах, а не символах** — BCrypt режет вход на 72 байтах; кириллический пароль в символах прошёл бы, а по байтам обрезался бы молча.
+- **Телефон подтверждается из профиля** (а не на регистрации) — ниже трение на входе; код генерит сервер, хранится только его SHA-256, есть кулдаун и лимит попыток. Локальный ввод `0 775-…` нормализуется в `+373…` (в БД всегда E.164).
+- **Rate-limit:** login 5/15м на (IP,email), register 3/ч на IP — против перебора и массовой регистрации.
+
+**Ключевые файлы:** `Api/Auth/*` (JWT, refresh, SMS, rate-limit, SecurityStampValidator, PhoneNumber),
+`Infrastructure/Auth/*` (BCrypt-хешер, политика паролей, блок-лист),
+`Api/Controllers/AuthController.cs`, `Api/Controllers/PhoneVerificationController.cs`,
+`Infrastructure/Persistence/Migrations/*_AddAuth.cs`, тесты `tests/GenesisMarket.Tests/Auth*`.
+
+**Локальный запуск без Docker** дополнительно требует env-переменную `Jwt__Key` (≥32 байт),
+иначе приложение не стартует (в Docker она приходит из `.env` через `docker-compose`).
+
+---
+
+### 3. Подтверждение почты и обобщённый механизм верификации
+
+**Что сделано:**
+- Механизм кодов **обобщён на оба канала**: одна сущность `VerificationCode` (`Channel` = Email/Phone, `Target`) вместо отдельной телефонной таблицы; общий `VerificationService` (генерация, хеш, кулдаун, лимит попыток, выставление флага) и диспетчер `IVerificationSender`.
+- Добавлен флаг `User.EmailVerified`; эндпоинты `POST /api/me/email/{send-code,verify}` (симметрично телефону `/api/me/phone/...`), формат — 6-значный код.
+- Отправка почты — `IEmailSender`: `SmtpEmailSender` (System.Net.Mail при заданном `Smtp:Host`) с dev-фолбэком `LogEmailSender` (пишет код в лог, локально работает без SMTP).
+- **Гейт публикации вынесен в конфиг** `Publishing:RequiredVerification` (`None|Email|Phone|Both`), проверка через `IPublishingPolicy`. На проде — `Email`.
+- Миграция `EmailVerificationAndGeneralize` (drop `phone_verification_codes`, add `users.EmailVerified`, create `verification_codes`).
+- Тесты: почтовый флоу end-to-end (send→verify→публикация 201) и гейт (403 без подтверждения).
+
+**Почему именно так:**
+- **Обобщение вместо дублирования** — почта и телефон делят один код-механизм; добавить/убрать канал = конфиг, а не копипаст.
+- **Телефон отложен, но остаётся** — на старте прод требует только почту (её проще доставить со своего сервера через SMTP, без платного SMS-оператора). Включить телефон обратно — сменой `Publishing:RequiredVerification`, без правок кода.
+- **Dev-фолбэк почты в лог** — локальная разработка и тесты не требуют живого SMTP; код виден в логах (`[DEV EMAIL] …`).
+
+**Ключевые файлы:** `Api/Auth/VerificationService.cs`, `Api/Auth/VerificationSender.cs`,
+`Api/Auth/EmailSender.cs`, `Api/Auth/PublishingPolicy.cs`,
+`Api/Controllers/{VerificationControllerBase,EmailVerificationController,PhoneVerificationController}.cs`,
+`Domain/Entities/VerificationCode.cs`, `Infrastructure/Persistence/Migrations/*_EmailVerificationAndGeneralize.cs`.
+
+---
+
+### 4. Фирменное письмо с кодом (HTML-шаблон + логотип) и имя отправителя
+
+**Что сделано:**
+- Письмо с кодом (флоу `POST /api/me/email/send-code`) теперь шлётся по **фирменному HTML-шаблону** `Api/Auth/EmailTemplates/verification-code.html` (тёмная шапка, блок кода, блок-предупреждение, футер). Плейсхолдеры `{{CODE}}` и `{{LOGO_URL}}`.
+- **Логотип** `gm-logo.png` вшивается в письмо как inline-вложение (`cid:`) — рендерится сразу, без хостинга картинки.
+- Письмо стало **multipart/alternative**: HTML + текстовая версия (для клиентов без HTML).
+- `VerificationEmailRenderer` читает шаблон и логотип из встроенных ресурсов **один раз при старте** и кеширует; подстановка — `string.Replace`.
+- **Имя отправителя** (`Smtp:FromName`, по умолчанию «Genesis Market») — получатель видит `Genesis Market ‹адрес›` вместо голого e-mail. Реальная отправка — Gmail SMTP (App Password из env); при пустом `Smtp:Host` — dev-фолбэк в лог.
+- Плейсхолдер брендового домена отправителя выровнен на будущий `genesis-hq.com`.
+
+**Почему именно так:**
+- **Шаблон и логотип — встроенные ресурсы + кеш** — нет чтения с диска на каждое письмо и нет зависимости от путей; деплой одним образом.
+- **Логотип через `cid`, а не URL** — домена/хостинга картинок пока нет; inline-вложение показывается в Gmail сразу и не зависит от внешних ссылок.
+- **HTML + текст вместе** — почтовый клиент выбирает лучший вариант; текстовая версия повышает доставляемость и работает везде.
+- **Секреты не в коде** — Gmail App Password и адрес только в `.env`/env; в `appsettings.json` их нет.
+
+**Ключевые файлы:** `Api/Auth/EmailTemplates/verification-code.html`, `Api/Auth/EmailTemplates/gm-logo.png`,
+`Api/Auth/VerificationEmailRenderer.cs`, `Api/Auth/EmailSender.cs` (multipart + inline `cid`),
+`Api/Auth/VerificationSender.cs`. Конфиг: `Smtp:FromName` + `SMTP_*` в `.env`/`docker-compose`.
+
+**Замена канала/провайдера позже** — `IEmailSender` неизменен: вторая реализация (напр. MailKit
+или транзакционный провайдер) и/или свой домен подключаются сменой значений в `.env`, без правок вызывающего кода.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
   в репозитории отсутствует; текущие 42 подкатегории — заглушка, заменить на реальный список.
 - **Бакет MinIO `listings` не создаётся автоматически** — сейчас создаётся вручную (шаг 3 запуска).
   TODO: init-контейнер `mc` или «ensure bucket» при старте API.
-- **JWT ещё не подключён** — авторизация в контроллерах пока опирается на claim из `CurrentUserId()`
-  (полноценный JWT-мидлвар — следующая фича).
+- **SMS — заглушка `DevSmsSender`** (код в лог `[DEV SMS] …`). Подтверждение телефона доступно,
+  но на проде не гейтит публикацию (гейт = почта). Реальная отправка — вторая реализация `ISmsSender`
+  (SMS-провайдер или Telegram/Viber-бот).
+- **Почта через `System.Net.Mail.SmtpClient`** — базовый вариант на старте; при пустом `Smtp:Host`
+  код пишется в лог (`[DEV EMAIL] …`). Позже разумно перейти на MailKit.
+- **Блок-лист паролей — курируемое подмножество**, не полный top-1000. Расширить `Auth/common-passwords.txt`.
+- **Rate-limit — in-memory** (на инстанс). При нескольких инстансах API нужен общий стор (напр. Redis).

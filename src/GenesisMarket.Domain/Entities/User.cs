@@ -16,14 +16,17 @@ public class User : BaseEntity
 
     public UserRole Role { get; set; } = UserRole.User;
 
-    /// <summary>Телефон в формате E.164. Подтверждается по SMS перед подачей объявлений.</summary>
+    /// <summary>Телефон в формате E.164. Подтверждается по SMS (из профиля).</summary>
     public string? PhoneE164 { get; set; }
 
-    /// <summary>
-    /// Телефон подтверждён по SMS. Анти-фрод: публиковать объявления
-    /// разрешено только пользователям с подтверждённым телефоном.
-    /// </summary>
+    /// <summary>Телефон подтверждён по SMS.</summary>
     public bool PhoneVerified { get; set; }
+
+    /// <summary>
+    /// Почта подтверждена по коду. Анти-фрод: какой из каналов обязателен для
+    /// публикации объявлений, определяется политикой (конфиг Publishing).
+    /// </summary>
+    public bool EmailVerified { get; set; }
 
     /// <summary>Меняется при смене пароля/бане — инвалидирует выданные JWT.</summary>
     public Guid SecurityStamp { get; set; } = Guid.NewGuid();
@@ -35,4 +38,5 @@ public class User : BaseEntity
     public Profile? Profile { get; set; }
     public ICollection<Listing> Listings { get; set; } = new List<Listing>();
     public ICollection<Favorite> Favorites { get; set; } = new List<Favorite>();
+    public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
 }
