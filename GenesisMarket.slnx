@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GenesisMarket.Api/GenesisMarket.Api.csproj" />
+    <Project Path="src/GenesisMarket.Domain/GenesisMarket.Domain.csproj" />
+    <Project Path="src/GenesisMarket.Infrastructure/GenesisMarket.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GenesisMarket.Tests/GenesisMarket.Tests.csproj" />
+  </Folder>
+</Solution>

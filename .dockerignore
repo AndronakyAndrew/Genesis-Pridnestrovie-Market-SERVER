@@ -1,0 +1,15 @@
+# Держим контекст сборки чистым и не тащим секреты в образ
+**/bin/
+**/obj/
+**/out/
+**/.vs/
+**/.idea/
+**/.vscode/
+.git/
+.gitignore
+.env
+.env.*
+!.env.example
+docker-compose.yml
+**/*.md
+logs/

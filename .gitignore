@@ -1,0 +1,31 @@
+# ---- Secrets: НИКОГДА не коммитить ----
+.env
+.env.*
+!.env.example
+
+# ---- .NET ----
+bin/
+obj/
+out/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# ---- Rider / VS Code ----
+.idea/
+.vscode/
+*.DotSettings.user
+
+# ---- EF Core ----
+# миграции коммитим (src/**/Migrations), но не артефакты сборки
+
+# ---- Docker / runtime ----
+**/appsettings.Local.json
+*.pfx
+*.key
+
+# ---- Логи / temp ----
+logs/
+*.log

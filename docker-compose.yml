@@ -1,0 +1,103 @@
+# ============================================================
+#  Genesis Market — локальная / VPS-инфраструктура.
+#  Все секреты и ключи берутся из .env (см. .env.example).
+#  В самом файле — ни одного значения секрета.
+# ============================================================
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
+      # Порт, который Kestrel слушает ВНУТРИ контейнера. По умолчанию 8080
+      # (внутренняя сеть, с занятым на хосте 8080 не конфликтует).
+      ASPNETCORE_HTTP_PORTS: ${ASPNETCORE_HTTP_PORTS:-8080}
+      # Уровень логов Serilog из .env.
+      Serilog__MinimumLevel__Default: ${LOG_LEVEL}
+      # PostgreSQL.
+      Postgres__Host: postgres
+      Postgres__Port: "5432"
+      Postgres__Database: ${POSTGRES_DB}
+      Postgres__User: ${POSTGRES_USER}
+      Postgres__Password: ${POSTGRES_PASSWORD}
+      # MinIO.
+      Minio__Endpoint: minio:9000
+      Minio__AccessKey: ${MINIO_ROOT_USER}
+      Minio__SecretKey: ${MINIO_ROOT_PASSWORD}
+      Minio__Bucket: ${MINIO_BUCKET}
+      Minio__UseSsl: ${MINIO_USE_SSL}
+      # CORS — строка origin-ов через запятую.
+      Cors__AllowedOrigins: ${CORS_ALLOWED_ORIGINS}
+    ports:
+      # host:container. На хосте 8080 занят другим проектом → публикуем на 8090.
+      - "${API_HOST_PORT:-8090}:${ASPNETCORE_HTTP_PORTS:-8080}"
+    networks:
+      - genesis
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - genesis-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      # На хосте 5432 и 5433 заняты другими БД → публикуем на 5434
+      # (миграции EF и GUI-клиенты подключаются к localhost:5434).
+      # Контейнеры между собой ходят на внутренний postgres:5432.
+      # На проде хост-порт можно убрать — API общается с БД по внутренней сети.
+      - "${POSTGRES_HOST_PORT:-5434}:5432"
+    networks:
+      - genesis
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - genesis-minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # S3 API и консоль наружу не публикуем — только внутри сети.
+    networks:
+      - genesis
+
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      # На хосте 8080 занят сервером другого проекта → публикуем на 8081.
+      - "${ADMINER_HOST_PORT:-8081}:8080"
+    networks:
+      - genesis
+
+volumes:
+  genesis-postgres:
+  genesis-minio:
+
+networks:
+  genesis:
+    driver: bridge
