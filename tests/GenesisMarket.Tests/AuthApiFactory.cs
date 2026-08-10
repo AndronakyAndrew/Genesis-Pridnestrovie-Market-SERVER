@@ -82,23 +82,31 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         return user.Id;
     }
 
-    /// <summary>Прямое создание активного объявления для указанного владельца.</summary>
-    public async Task<Guid> SeedListingAsync(Guid ownerId)
+    /// <summary>Прямое создание объявления для указанного владельца (для сценариев тестов).</summary>
+    public async Task<Guid> SeedListingAsync(
+        Guid ownerId,
+        ListingStatus status = ListingStatus.Active,
+        string title = "Диван угловой тестовый",
+        Category category = Category.Home,
+        int subcategoryId = 18)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+        var published = status is ListingStatus.Active or ListingStatus.PendingReview;
         var listing = new Listing
         {
-            Title = "Диван угловой",
-            Description = "Почти новый диван",
+            Slug = $"seed-{Guid.NewGuid():N}",
+            Title = title,
+            Description = "Почти новый диван, тестовое описание объявления",
             Price = 3000,
             PriceType = PriceType.Fixed,
-            Category = Category.Home,
-            SubcategoryId = 18, // home/mebel из сида
+            Category = category,
+            SubcategoryId = subcategoryId, // home/mebel из сида
             City = City.Bendery,
             Condition = Condition.Used,
-            Status = ListingStatus.Active,
+            Status = status,
+            PublishedAt = published ? DateTimeOffset.UtcNow : null,
             OwnerId = ownerId
         };
         db.Listings.Add(listing);

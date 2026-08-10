@@ -44,8 +44,12 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
         b.HasKey(l => l.Id);
 
         b.Property(l => l.Title).HasMaxLength(120).IsRequired();
+        b.Property(l => l.Slug).HasMaxLength(160).IsRequired();
         b.Property(l => l.Description).HasMaxLength(5000).IsRequired();
         b.Property(l => l.District).HasMaxLength(100);
+
+        // Slug уникален на уровне БД (при коллизии — повторная генерация).
+        b.HasIndex(l => l.Slug).IsUnique();
 
         // Цена — целые рубли ПМР.
         b.Property(l => l.Price).HasColumnType("numeric(12,0)");

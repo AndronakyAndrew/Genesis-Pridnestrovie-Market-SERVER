@@ -232,6 +232,41 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+<!-- №6 (профили пользователей) — в параллельной ветке feature/profiles. -->
+
+### 7. Жизненный цикл объявления
+
+**Что сделано:**
+- Эндпоинты: `POST /api/listings` (черновик или сразу на публикацию), `GET /{id}`, `GET /by-slug/{slug}`,
+  `PATCH /{id}` (только владелец), `DELETE /{id}` (снятие с публикации → `Archived`),
+  `POST /{id}/publish`, `GET /api/me/listings` (свои, с фильтром по статусу).
+- **Валидация FluentValidation** (`CreateListingRequestValidator`/`UpdateListingRequestValidator`):
+  Title 10..100, Description 20..5000, цена 0..`Listings:MaxPrice`, согласованность `Price`/`PriceType`,
+  enum-поля. Пара (Category, Subcategory) и лимиты — в контроллере (нужен доступ к БД).
+- **Slug** — транслитерация кириллицы + короткий хеш Id (`SlugGenerator`), уникальный индекс БД,
+  при коллизии (`23505`) — повторная генерация со случайным суффиксом. Slug не меняется при PATCH.
+- **Премодерация** — `IListingModerationPolicy`: <3 опубликованных ИЛИ аккаунт моложе 7 дней ⇒ `PendingReview`,
+  иначе `Active`. Пороги в конфиге `Listings`.
+- **Лимит** `Listings:MaxActivePerUser` (30) на статусы «в обороте» (Active+PendingReview) — проверяется при публикации.
+- **Дубликаты** при создании: тот же нормализованный Title в той же категории среди «в обороте» → 409.
+- **Счётчик просмотров** — `IListingViewCounter`: атомарный `SET "ViewsCount" = "ViewsCount" + 1`,
+  не чаще одного раза в час на пару (ListingId, IpHash) через `IMemoryCache`.
+- **Защита от mass assignment в PATCH**: отдельный `UpdateListingRequest`; Status/OwnerId/ViewsCount/Slug/
+  CreatedAt/PublishedAt через него не меняются. `PATCH` чужого объявления → **404** (owner-only фильтром).
+- Миграция `AddListingSlug`. Тесты: чужой не редактирует (404); PATCH `status:Active` не публикует; 31-е активное → 409.
+
+**Почему именно так:**
+- **Гейт «подтверждённый контакт» перенесён с создания на публикацию** — черновик (невидим в каталоге)
+  можно создать без верификации; публикация (делает объявление публичным) требует подтверждённой почты.
+- **Slug с хешем Id** — коллизии практически невозможны, но уникальность всё равно держит БД; сервер не доверяет уникальности «на глаз».
+- **Инкремент просмотров отдельным UPDATE** — без read-modify-write (нет гонки), троттлинг по (Listing, IpHash) режет накрутку.
+- **Owner-only PATCH через фильтр `OwnerId == me` → 404** — не раскрывает даже факт существования чужого объявления при попытке правки; снятие с публикации (DELETE) доступно и модератору (403 для прочих).
+- **Лимит/дубликаты по «в обороте» (Active+PendingReview)** — премодерация не позволяет обойти лимит, накопив PendingReview.
+
+**Ключевые файлы:** `Api/Controllers/ListingsController.cs`, `Api/Listings/*`
+(`ListingOptions`, `SlugGenerator`, `IListingModerationPolicy`, `IListingViewCounter`, валидаторы),
+`Api/Contracts/ListingDtos.cs`, `Infrastructure/Persistence/Migrations/*_AddListingSlug.cs`,
+тесты `tests/GenesisMarket.Tests/ListingLifecycleTests.cs`.
 ### 6. Профили пользователей (приватный/публичный, soft-delete)
 
 **Что сделано:**

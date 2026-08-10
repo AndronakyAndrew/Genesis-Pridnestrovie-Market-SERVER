@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Middleware;
 using GenesisMarket.Infrastructure;
 using HealthChecks.UI.Client;
@@ -41,6 +42,9 @@ try
 
     // ---- Собственная аутентификация: JWT + BCrypt (Identity не используем) ----
     builder.Services.AddGenesisAuth(builder.Configuration);
+
+    // ---- Жизненный цикл объявлений (пороги, премодерация, просмотры, валидаторы) ----
+    builder.Services.AddListingsFeature(builder.Configuration);
 
     // ---- ProblemDetails + глобальный обработчик исключений ----
     builder.Services.AddProblemDetails();
