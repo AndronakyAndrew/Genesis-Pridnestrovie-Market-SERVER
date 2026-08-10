@@ -152,17 +152,19 @@ public class AuthTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
 
     private static string Unique(string prefix) => $"{prefix}-{Guid.NewGuid():N}@test.io";
 
+    // Публикация (publish:true) — именно она требует подтверждённого контакта.
     private static Task<HttpResponseMessage> CreateListing(HttpClient client) =>
         client.PostAsJsonAsync("/api/listings", new
         {
-            title = "Диван угловой",
-            description = "Почти новый диван",
+            title = "Диван угловой почти новый",
+            description = "Почти новый диван в отличном состоянии, торг уместен",
             price = 3000,
             priceType = "fixed",
             category = "home",
             subcategoryId = 18,
             city = "bendery",
-            condition = "used"
+            condition = "used",
+            publish = true
         });
 
     private static async Task<string> LoginAndGetAccessToken(HttpClient client, string email, string password)

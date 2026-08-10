@@ -12,6 +12,12 @@ public class Listing : BaseEntity, IOwnedResource
     /// <summary>Заголовок. Длина 5..120 гарантируется CHECK-констрейнтом БД.</summary>
     public required string Title { get; set; }
 
+    /// <summary>
+    /// ЧПУ-адрес: транслитерация Title + короткий хеш Id. Уникален на уровне БД,
+    /// генерируется сервером и не меняется при редактировании Title.
+    /// </summary>
+    public required string Slug { get; set; }
+
     /// <summary>Описание, до 5000 символов (CHECK на уровне БД).</summary>
     public required string Description { get; set; }
 

@@ -9,6 +9,10 @@
     <!-- Аутентификация: валидация собственных JWT (HS256) -->
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
 
+    <!-- Валидация входных DTO (объявления) -->
+    <PackageReference Include="FluentValidation" Version="11.11.0" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="11.11.0" />
+
     <!-- Serilog: структурированный JSON в консоль -->
     <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
