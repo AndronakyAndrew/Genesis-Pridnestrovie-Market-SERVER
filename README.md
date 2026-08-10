@@ -232,6 +232,42 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 6. Профили пользователей (приватный/публичный, soft-delete)
+
+**Что сделано:**
+- **Приватный профиль владельца:** `GET /api/me` (всё, кроме PasswordHash и SecurityStamp),
+  `PATCH /api/me`, `POST /api/me/avatar`, `DELETE /api/me`.
+- **Публичный профиль:** `GET /api/users/{id}/public` (анонимно) — DisplayName, City, AvatarUrl,
+  дата регистрации **только месяц+год**, ActiveListingsCount, AverageRating/ReviewsCount, PhoneVerified.
+  Ни email, ни телефона, ни точной даты, ни Role, ни IsBanned.
+- **Защита от mass assignment:** PATCH принимает отдельный DTO `UpdateMeRequest` с фиксированным
+  набором полей; Role/IsBanned/PasswordHash/SecurityStamp/Email в него не входят и не редактируются.
+- **Смена телефона** сбрасывает `PhoneVerified`. Нормализация в E.164 (+373/+7; прочие коды —
+  по флагу `Phone:AllowOtherCountries`).
+- **`DELETE /api/me` — soft delete + анонимизация в одной транзакции:** `IsDeleted=true`,
+  email → `deleted-{id}@invalid`, DisplayName → «Удалённый пользователь», обнуление телефона/телеграма/аватара,
+  смена SecurityStamp, отзыв refresh-токенов, архивация активных объявлений. Токены удалённого
+  перестают работать сразу (`SecurityStampValidator` отклоняет удалённых).
+- Миграция `AddUserIsDeleted` (аддитивная колонка `users.IsDeleted`).
+- Тесты: PATCH с `role:Admin` не меняет роль; публичный профиль без email/телефона; `GET /api/me`
+  без PasswordHash/SecurityStamp; удаление анонимизирует, архивирует объявления и инвалидирует токен.
+
+**Почему именно так:**
+- **Отдельный DTO вместо биндинга в User** — единственная надёжная защита от mass assignment
+  (нельзя прислать `role`/`isBanned` и повысить себя).
+- **Публичный профиль — отдельный DTO с минимумом** — по умолчанию не «забыть» скрыть email/телефон.
+  Точная дата регистрации огрубляется до месяца (меньше деанонимизации).
+- **Мягкое удаление + анонимизация в транзакции** — историю (объявления, будущие отзывы/диалоги)
+  нельзя рвать, но персональные данные нужно убрать; всё атомарно.
+- **Смена телефона сбрасывает подтверждение** — иначе можно было бы «унаследовать» верификацию на чужой номер.
+
+**Ключевые файлы:** `Api/Controllers/MeController.cs`, `Api/Controllers/UsersController.cs`,
+`Api/Contracts/ProfileDtos.cs`, `Api/Auth/PhoneNumber.cs` (+`PhoneOptions`),
+`Api/Auth/SecurityStampValidator.cs` (проверка IsDeleted),
+`Infrastructure/Persistence/Migrations/*_AddUserIsDeleted.cs`, тесты `tests/GenesisMarket.Tests/ProfileTests.cs`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
@@ -245,3 +281,7 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
   код пишется в лог (`[DEV EMAIL] …`). Позже разумно перейти на MailKit.
 - **Блок-лист паролей — курируемое подмножество**, не полный top-1000. Расширить `Auth/common-passwords.txt`.
 - **Rate-limit — in-memory** (на инстанс). При нескольких инстансах API нужен общий стор (напр. Redis).
+- **Аватар (`POST /api/me/avatar`) — минимальная реализация**: валидация типа по magic bytes + размер,
+  серверный ключ, сохранение в MinIO; `AvatarUrl` хранит ключ объекта. Обработка (ресайз, снятие EXIF,
+  WebP) и presigned-URL для отдачи — шаг 8; заменит текущую реализацию.
+- **AverageRating/ReviewsCount в публичном профиле — заглушки** (null/0): появятся с отзывами (шаг 11).

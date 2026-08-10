@@ -20,6 +20,7 @@ public static class AuthServiceCollectionExtensions
         services.Configure<VerificationOptions>(configuration.GetSection(VerificationOptions.Section));
         services.Configure<SmtpOptions>(configuration.GetSection(SmtpOptions.Section));
         services.Configure<PublishingOptions>(configuration.GetSection(PublishingOptions.Section));
+        services.Configure<PhoneOptions>(configuration.GetSection(PhoneOptions.Section));
 
         var jwt = configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
 
