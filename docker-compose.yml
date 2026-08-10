@@ -45,7 +45,8 @@ services:
       Smtp__Port: ${SMTP_PORT:-587}
       Smtp__User: ${SMTP_USER}
       Smtp__Password: ${SMTP_PASSWORD}
-      Smtp__From: ${SMTP_FROM:-no-reply@genesis-market.md}
+      Smtp__From: ${SMTP_FROM:-no-reply@genesis-hq.com}
+      Smtp__FromName: ${SMTP_FROM_NAME:-Genesis Market}
       Smtp__UseSsl: ${SMTP_USE_SSL:-true}
       # Что обязательно для публикации: None | Email | Phone | Both.
       Publishing__RequiredVerification: ${PUBLISHING_REQUIRED_VERIFICATION:-Email}

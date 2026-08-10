@@ -183,6 +183,31 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 4. Фирменное письмо с кодом (HTML-шаблон + логотип) и имя отправителя
+
+**Что сделано:**
+- Письмо с кодом (флоу `POST /api/me/email/send-code`) теперь шлётся по **фирменному HTML-шаблону** `Api/Auth/EmailTemplates/verification-code.html` (тёмная шапка, блок кода, блок-предупреждение, футер). Плейсхолдеры `{{CODE}}` и `{{LOGO_URL}}`.
+- **Логотип** `gm-logo.png` вшивается в письмо как inline-вложение (`cid:`) — рендерится сразу, без хостинга картинки.
+- Письмо стало **multipart/alternative**: HTML + текстовая версия (для клиентов без HTML).
+- `VerificationEmailRenderer` читает шаблон и логотип из встроенных ресурсов **один раз при старте** и кеширует; подстановка — `string.Replace`.
+- **Имя отправителя** (`Smtp:FromName`, по умолчанию «Genesis Market») — получатель видит `Genesis Market ‹адрес›` вместо голого e-mail. Реальная отправка — Gmail SMTP (App Password из env); при пустом `Smtp:Host` — dev-фолбэк в лог.
+- Плейсхолдер брендового домена отправителя выровнен на будущий `genesis-hq.com`.
+
+**Почему именно так:**
+- **Шаблон и логотип — встроенные ресурсы + кеш** — нет чтения с диска на каждое письмо и нет зависимости от путей; деплой одним образом.
+- **Логотип через `cid`, а не URL** — домена/хостинга картинок пока нет; inline-вложение показывается в Gmail сразу и не зависит от внешних ссылок.
+- **HTML + текст вместе** — почтовый клиент выбирает лучший вариант; текстовая версия повышает доставляемость и работает везде.
+- **Секреты не в коде** — Gmail App Password и адрес только в `.env`/env; в `appsettings.json` их нет.
+
+**Ключевые файлы:** `Api/Auth/EmailTemplates/verification-code.html`, `Api/Auth/EmailTemplates/gm-logo.png`,
+`Api/Auth/VerificationEmailRenderer.cs`, `Api/Auth/EmailSender.cs` (multipart + inline `cid`),
+`Api/Auth/VerificationSender.cs`. Конфиг: `Smtp:FromName` + `SMTP_*` в `.env`/`docker-compose`.
+
+**Замена канала/провайдера позже** — `IEmailSender` неизменен: вторая реализация (напр. MailKit
+или транзакционный провайдер) и/или свой домен подключаются сменой значений в `.env`, без правок вызывающего кода.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)

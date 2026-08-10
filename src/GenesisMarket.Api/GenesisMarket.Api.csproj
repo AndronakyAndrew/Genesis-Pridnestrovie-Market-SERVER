@@ -21,4 +21,10 @@
     <PackageReference Include="AspNetCore.HealthChecks.UI.Client" Version="9.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Шаблон письма с кодом и встроенный (cid) логотип -->
+    <EmbeddedResource Include="Auth\EmailTemplates\verification-code.html" />
+    <EmbeddedResource Include="Auth\EmailTemplates\gm-logo.png" />
+  </ItemGroup>
+
 </Project>

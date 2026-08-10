@@ -46,6 +46,7 @@ public static class AuthServiceCollectionExtensions
         else
             services.AddSingleton<IEmailSender, SmtpEmailSender>();
 
+        services.AddSingleton<VerificationEmailRenderer>();
         services.AddSingleton<IVerificationSender, VerificationSender>();
         services.AddScoped<VerificationService>();
         services.AddSingleton<IPublishingPolicy, PublishingPolicy>();
