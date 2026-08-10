@@ -208,6 +208,30 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 5. Авторизация (политики, владение ресурсом, безопасные коды ответов)
+
+**Что сделано:**
+- **`FallbackPolicy = RequireAuthenticatedUser`** — всё защищено по умолчанию; забытый `[Authorize]` не откроет эндпоинт. Публичное помечено `[AllowAnonymous]` явно: каталог (`GET /api/listings`, `/{id}`), `register/login/refresh`, health.
+- **Политики** в DI: `Moderator` (role ∈ {Moderator, Admin}), `Admin`, `NotBanned`, `ResourceOwner`.
+- **`ICurrentUser`** (scoped) — единственная точка чтения текущего пользователя из claims; контроллеры и хендлеры берут его отсюда.
+- **Владение ресурсом — через `IAuthorizationHandler`**: `ResourceOwnerRequirement` + обобщённый `ResourceOwnerHandler` для `IOwnedResource` (сейчас `Listing`; `Review`/`SavedSearch` подключатся, реализовав интерфейс). В контроллере нет `listing.OwnerId == currentUserId` — только `AuthorizationService.AuthorizeAsync(...)`.
+- **Коды ответов:** «нет объекта» и «чужой объект» → одинаковый **404** для приватных ресурсов; **403** только там, где существование публично (каталог) — например удаление чужого объявления.
+- **`docs/authorization-matrix.md`** — таблица «ресурс × роль × операция» со ссылками file:line, где правило обеспечено.
+- Тесты: аноним → 401, чужой → 403, владелец → 204, модератор → 204; гость смотрит каталог и регистрируется.
+
+**Почему именно так:**
+- **Fallback-политика** — «безопасно по умолчанию»: новый эндпоинт закрыт, пока явно не открыт. Публичные точки перечислены и видны.
+- **Обобщённый владельческий хендлер** — одна проверка на все владельческие сущности; меньше дублирования и меньше шансов забыть проверку в контроллере.
+- **404 вместо 403 для приватных ресурсов** — 403 подтверждает существование объекта, что уже утечка; 403 оставлен только для публично существующих (каталог).
+- **`ICurrentUser` как единственный ридер claims** — нет разрозненного чтения `sub`/`role` по коду.
+
+**Ключевые файлы:** `Api/Auth/CurrentUser.cs`, `Api/Auth/ResourceOwnerAuthorization.cs`,
+`Api/Auth/AuthServiceCollectionExtensions.cs` (политики + FallbackPolicy),
+`Domain/Common/IOwnedResource.cs`, `Api/Controllers/ListingsController.cs` (AllowAnonymous + AuthorizeAsync),
+`docs/authorization-matrix.md`, тесты `tests/GenesisMarket.Tests/AuthorizationTests.cs`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)

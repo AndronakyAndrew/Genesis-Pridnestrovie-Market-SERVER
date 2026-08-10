@@ -59,7 +59,8 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
     /// <summary>Прямое создание пользователя в БД (в обход register) для сценариев тестов.</summary>
     public async Task<Guid> SeedUserAsync(
         string email, string password,
-        bool banned = false, bool phoneVerified = true, bool emailVerified = false)
+        bool banned = false, bool phoneVerified = true, bool emailVerified = false,
+        UserRole role = UserRole.User)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -69,7 +70,7 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         {
             Email = email.ToLowerInvariant(),
             PasswordHash = hasher.Hash(password),
-            Role = UserRole.User,
+            Role = role,
             PhoneE164 = "+37312345678",
             PhoneVerified = phoneVerified,
             EmailVerified = emailVerified,
@@ -79,6 +80,30 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         db.Users.Add(user);
         await db.SaveChangesAsync();
         return user.Id;
+    }
+
+    /// <summary>Прямое создание активного объявления для указанного владельца.</summary>
+    public async Task<Guid> SeedListingAsync(Guid ownerId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var listing = new Listing
+        {
+            Title = "Диван угловой",
+            Description = "Почти новый диван",
+            Price = 3000,
+            PriceType = PriceType.Fixed,
+            Category = Category.Home,
+            SubcategoryId = 18, // home/mebel из сида
+            City = City.Bendery,
+            Condition = Condition.Used,
+            Status = ListingStatus.Active,
+            OwnerId = ownerId
+        };
+        db.Listings.Add(listing);
+        await db.SaveChangesAsync();
+        return listing.Id;
     }
 
     public async Task BanUserAsync(Guid userId)
