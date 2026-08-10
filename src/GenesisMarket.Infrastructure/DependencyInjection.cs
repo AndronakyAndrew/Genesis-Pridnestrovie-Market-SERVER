@@ -1,3 +1,4 @@
+using GenesisMarket.Infrastructure.Auth;
 using GenesisMarket.Infrastructure.Persistence;
 using GenesisMarket.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -38,6 +39,12 @@ public static class DependencyInjection
                 .Build());
 
         services.AddScoped<IObjectStorage, MinioObjectStorage>();
+
+        // ---- Пароли (собственная аутентификация) ----
+        services.Configure<BcryptOptions>(configuration.GetSection(BcryptOptions.Section));
+        services.AddSingleton<CommonPasswords>();
+        services.AddSingleton<IPasswordPolicy, PasswordPolicy>();
+        services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
 
         // ---- Health checks (readiness) ----
         services.AddHealthChecks()

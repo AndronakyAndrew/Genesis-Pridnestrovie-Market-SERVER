@@ -23,12 +23,12 @@ public record ListingResponse(
 
 /// <summary>Запрос на создание объявления.</summary>
 public record CreateListingRequest(
-    [property: Required, MinLength(5), MaxLength(120)] string Title,
-    [property: Required, MinLength(1), MaxLength(5000)] string Description,
-    [property: Range(0, 999_999_999_999)] decimal? Price,
-    [property: Required] PriceType PriceType,
-    [property: Required] Category Category,
-    [property: Required] int SubcategoryId,
-    [property: Required] City City,
-    [property: MaxLength(100)] string? District,
-    [property: Required] Condition Condition);
+    [Required, MinLength(5), MaxLength(120)] string Title,
+    [Required, MinLength(1), MaxLength(5000)] string Description,
+    [Range(0, 999_999_999_999)] decimal? Price,
+    [Required] PriceType PriceType,
+    [Required] Category Category,
+    [Required] int SubcategoryId,
+    [Required] City City,
+    [MaxLength(100)] string? District,
+    [Required] Condition Condition);

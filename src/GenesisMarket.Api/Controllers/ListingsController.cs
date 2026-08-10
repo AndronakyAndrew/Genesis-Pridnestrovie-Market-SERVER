@@ -2,6 +2,7 @@ using GenesisMarket.Api.Contracts;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -40,6 +41,7 @@ public class ListingsController(AppDbContext db) : ApiControllerBase
         return Ok(Map(listing));
     }
 
+    [Authorize]
     [HttpPost]
     public async Task<ActionResult<ListingResponse>> Create(
         CreateListingRequest request,
@@ -95,6 +97,7 @@ public class ListingsController(AppDbContext db) : ApiControllerBase
         return CreatedAtAction(nameof(GetById), new { id = listing.Id }, Map(listing));
     }
 
+    [Authorize]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
