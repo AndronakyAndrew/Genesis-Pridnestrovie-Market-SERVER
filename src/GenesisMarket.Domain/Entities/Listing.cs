@@ -7,7 +7,7 @@ namespace GenesisMarket.Domain.Entities;
 /// Объявление каталога. Цена — в рублях ПМР, целое число (numeric(12,0)).
 /// Удаление — мягкое (<see cref="DeletedAt"/> + глобальный query filter).
 /// </summary>
-public class Listing : BaseEntity
+public class Listing : BaseEntity, IOwnedResource
 {
     /// <summary>Заголовок. Длина 5..120 гарантируется CHECK-констрейнтом БД.</summary>
     public required string Title { get; set; }

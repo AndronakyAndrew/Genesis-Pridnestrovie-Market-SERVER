@@ -15,8 +15,13 @@ namespace GenesisMarket.Api.Controllers;
 /// телефоном; редактировать/удалять — только владелец.
 /// (Полноценный JWT добавляется на шаге 2; здесь владелец берётся из claim.)
 /// </summary>
-public class ListingsController(AppDbContext db, IPublishingPolicy publishing) : ApiControllerBase
+public class ListingsController(
+    AppDbContext db,
+    IPublishingPolicy publishing,
+    IAuthorizationService authorization) : ApiControllerBase
 {
+    // Каталог публичен — гости просматривают объявления без авторизации.
+    [AllowAnonymous]
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ListingResponse>>> GetAll(CancellationToken ct)
     {
@@ -30,6 +35,7 @@ public class ListingsController(AppDbContext db, IPublishingPolicy publishing) :
         return Ok(items);
     }
 
+    [AllowAnonymous]
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ListingResponse>> GetById(Guid id, CancellationToken ct)
     {
@@ -102,16 +108,14 @@ public class ListingsController(AppDbContext db, IPublishingPolicy publishing) :
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
-        var userId = CurrentUserId();
-        if (userId is null)
-            return Problem(title: "Требуется авторизация", statusCode: StatusCodes.Status401Unauthorized);
-
         var listing = await db.Listings.FirstOrDefaultAsync(l => l.Id == id, ct);
         if (listing is null)
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
 
-        // Удалять может только владелец.
-        if (listing.OwnerId != userId.Value)
+        // Проверка владельца — только через IAuthorizationService, не сравнением в контроллере.
+        var result = await authorization.AuthorizeAsync(User, listing, ResourceOwnerRequirement.Policy);
+        if (!result.Succeeded)
+            // Существование объявления публично (каталог) — отдаём 403, не 404.
             return Forbid();
 
         // Мягкое удаление: строку физически не удаляем.

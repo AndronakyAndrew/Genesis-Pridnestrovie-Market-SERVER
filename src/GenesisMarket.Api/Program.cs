@@ -80,18 +80,19 @@ try
     app.MapControllers();
 
     // ---- Health checks ----
+    // Публичны: FallbackPolicy их бы закрыл, поэтому явно AllowAnonymous.
     // /health/live — процесс жив, зависимости не проверяем.
     app.MapHealthChecks("/health/live", new HealthCheckOptions
     {
         Predicate = _ => false
-    });
+    }).AllowAnonymous();
 
     // /health/ready — готовность: Postgres и MinIO (тег "ready").
     app.MapHealthChecks("/health/ready", new HealthCheckOptions
     {
         Predicate = check => check.Tags.Contains("ready"),
         ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
-    });
+    }).AllowAnonymous();
 
     app.Run();
 }

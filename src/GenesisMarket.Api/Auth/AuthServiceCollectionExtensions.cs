@@ -1,5 +1,7 @@
 using System.Text;
+using GenesisMarket.Domain.Enums;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 
 namespace GenesisMarket.Api.Auth;
@@ -30,6 +32,12 @@ public static class AuthServiceCollectionExtensions
                 "Jwt:Key слишком короткий: нужен минимум 256 бит (32 байта).");
 
         services.AddMemoryCache();
+        services.AddHttpContextAccessor();
+
+        // Единственная точка получения текущего пользователя.
+        services.AddScoped<ICurrentUser, CurrentUser>();
+        // Обобщённая проверка владения ресурсом (Listing и будущие IOwnedResource).
+        services.AddScoped<IAuthorizationHandler, ResourceOwnerHandler>();
 
         services.AddSingleton<IIpHasher, HmacIpHasher>();
         services.AddSingleton<IAuthRateLimiter, MemoryAuthRateLimiter>();
@@ -85,7 +93,25 @@ public static class AuthServiceCollectionExtensions
                 };
             });
 
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+        {
+            // Роли приходят только из claim токена.
+            options.AddPolicy("Moderator", p => p.RequireRole(
+                nameof(UserRole.Moderator), nameof(UserRole.Admin)));
+            options.AddPolicy("Admin", p => p.RequireRole(nameof(UserRole.Admin)));
+            // Забаненные не проходят валидацию токена (SecurityStampValidator),
+            // поэтому «не забанен» == «аутентифицирован».
+            options.AddPolicy("NotBanned", p => p.RequireAuthenticatedUser());
+            // Проверка владения ресурсом.
+            options.AddPolicy(ResourceOwnerRequirement.Policy,
+                p => p.AddRequirements(new ResourceOwnerRequirement()));
+
+            // Забытый [Authorize] не должен открывать эндпоинт: по умолчанию —
+            // требуем аутентификацию. Публичные помечаются [AllowAnonymous] явно.
+            options.FallbackPolicy = new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build();
+        });
 
         return services;
     }
