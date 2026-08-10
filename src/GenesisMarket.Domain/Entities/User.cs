@@ -34,6 +34,12 @@ public class User : BaseEntity
     public bool IsBanned { get; set; }
     public DateTimeOffset? BannedUntil { get; set; }
 
+    /// <summary>
+    /// Мягкое удаление аккаунта: строка не удаляется, а анонимизируется
+    /// (email/имя/контакты обнуляются). Токены удалённого не проходят валидацию.
+    /// </summary>
+    public bool IsDeleted { get; set; }
+
     // Навигация
     public Profile? Profile { get; set; }
     public ICollection<Listing> Listings { get; set; } = new List<Listing>();

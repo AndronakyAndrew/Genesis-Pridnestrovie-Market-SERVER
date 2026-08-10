@@ -19,7 +19,7 @@ public sealed class SecurityStampValidator(
 {
     private readonly int _ttl = options.Value.SecurityStampCacheSeconds;
 
-    private sealed record Snapshot(Guid SecurityStamp, bool IsBanned, DateTimeOffset? BannedUntil);
+    private sealed record Snapshot(Guid SecurityStamp, bool IsBanned, DateTimeOffset? BannedUntil, bool IsDeleted);
 
     public async Task ValidateAsync(TokenValidatedContext context)
     {
@@ -37,6 +37,12 @@ public sealed class SecurityStampValidator(
         if (snapshot is null)
         {
             context.Fail("Пользователь не найден.");
+            return;
+        }
+
+        if (snapshot.IsDeleted)
+        {
+            context.Fail("Аккаунт удалён.");
             return;
         }
 
@@ -70,7 +76,7 @@ public sealed class SecurityStampValidator(
     private Task<Snapshot?> LoadAsync(Guid userId, CancellationToken ct) =>
         db.Users
             .Where(u => u.Id == userId)
-            .Select(u => new Snapshot(u.SecurityStamp, u.IsBanned, u.BannedUntil))
+            .Select(u => new Snapshot(u.SecurityStamp, u.IsBanned, u.BannedUntil, u.IsDeleted))
             .Cast<Snapshot?>()
             .FirstOrDefaultAsync(ct);
 
