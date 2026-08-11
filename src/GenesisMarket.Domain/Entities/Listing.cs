@@ -51,6 +51,13 @@ public class Listing : BaseEntity, IOwnedResource
     /// </summary>
     public int ViewsCount { get; private set; }
 
+    /// <summary>
+    /// Денормализованный счётчик добавлений в избранное. Извне не редактируется:
+    /// поддерживается триггером БД (<c>favorites_count</c>) при вставке/удалении
+    /// строк в <see cref="Favorite"/> — не COUNT на каждый запрос каталога.
+    /// </summary>
+    public int FavoritesCount { get; private set; }
+
     public DateTimeOffset? PublishedAt { get; set; }
 
     /// <summary>Метка мягкого удаления. Заполнена ⇒ объявление скрыто query-фильтром.</summary>

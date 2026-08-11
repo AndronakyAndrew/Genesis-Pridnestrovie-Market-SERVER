@@ -438,6 +438,33 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 12. Избранное (идемпотентность на уровне БД + денормализованный счётчик)
+
+**Что сделано:**
+- Три эндпоинта: `POST /api/listings/{id}/favorite`, `DELETE /api/listings/{id}/favorite`, `GET /api/me/favorites` (курсорная пагинация, те же DTO `ListingCardResponse`/`CatalogPageResponse`, что и каталог). Все — `[Authorize]`.
+- **Идемпотентность на уровне БД:** составной первичный ключ `favorites (UserId, ListingId)`. Повторный `POST` возвращает **200** (не 409) и **не создаёт дубль**: сначала проверка `AnyAsync`, а гонку двух параллельных вставок ловим по `23505` и тоже отдаём успех. `DELETE` идемпотентен — 204 даже если записи не было (`ExecuteDelete`, 0 строк).
+- **Нельзя добавить в избранное собственное объявление** — `400`; чужое soft-deleted (скрыто глобальным фильтром) — `404`.
+- **`isFavorite` в карточке каталога — одним запросом на всю страницу:** после сборки страницы собираем `Id` карточек и делаем один `WHERE UserId = @me AND ListingId IN (...)`, помечая совпавшие (`OkPageAsync`). Не по запросу на карточку. Для анонима и пустой страницы — без доп. запроса.
+- **`favoritesCount` — денормализованное поле `listings.FavoritesCount`, а не `COUNT` на каждый запрос.** Поддерживается триггером БД `trg_favorites_count` (функция `favorites_count_sync`): `AFTER INSERT/DELETE ON favorites` инкрементит/декрементит счётчик в той же транзакции. Идемпотентный `POST` строку не вставляет ⇒ триггер не срабатывает ⇒ счётчик не задваивается. `CHECK (\"FavoritesCount\" >= 0)`. Существующие записи забэкфилены в миграции.
+- **Лимит 500 записей на пользователя** — проверка `CountAsync` перед вставкой, при достижении `409`.
+- **Архивированное/удалённое объявление остаётся в избранном с флагом `isUnavailable`, а не исчезает молча:** список тянется с `IgnoreQueryFilters()`, `isUnavailable = Status != Active || DeletedAt != null`.
+- В детальной карточке (`ListingResponse`) добавлены `favoritesCount` и `isFavorite`.
+- Тесты (Testcontainers): идемпотентный POST без дубля; запрет своего; 404 на несуществующее; декремент и идемпотентный DELETE; `isFavorite`+счётчик в каталоге (и `false` анониму); архив с `isUnavailable`; лимит 500 → 409; курсорная пагинация без дыр; требование авторизации.
+
+**Почему именно так:**
+- **Составной PK вместо суррогатного** — идемпотентность гарантирует БД, а не приложение; дубль физически невозможен.
+- **Триггер, а не пересчёт `COUNT`** — карточка каталога отдаёт счётчик без агрегата на каждый запрос; счётчик всегда согласован с таблицей, т.к. меняется в одной транзакции со вставкой/удалением.
+- **`isFavorite` батчем** — тот же приём, что у `contactRevealCount`/`firstImageUrl`: один `WHERE IN` на страницу вместо N+1.
+- **`IgnoreQueryFilters` в избранном** — soft-delete не должен молча «терять» карточку из списка пользователя; вместо исчезновения — честный флаг недоступности.
+
+**Ключевые файлы:** `Api/Controllers/FavoritesController.cs`, `Api/Contracts/FavoriteDtos.cs`,
+`Api/Controllers/ListingsController.cs` (`OkPageAsync`, `IsFavoriteAsync`, `Map`), `Api/Contracts/{CatalogDtos,ListingDtos}.cs`,
+`Api/Listings/CatalogQueryBuilder.cs` (`CatalogRow.FavoritesCount`), `Domain/Entities/Listing.cs` (`FavoritesCount`),
+`Infrastructure/Persistence/Configurations/{FavoriteConfiguration,ListingConfiguration}.cs`,
+`Infrastructure/Persistence/Migrations/*_AddFavorites.cs` (колонка + триггер + бэкфилл), тесты `tests/GenesisMarket.Tests/FavoritesTests.cs`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)

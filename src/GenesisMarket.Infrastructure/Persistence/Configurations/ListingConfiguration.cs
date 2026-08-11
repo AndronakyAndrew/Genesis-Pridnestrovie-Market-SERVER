@@ -48,6 +48,11 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
             t.HasCheckConstraint(
                 "ck_listings_views_nonnegative",
                 "\"ViewsCount\" >= 0");
+
+            // Счётчик избранного не бывает отрицательным (поддерживается триггером).
+            t.HasCheckConstraint(
+                "ck_listings_favorites_nonnegative",
+                "\"FavoritesCount\" >= 0");
         });
 
         b.HasKey(l => l.Id);
@@ -71,6 +76,7 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
         b.Property(l => l.PriceType).IsRequired();
 
         b.Property(l => l.ViewsCount).HasDefaultValue(0);
+        b.Property(l => l.FavoritesCount).HasDefaultValue(0);
 
         // FK на справочник подкатегорий (не свободный текст).
         b.HasOne(l => l.Subcategory)
