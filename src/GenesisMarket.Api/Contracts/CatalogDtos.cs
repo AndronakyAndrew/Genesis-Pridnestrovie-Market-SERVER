@@ -10,6 +10,9 @@ namespace GenesisMarket.Api.Contracts;
 /// </summary>
 public record CatalogQuery
 {
+    /// <summary>Полнотекстовый запрос. Длину сервер ограничивает 100 символами.</summary>
+    public string? Q { get; init; }
+
     public Category? Category { get; init; }
 
     /// <summary>FK подкатегории (query-параметр называется <c>subcategory</c>).</summary>
@@ -47,7 +50,12 @@ public record ListingCardResponse(
     Category Category,
     string? FirstImageUrl,
     DateTimeOffset? PublishedAt,
-    bool IsBumped);
+    bool IsBumped,
+    /// <summary>
+    /// Заголовок с подсветкой совпадений (&lt;mark&gt;…&lt;/mark&gt;). HTML-безопасен:
+    /// исходный текст экранируется ДО подсветки. null, если поиск (q) не задан.
+    /// </summary>
+    string? TitleHighlight = null);
 
 /// <summary>Страница каталога с курсорной пагинацией.</summary>
 public record CatalogPageResponse(

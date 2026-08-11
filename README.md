@@ -347,6 +347,46 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 > Побочный фикс: в `appsettings.json` секция `Listings` не закрывалась `}` перед `Phone` — файл был невалидным
 > JSON и приложение не стартовало. Исправлено.
 
+### 9. Поиск по объявлениям (PostgreSQL FTS + fuzzy-fallback)
+
+**Что сделано:**
+- **`SearchVector`** — `tsvector`, **`GENERATED ALWAYS AS (… ) STORED`**: `setweight(to_tsvector('russian', Title),'A')`
+  ‖ `setweight(to_tsvector('russian', Description),'B')`. Заголовок весит больше описания. GIN-индекс.
+  Колонку СУБД считает сама — приложение её только читает.
+- **`GET /api/listings?q=…`** — комбинируется со всеми фильтрами шага 8 (category/city/price/…).
+  Матч через **`websearch_to_tsquery('russian', @q)`** — безопасно разбирает кавычки/OR/операторы, не падает
+  на произвольном вводе (в отличие от `to_tsquery`). Ввод **только параметром**, без интерполяции строк.
+- **Сортировка `sort=relevance`** — `ts_rank_cd`; при поиске это дефолт. Курсор режима — `(rank, id)`
+  (rank как round-trip float в base64-курсоре). С q работают и обычные сортировки (new/price/popular).
+- **Длина `q` ограничена 100 символами** на сервере (обрезается), нормализация trim + lower.
+- **Подсветка** — `ts_headline` со `StartSel=<mark>/StopSel=</mark>`. **XSS-безопасно:** исходный `Title`
+  экранируется (`& < >`) прямо в SQL **до** подсветки, поэтому единственный HTML в ответе — вставленные СУБД
+  `<mark>`. Отдаётся в `ListingCardResponse.TitleHighlight` (null без q).
+- **Опечатки (fuzzy-fallback)** — расширение **`pg_trgm`**: если FTS дал 0 на первой странице, отдельным
+  запросом ищем по `similarity(lower(Title), @q) > 0.3`. Режимы **не смешиваются** в одном запросе.
+- **`SearchMisses`** — запросы с окончательно нулевой выдачей (ни FTS, ни fuzzy) пишутся в отдельную таблицу:
+  данные о том, чего ищут, но в каталоге нет.
+- Миграция `AddFullTextSearch` — **сырым SQL**: колонку-генерацию нельзя получить через `ALTER COLUMN`,
+  поэтому DROP+ADD с пересозданием GIN; плюс `CREATE EXTENSION pg_trgm` и таблица `search_misses`.
+
+**Почему именно так:**
+- **STORED generated-колонка вместо триггера/ручного обновления** — вектор всегда согласован с Title/Description,
+  негде забыть пересчитать; приложение не пишет в неё.
+- **`websearch_to_tsquery`, а не `to_tsquery`** — первый не бросает ошибку на «мусорном» вводе пользователя
+  (кавычки, `&|!:*`), поэтому спецсимволы не роняют запрос и не меняют смысл (есть тест).
+- **Экранирование до `ts_headline`** — иначе `<script>` в заголовке объявления утёк бы в ответ как рабочий HTML
+  (XSS через заголовок). Экранируем в SQL, метки `<mark>` добавляются уже поверх безопасного текста.
+- **Fuzzy — отдельный fallback, а не UNION с FTS** — не «зашумляет» точную выдачу; включается только когда
+  точный поиск пуст.
+- **Единый источник SQL-выражения вектора** (`ListingConfiguration.SearchVectorSql`) — модель и миграция
+  ссылаются на одну константу, не разъезжаются.
+
+**Ключевые файлы:** `Api/Listings/CatalogQueryBuilder.cs` (FTS-фильтр, relevance-order/keyset, trigram-fallback),
+`Api/Listings/SearchHighlighter.cs` (ts_headline + экранирование), `Api/Controllers/ListingsController.cs`
+(`SearchAsync`/`TrigramFallbackAsync`), `Domain/Entities/SearchMiss.cs`,
+`Infrastructure/Persistence/Configurations/ListingConfiguration.cs` (SearchVector), `AppDbContext.cs` (pg_trgm),
+`Infrastructure/Persistence/Migrations/*_AddFullTextSearch.cs`, тесты `tests/GenesisMarket.Tests/CatalogSearchTests.cs`.
+
 ---
 
 ## Известные ограничения

@@ -7,6 +7,15 @@ namespace GenesisMarket.Infrastructure.Persistence.Configurations;
 
 public class ListingConfiguration : IEntityTypeConfiguration<Listing>
 {
+    /// <summary>
+    /// Выражение generated-колонки SearchVector. Единый источник правды: используется
+    /// и в модели (HasComputedColumnSql), и в сырой SQL-миграции — чтобы не разъехались.
+    /// Title — вес A (приоритет), Description — вес B.
+    /// </summary>
+    public const string SearchVectorSql =
+        "setweight(to_tsvector('russian', coalesce(\"Title\", '')), 'A') || " +
+        "setweight(to_tsvector('russian', coalesce(\"Description\", '')), 'B')";
+
     public void Configure(EntityTypeBuilder<Listing> b)
     {
         b.ToTable("listings", t =>
@@ -69,9 +78,14 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
             .HasForeignKey(l => l.SubcategoryId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Будущий полнотекстовый вектор (шаг 7). Держим shadow-свойством,
-        // чтобы Domain оставался без зависимости от Npgsql-типов.
-        b.Property<NpgsqlTsVector?>("SearchVector");
+        // Полнотекстовый вектор: STORED generated-колонка, считается СУБД из Title (вес A)
+        // и Description (вес B). Держим shadow-свойством, чтобы Domain оставался без
+        // зависимости от Npgsql-типов; EF её только читает (никогда не пишет).
+        // Само выражение создаётся сырым SQL в миграции (см. *_AddFullTextSearch),
+        // здесь дублируется в HasComputedColumnSql, чтобы модель совпадала со снапшотом.
+        b.Property<NpgsqlTsVector>("SearchVector")
+            .IsRequired()
+            .HasComputedColumnSql(SearchVectorSql, stored: true);
 
         // ---- Индексы ----
         // Каталог по статусу и свежести (частичный: только «живые» объявления).

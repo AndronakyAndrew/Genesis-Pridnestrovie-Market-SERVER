@@ -1,3 +1,4 @@
+using System.Globalization;
 using FluentValidation;
 using FluentValidation.Results;
 using GenesisMarket.Api.Auth;
@@ -38,10 +39,12 @@ public class ListingsController(
     private const int DefaultLimit = 20;
     private const int MaxLimit = 50;
     private const int MaxCities = 7;                       // столько городов в ПМР
+    private const int MaxQueryLength = 100;               // предел длины поискового q
     private static readonly TimeSpan CountCacheTtl = TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// Каталог: только Active, курсорная пагинация, сортировка из белого списка.
+    /// При <c>q</c> — полнотекстовый поиск (см. <see cref="SearchAsync"/>).
     /// Отдаёт витринную карточку (без телефона/email/UserId владельца).
     /// </summary>
     [AllowAnonymous]
@@ -52,11 +55,24 @@ public class ListingsController(
         if (ValidateFilters(query) is { } bad)
             return bad;
 
+        var q = NormalizeQuery(query.Q);
+
         if (CatalogQueryBuilder.ParseSort(query.Sort) is not { } sort)
             return Problem(title: "Неизвестная сортировка", statusCode: StatusCodes.Status400BadRequest);
 
+        // Дефолт сортировки при поиске — по релевантности; relevance без q бессмысленна.
+        if (q is not null && string.IsNullOrEmpty(query.Sort))
+            sort = CatalogSort.Relevance;
+        if (sort == CatalogSort.Relevance && q is null)
+            return Problem(title: "Сортировка relevance требует параметра q",
+                statusCode: StatusCodes.Status400BadRequest);
+
         var limit = Math.Clamp(query.Limit ?? DefaultLimit, 1, MaxLimit);
 
+        if (q is not null)
+            return await SearchAsync(query, q, sort, limit, ct);
+
+        // ---- Обычный каталог (без q) ----
         var listings = CatalogQueryBuilder.Filter(db.Listings.AsNoTracking(), query);
 
         if (query.Cursor is { Length: > 0 } cursor)
@@ -67,26 +83,114 @@ public class ListingsController(
         }
 
         // Тянем на одну запись больше лимита — так узнаём hasMore без отдельного запроса.
-        // Первое фото — коррелированным подзапросом (Select), без Include всей коллекции.
-        var rows = await CatalogQueryBuilder.ApplyOrder(listings, sort)
-            .Take(limit + 1)
-            .Select(l => new CatalogRow(
-                l.Id, l.Slug, l.Title, l.Price, l.PriceType, l.City, l.Category,
-                l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
-                l.PublishedAt, l.CreatedAt, l.ViewsCount))
+        var rows = await CatalogQueryBuilder
+            .Project(CatalogQueryBuilder.ApplyOrder(listings, sort).Take(limit + 1))
             .ToListAsync(ct);
 
-        var hasMore = rows.Count > limit;
+        return Ok(BuildPage(rows, sort, limit, items: rows.Take(limit).Select(r => r.ToCard()).ToList()));
+    }
+
+    /// <summary>
+    /// Полнотекстовый поиск: websearch_to_tsquery('russian', q) по SearchVector + все фильтры.
+    /// Сортировка relevance (ts_rank_cd) или любая из белого списка. Если FTS дал 0 на первой
+    /// странице — fuzzy-fallback по опечаткам (pg_trgm), а окончательный ноль — в SearchMisses.
+    /// </summary>
+    private async Task<ActionResult<CatalogPageResponse>> SearchAsync(
+        CatalogQuery query, string q, CatalogSort sort, int limit, CancellationToken ct)
+    {
+        var filtered = CatalogQueryBuilder.ApplyTextSearch(
+            CatalogQueryBuilder.Filter(db.Listings.AsNoTracking(), query), q);
+
+        var isFirstPage = query.Cursor is not { Length: > 0 };
+        if (!isFirstPage)
+        {
+            if (!CatalogCursor.TryDecode(query.Cursor!, CatalogQueryBuilder.Token(sort), out var key, out var afterId))
+                return Problem(title: "Некорректный курсор", statusCode: StatusCodes.Status400BadRequest);
+
+            if (sort == CatalogSort.Relevance)
+            {
+                if (!float.TryParse(key, NumberStyles.Float, CultureInfo.InvariantCulture, out var rank))
+                    return Problem(title: "Некорректный курсор", statusCode: StatusCodes.Status400BadRequest);
+                filtered = CatalogQueryBuilder.ApplyRelevanceKeyset(filtered, q, rank, afterId);
+            }
+            else
+            {
+                filtered = CatalogQueryBuilder.ApplyKeyset(filtered, sort, key, afterId);
+            }
+        }
+
+        var projected = sort == CatalogSort.Relevance
+            ? CatalogQueryBuilder.ProjectWithRank(CatalogQueryBuilder.ApplyRelevanceOrder(filtered, q).Take(limit + 1), q)
+            : CatalogQueryBuilder.Project(CatalogQueryBuilder.ApplyOrder(filtered, sort).Take(limit + 1));
+
+        var rows = await projected.ToListAsync(ct);
+
+        // FTS вернул 0 на первой странице → отдельный fuzzy-режим (не смешиваем с FTS).
+        if (rows.Count == 0 && isFirstPage)
+            return await TrigramFallbackAsync(query, q, limit, ct);
+
         var page = rows.Take(limit).ToList();
+        var items = await HighlightAsync(page, q, ct);
+        return Ok(BuildPage(rows, sort, limit, items));
+    }
+
+    /// <summary>Fuzzy-поиск по опечаткам, когда FTS ничего не нашёл. Без keyset (только первая страница).</summary>
+    private async Task<ActionResult<CatalogPageResponse>> TrigramFallbackAsync(
+        CatalogQuery query, string q, int limit, CancellationToken ct)
+    {
+        var rows = await CatalogQueryBuilder
+            .Project(CatalogQueryBuilder.ApplyTrigramFallback(
+                CatalogQueryBuilder.Filter(db.Listings.AsNoTracking(), query), q).Take(limit))
+            .ToListAsync(ct);
+
+        if (rows.Count == 0)
+        {
+            // Ни FTS, ни fuzzy — это пробел в каталоге, логируем для наполнения.
+            db.SearchMisses.Add(new SearchMiss { Query = q });
+            await db.SaveChangesAsync(ct);
+        }
+
+        var items = await HighlightAsync(rows, q, ct);
+        return Ok(new CatalogPageResponse(items, NextCursor: null, HasMore: false));
+    }
+
+    /// <summary>Достраивает подсвеченный заголовок (ts_headline) к карточкам страницы.</summary>
+    private async Task<List<ListingCardResponse>> HighlightAsync(List<CatalogRow> rows, string q, CancellationToken ct)
+    {
+        if (rows.Count == 0)
+            return [];
+
+        var highlights = await SearchHighlighter.HighlightTitlesAsync(
+            db, rows.Select(r => r.Id).ToList(), q, ct);
+
+        return rows
+            .Select(r => r.ToCard() with { TitleHighlight = highlights.GetValueOrDefault(r.Id) })
+            .ToList();
+    }
+
+    private static CatalogPageResponse BuildPage(
+        List<CatalogRow> rows, CatalogSort sort, int limit, List<ListingCardResponse> items)
+    {
+        var hasMore = rows.Count > limit;
+        // Курсор нужен только когда есть следующая страница; тогда rows[limit-1] заведомо существует.
         var nextCursor = hasMore
             ? CatalogCursor.Encode(
                 CatalogQueryBuilder.Token(sort),
-                CatalogQueryBuilder.NextKey(sort, page[^1]),
-                page[^1].Id)
+                CatalogQueryBuilder.NextKey(sort, rows[limit - 1]),
+                rows[limit - 1].Id)
             : null;
+        return new CatalogPageResponse(items, nextCursor, hasMore);
+    }
 
-        var items = page.Select(r => r.ToCard()).ToList();
-        return Ok(new CatalogPageResponse(items, nextCursor, hasMore));
+    /// <summary>Trim + нижний регистр + обрезка до 100 символов. Пусто ⇒ null (поиска нет).</summary>
+    private static string? NormalizeQuery(string? q)
+    {
+        if (string.IsNullOrWhiteSpace(q))
+            return null;
+        var trimmed = q.Trim();
+        if (trimmed.Length > MaxQueryLength)
+            trimmed = trimmed[..MaxQueryLength];
+        return trimmed.ToLowerInvariant();
     }
 
     /// <summary>

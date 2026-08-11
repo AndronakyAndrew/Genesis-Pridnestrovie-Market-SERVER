@@ -91,7 +91,8 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         int subcategoryId = 18,
         decimal? price = 3000,
         PriceType priceType = PriceType.Fixed,
-        City city = City.Bendery)
+        City city = City.Bendery,
+        string? description = null)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -101,7 +102,7 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         {
             Slug = $"seed-{Guid.NewGuid():N}",
             Title = title,
-            Description = "Почти новый диван, тестовое описание объявления",
+            Description = description ?? "Почти новый диван, тестовое описание объявления",
             Price = price,
             PriceType = priceType,
             Category = category,
@@ -125,6 +126,14 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         await db.Listings
             .Where(l => l.Id == listingId)
             .ExecuteUpdateAsync(s => s.SetProperty(l => l.ViewsCount, views));
+    }
+
+    /// <summary>Сколько раз данный запрос попал в SearchMisses (нулевая выдача).</summary>
+    public async Task<int> SearchMissCountAsync(string query)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.SearchMisses.CountAsync(m => m.Query == query);
     }
 
     public async Task BanUserAsync(Guid userId)

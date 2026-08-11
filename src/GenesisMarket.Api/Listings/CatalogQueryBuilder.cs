@@ -2,6 +2,8 @@ using System.Globalization;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+using NpgsqlTypes;
 
 namespace GenesisMarket.Api.Listings;
 
@@ -11,7 +13,10 @@ public enum CatalogSort
     New,
     PriceAsc,
     PriceDesc,
-    Popular
+    Popular,
+
+    /// <summary>По релевантности FTS (ts_rank_cd). Допустима только вместе с q.</summary>
+    Relevance
 }
 
 /// <summary>
@@ -30,7 +35,8 @@ public sealed record CatalogRow(
     string? FirstImageUrl,
     DateTimeOffset? PublishedAt,
     DateTimeOffset CreatedAt,
-    int ViewsCount)
+    int ViewsCount,
+    float Rank)
 {
     // Продвижение (bump) — шаг 7. Пока в каталоге нет продвинутых объявлений,
     // поэтому флаг всегда false; когда появится, здесь будет реальное условие.
@@ -51,6 +57,7 @@ public static class CatalogQueryBuilder
         "price_asc" => CatalogSort.PriceAsc,
         "price_desc" => CatalogSort.PriceDesc,
         "popular" => CatalogSort.Popular,
+        "relevance" => CatalogSort.Relevance,
         _ => null
     };
 
@@ -60,8 +67,58 @@ public static class CatalogQueryBuilder
         CatalogSort.PriceAsc => "price_asc",
         CatalogSort.PriceDesc => "price_desc",
         CatalogSort.Popular => "popular",
+        CatalogSort.Relevance => "relevance",
         _ => "new"
     };
+
+    // ---- Полнотекстовый поиск (FTS) и fuzzy-fallback ----
+
+    private const string Config = "russian";
+
+    /// <summary>Фильтр по совпадению tsvector с websearch_to_tsquery('russian', text).</summary>
+    public static IQueryable<Listing> ApplyTextSearch(IQueryable<Listing> query, string text) =>
+        query.Where(l => EF.Property<NpgsqlTsVector>(l, "SearchVector")
+            .Matches(EF.Functions.WebSearchToTsQuery(Config, text)));
+
+    /// <summary>ORDER BY ts_rank_cd DESC, Id DESC — режим sort=relevance.</summary>
+    public static IOrderedQueryable<Listing> ApplyRelevanceOrder(IQueryable<Listing> query, string text) =>
+        query
+            .OrderByDescending(l => EF.Property<NpgsqlTsVector>(l, "SearchVector")
+                .RankCoverDensity(EF.Functions.WebSearchToTsQuery(Config, text)))
+            .ThenByDescending(l => l.Id);
+
+    /// <summary>Keyset «строго после (rank, id)» для сортировки по релевантности.</summary>
+    public static IQueryable<Listing> ApplyRelevanceKeyset(
+        IQueryable<Listing> query, string text, float rank, Guid afterId) =>
+        query.Where(l =>
+            EF.Property<NpgsqlTsVector>(l, "SearchVector").RankCoverDensity(EF.Functions.WebSearchToTsQuery(Config, text)) < rank ||
+            (EF.Property<NpgsqlTsVector>(l, "SearchVector").RankCoverDensity(EF.Functions.WebSearchToTsQuery(Config, text)) == rank
+                && l.Id.CompareTo(afterId) < 0));
+
+    /// <summary>
+    /// Fuzzy-fallback по опечаткам: similarity(Title, text) > 0.3 (pg_trgm),
+    /// сортировка по убыванию похожести. Отдельный режим — с FTS не смешивается.
+    /// </summary>
+    public static IOrderedQueryable<Listing> ApplyTrigramFallback(IQueryable<Listing> query, string text) =>
+        query
+            .Where(l => EF.Functions.TrigramsSimilarity(l.Title, text) > 0.3)
+            .OrderByDescending(l => EF.Functions.TrigramsSimilarity(l.Title, text))
+            .ThenByDescending(l => l.Id);
+
+    /// <summary>Проекция строки для FTS-режима: rank считается тем же запросом.</summary>
+    public static IQueryable<CatalogRow> ProjectWithRank(IQueryable<Listing> query, string text) =>
+        query.Select(l => new CatalogRow(
+            l.Id, l.Slug, l.Title, l.Price, l.PriceType, l.City, l.Category,
+            l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
+            l.PublishedAt, l.CreatedAt, l.ViewsCount,
+            EF.Property<NpgsqlTsVector>(l, "SearchVector").RankCoverDensity(EF.Functions.WebSearchToTsQuery(Config, text))));
+
+    /// <summary>Проекция строки без релевантности (rank = 0): обычный каталог и fallback.</summary>
+    public static IQueryable<CatalogRow> Project(IQueryable<Listing> query) =>
+        query.Select(l => new CatalogRow(
+            l.Id, l.Slug, l.Title, l.Price, l.PriceType, l.City, l.Category,
+            l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
+            l.PublishedAt, l.CreatedAt, l.ViewsCount, 0f));
 
     /// <summary>
     /// Фильтры каталога. Только Active — Sold/Archived/PendingReview/Rejected и черновики
@@ -165,6 +222,8 @@ public static class CatalogQueryBuilder
     {
         CatalogSort.New => row.CreatedAt.UtcTicks.ToString(CultureInfo.InvariantCulture),
         CatalogSort.Popular => row.ViewsCount.ToString(CultureInfo.InvariantCulture),
+        // "R" — round-trip float: ключ курсора совпадёт с пересчитанным ts_rank_cd.
+        CatalogSort.Relevance => row.Rank.ToString("R", CultureInfo.InvariantCulture),
         _ => row.Price is { } p ? p.ToString(CultureInfo.InvariantCulture) : "n"
     };
 }
