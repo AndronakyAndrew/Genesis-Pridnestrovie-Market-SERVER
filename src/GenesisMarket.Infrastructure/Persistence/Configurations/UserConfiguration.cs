@@ -28,6 +28,9 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         b.Property(u => u.PhoneVerified).HasDefaultValue(false);
         b.Property(u => u.IsBanned).HasDefaultValue(false);
 
+        // Денормализованный рейтинг: пересчитывается триггером reviews_rating_sync.
+        b.Property(u => u.ReviewsCount).HasDefaultValue(0);
+
         // Профиль 1:1 (owned-подобно, но отдельной таблицей profiles).
         b.HasOne(u => u.Profile)
             .WithOne(p => p.User)

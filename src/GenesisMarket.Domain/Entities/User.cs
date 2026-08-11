@@ -31,6 +31,19 @@ public class User : BaseEntity
     /// <summary>Меняется при смене пароля/бане — инвалидирует выданные JWT.</summary>
     public Guid SecurityStamp { get; set; } = Guid.NewGuid();
 
+    /// <summary>
+    /// Денормализованный средний рейтинг по видимым отзывам (1..5). null — отзывов нет.
+    /// Извне не редактируется: поддерживается триггером БД (<c>reviews_rating_sync</c>)
+    /// в той же транзакции, что и запись/редактирование/скрытие отзыва.
+    /// </summary>
+    public double? AverageRating { get; private set; }
+
+    /// <summary>
+    /// Денормализованное число видимых (не скрытых) отзывов о пользователе.
+    /// Поддерживается тем же триггером, что и <see cref="AverageRating"/>.
+    /// </summary>
+    public int ReviewsCount { get; private set; }
+
     public bool IsBanned { get; set; }
     public DateTimeOffset? BannedUntil { get; set; }
 

@@ -77,6 +77,7 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
 
         b.Property(l => l.ViewsCount).HasDefaultValue(0);
         b.Property(l => l.FavoritesCount).HasDefaultValue(0);
+        b.Property(l => l.ModerationPriority).HasDefaultValue(0);
 
         // FK на справочник подкатегорий (не свободный текст).
         b.HasOne(l => l.Subcategory)

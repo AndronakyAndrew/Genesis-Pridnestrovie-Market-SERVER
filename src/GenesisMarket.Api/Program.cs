@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Middleware;
+using GenesisMarket.Api.Trust;
 using GenesisMarket.Infrastructure;
 using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -45,6 +46,9 @@ try
 
     // ---- Жизненный цикл объявлений (пороги, премодерация, просмотры, валидаторы) ----
     builder.Services.AddListingsFeature(builder.Configuration);
+
+    // ---- Слой доверия: отзывы (репутация) и жалобы (модерация) ----
+    builder.Services.AddTrustFeature(builder.Configuration);
 
     // ---- ProblemDetails + глобальный обработчик исключений ----
     builder.Services.AddProblemDetails();
