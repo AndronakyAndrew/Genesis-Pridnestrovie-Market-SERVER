@@ -19,7 +19,8 @@ public record ListingResponse(
     int ViewsCount,
     Guid OwnerId,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? PublishedAt);
+    DateTimeOffset? PublishedAt,
+    int ContactRevealCount = 0);
 
 /// <summary>
 /// Создание объявления. Валидируется FluentValidation (см. CreateListingRequestValidator).

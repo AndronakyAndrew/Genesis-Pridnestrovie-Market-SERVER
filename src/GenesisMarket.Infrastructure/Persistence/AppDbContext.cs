@@ -21,6 +21,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<VerificationCode> VerificationCodes => Set<VerificationCode>();
     public DbSet<SearchMiss> SearchMisses => Set<SearchMiss>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+    public DbSet<ContactReveal> ContactReveals => Set<ContactReveal>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
