@@ -45,9 +45,8 @@ cp .env.example .env            # затем заполнить (см. прим�
 # 2. Поднять инфраструктуру и API.
 docker compose up -d --build
 
-# 3. Создать бакет MinIO (пока вручную — см. «Известные ограничения»).
-docker exec <minio-container> mc alias set gm http://localhost:9000 <MINIO_ROOT_USER> <MINIO_ROOT_PASSWORD>
-docker exec <minio-container> mc mb -p gm/listings
+# 3. Бакет MinIO создаётся автоматически при старте API (MinioBucketInitializer,
+#    имя — из Minio:Bucket). Ручной шаг больше не нужен.
 
 # 4. Применить миграции к БД (design-time фабрика подключается к localhost:5434).
 dotnet ef database update -p src/GenesisMarket.Infrastructure -s src/GenesisMarket.Api
@@ -389,14 +388,40 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 10. Загрузка изображений объявлений (обработка + приватный MinIO + outbox)
+
+**Что сделано:**
+- Эндпоинты под объявлением: `POST /api/listings/{id}/images` (multipart, один файл), `DELETE /api/listings/{id}/images/{imageId}`, `PATCH /api/listings/{id}/images/order` (полный набор Id в новом порядке) и публичный `GET /api/listings/{id}/images` (список с presigned-ссылками).
+- Серверные проверки **до любой обработки**: владелец (`OwnerId` в фильтре ⇒ чужое/несуществующее = 404), не больше **8** изображений на объявление, **10 МБ** на файл (лимит и в `[RequestSizeLimit]`, и в `[RequestFormLimits(MultipartBodyLengthLimit)]`).
+- Тип файла — **по содержимому** (`Image.DetectFormatAsync`, magic bytes), не по расширению и не по `Content-Type`. Разрешены JPEG/PNG/WebP; иначе `415`.
+- Защита от decompression bomb: объявленные размеры проверяются по заголовку (`Image.IdentifyAsync`) **до декодирования** — при `width*height > 50 млн` пикселей `400`; плюс лимит единичной аллокации у `Configuration.Default.MemoryAllocator`.
+- Обработка (ImageSharp): применяется EXIF-ориентация → **полностью снимаются метаданные** (EXIF/IPTC/XMP — там GPS продавца) → ресайз (оригинал ≤ 1600px по длинной стороне, превью 400×300 crop «cover») → перекодирование в **WebP q82**.
+- Хранение (MinIO): бакет приватный, серверные ключи `listings/{listingId}/{guid}.webp` (+ `_thumb`); имя файла из запроса **нигде не используется**. Отдача — только **presigned URL, TTL 1 час**. Бакет создаётся при старте (`MinioBucketInitializer`), публичная политика не выставляется.
+- Удаление объектов из хранилища — через **transactional outbox** (`OutboxMessage`, миграция `AddOutboxMessages`): DELETE изображения кладёт сообщения в одной транзакции с удалением строки, фоновый `ObjectDeletionOutboxProcessor` (BackgroundService) удаляет объекты из MinIO вне HTTP-запроса.
+- Тесты (Testcontainers, MinIO подменён in-memory фейком, процессор — настоящий): `.jpg` с PHP-содержимым отклоняется; JPEG с GPS после обработки не содержит EXIF и стал WebP; загрузка в чужое объявление = 404; смена порядка; DELETE удаляет строку и ставит два сообщения в outbox.
+
+**Почему именно так:**
+- **Тип по содержимому, а не по расширению/Content-Type** — расширение и заголовок задаёт клиент; полагаться на них = принять `.jpg` с исполняемым содержимым. Определяем по magic bytes.
+- **Снятие EXIF обязательно** — координаты съёмки в метаданных фото квартиры = прямая утечка адреса продавца. Ориентацию применяем **до** удаления метаданных, иначе портретные фото развернутся.
+- **Проверка размеров до декодирования** — декодировать «бомбу» 60000×60000, чтобы потом отклонить, значит уже съесть память; читаем только заголовок.
+- **Приватный бакет + presigned URL** — прямые постоянные ссылки на объект наружу не публикуются; доступ ограничен по времени и генерируется бэкендом.
+- **Outbox для удаления объектов** — HTTP-запрос не должен ждать MinIO и падать, если хранилище недоступно; удаление гарантированно доедет фоновым обработчиком (повтор при сбое), не блокируя пользователя.
+
+**Ключевые файлы:** `Api/Controllers/ListingImagesController.cs`, `Api/Contracts/ListingImageDtos.cs`,
+`Infrastructure/Imaging/{IImageProcessor,ImageSharpImageProcessor,ImageExceptions}.cs`,
+`Infrastructure/Storage/{IObjectStorage,MinioObjectStorage,MinioBucketInitializer,ObjectDeletionOutboxProcessor}.cs`,
+`Domain/Entities/OutboxMessage.cs`, `Infrastructure/Persistence/Configurations/OutboxMessageConfiguration.cs`,
+`Infrastructure/Persistence/Migrations/*_AddOutboxMessages.cs`, тесты `tests/GenesisMarket.Tests/ListingImagesTests.cs`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
   в репозитории отсутствует; текущие 42 подкатегории — заглушка, заменить на реальный список.
-- **Бакет MinIO `listings` не создаётся автоматически** — сейчас создаётся вручную (шаг 3 запуска).
-  TODO: init-контейнер `mc` или «ensure bucket» при старте API.
-- **`FirstImageUrl` в карточке каталога — это `ThumbKey` (ключ объекта), а не готовый URL.** Отдача/подписание
-  ссылок на фото — шаг 2 (загрузка фото); тогда проекция станет реальным URL. Пока фото нет — поле `null`.
+- **`FirstImageUrl` в карточке каталога — это `ThumbKey` (ключ объекта), а не presigned URL.** Загрузка и
+  обработка фото уже есть (фича 10), но проекция каталога пока отдаёт ключ; подписывать ссылки в списковой
+  выдаче (батчем) — отдельный шаг, чтобы не генерировать presigned на каждую карточку синхронно.
 - **`IsBumped` в карточке каталога всегда `false`.** Продвижение (bump) — шаг 7; отдельной колонки в схему
   умышленно не добавляли, чтобы не угадывать будущую модель промо. Когда появится — здесь будет реальное условие.
 - **SMS — заглушка `DevSmsSender`** (код в лог `[DEV SMS] …`). Подтверждение телефона доступно,

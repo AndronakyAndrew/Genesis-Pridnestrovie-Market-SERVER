@@ -3,12 +3,14 @@ using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Auth;
 using GenesisMarket.Infrastructure.Persistence;
+using GenesisMarket.Infrastructure.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -49,7 +51,27 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             services.AddSingleton<CapturingVerificationSender>();
             services.AddSingleton<IVerificationSender>(
                 sp => sp.GetRequiredService<CapturingVerificationSender>());
+
+            // MinIO в тестах не поднимаем: подменяем хранилище in-memory реализацией.
+            services.RemoveAll<IObjectStorage>();
+            services.AddSingleton<FakeObjectStorage>();
+            services.AddSingleton<IObjectStorage>(sp => sp.GetRequiredService<FakeObjectStorage>());
+
+            // Фоновые сервисы, которым нужен реальный MinIO, в тестах не запускаем.
+            RemoveHostedService<MinioBucketInitializer>(services);
+            RemoveHostedService<ObjectDeletionOutboxProcessor>(services);
         });
+    }
+
+    /// <summary>Доступ к фейковому хранилищу для проверок в тестах загрузки фото.</summary>
+    public FakeObjectStorage Storage => Services.GetRequiredService<FakeObjectStorage>();
+
+    private static void RemoveHostedService<T>(IServiceCollection services)
+    {
+        var descriptor = services.FirstOrDefault(
+            s => s.ServiceType == typeof(IHostedService) && s.ImplementationType == typeof(T));
+        if (descriptor is not null)
+            services.Remove(descriptor);
     }
 
     /// <summary>Последний код, «отправленный» на указанную цель (email/телефон).</summary>

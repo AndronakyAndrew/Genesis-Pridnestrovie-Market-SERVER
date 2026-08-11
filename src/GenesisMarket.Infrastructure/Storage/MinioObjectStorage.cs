@@ -48,4 +48,26 @@ public class MinioObjectStorage(IMinioClient client, IOptions<MinioOptions> opti
 
         await client.RemoveObjectAsync(args, ct);
     }
+
+    public async Task<string> GetPresignedUrlAsync(string objectName, TimeSpan expiry, CancellationToken ct = default)
+    {
+        var args = new PresignedGetObjectArgs()
+            .WithBucket(_options.Bucket)
+            .WithObject(objectName)
+            .WithExpiry((int)expiry.TotalSeconds);
+
+        return await client.PresignedGetObjectAsync(args);
+    }
+
+    public async Task EnsureBucketAsync(CancellationToken ct = default)
+    {
+        var exists = await client.BucketExistsAsync(
+            new BucketExistsArgs().WithBucket(_options.Bucket), ct);
+
+        if (!exists)
+            await client.MakeBucketAsync(new MakeBucketArgs().WithBucket(_options.Bucket), ct);
+
+        // Публичную политику доступа НЕ устанавливаем: бакет остаётся приватным,
+        // отдача — только через presigned URL с ограниченным TTL.
+    }
 }

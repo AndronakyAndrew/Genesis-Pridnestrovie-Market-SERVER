@@ -40,6 +40,11 @@ public static class DependencyInjection
 
         services.AddScoped<IObjectStorage, MinioObjectStorage>();
 
+        // Обработка изображений (без состояния) и фоновые сервисы хранилища.
+        services.AddSingleton<Imaging.IImageProcessor, Imaging.ImageSharpImageProcessor>();
+        services.AddHostedService<MinioBucketInitializer>();
+        services.AddHostedService<ObjectDeletionOutboxProcessor>();
+
         // ---- Пароли (собственная аутентификация) ----
         services.Configure<BcryptOptions>(configuration.GetSection(BcryptOptions.Section));
         services.AddSingleton<CommonPasswords>();
