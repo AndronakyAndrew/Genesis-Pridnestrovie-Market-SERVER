@@ -88,7 +88,10 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         ListingStatus status = ListingStatus.Active,
         string title = "Диван угловой тестовый",
         Category category = Category.Home,
-        int subcategoryId = 18)
+        int subcategoryId = 18,
+        decimal? price = 3000,
+        PriceType priceType = PriceType.Fixed,
+        City city = City.Bendery)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -99,11 +102,11 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             Slug = $"seed-{Guid.NewGuid():N}",
             Title = title,
             Description = "Почти новый диван, тестовое описание объявления",
-            Price = 3000,
-            PriceType = PriceType.Fixed,
+            Price = price,
+            PriceType = priceType,
             Category = category,
             SubcategoryId = subcategoryId, // home/mebel из сида
-            City = City.Bendery,
+            City = city,
             Condition = Condition.Used,
             Status = status,
             PublishedAt = published ? DateTimeOffset.UtcNow : null,
@@ -112,6 +115,16 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         db.Listings.Add(listing);
         await db.SaveChangesAsync();
         return listing.Id;
+    }
+
+    /// <summary>Выставляет счётчик просмотров напрямую (для сортировки popular).</summary>
+    public async Task SetViewsAsync(Guid listingId, int views)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Listings
+            .Where(l => l.Id == listingId)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.ViewsCount, views));
     }
 
     public async Task BanUserAsync(Guid userId)

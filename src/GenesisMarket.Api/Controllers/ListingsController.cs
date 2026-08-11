@@ -9,6 +9,7 @@ using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -27,24 +28,87 @@ public class ListingsController(
     IListingViewCounter viewCounter,
     IValidator<CreateListingRequest> createValidator,
     IValidator<UpdateListingRequest> updateValidator,
+    IMemoryCache cache,
     IOptions<ListingOptions> options) : ApiControllerBase
 {
     // Статусы «в обороте» — учитываются в лимите и проверке дубликатов.
     private static readonly ListingStatus[] InCirculation =
         [ListingStatus.Active, ListingStatus.PendingReview];
 
+    private const int DefaultLimit = 20;
+    private const int MaxLimit = 50;
+    private const int MaxCities = 7;                       // столько городов в ПМР
+    private static readonly TimeSpan CountCacheTtl = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Каталог: только Active, курсорная пагинация, сортировка из белого списка.
+    /// Отдаёт витринную карточку (без телефона/email/UserId владельца).
+    /// </summary>
     [AllowAnonymous]
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<ListingResponse>>> GetAll(CancellationToken ct)
+    public async Task<ActionResult<CatalogPageResponse>> GetAll(
+        [FromQuery] CatalogQuery query, CancellationToken ct)
     {
-        // Каталог показывает только опубликованные (Active) объявления.
-        var items = await db.Listings.AsNoTracking()
-            .Where(l => l.Status == ListingStatus.Active)
-            .OrderByDescending(l => l.PublishedAt)
-            .Select(l => Map(l))
+        if (ValidateFilters(query) is { } bad)
+            return bad;
+
+        if (CatalogQueryBuilder.ParseSort(query.Sort) is not { } sort)
+            return Problem(title: "Неизвестная сортировка", statusCode: StatusCodes.Status400BadRequest);
+
+        var limit = Math.Clamp(query.Limit ?? DefaultLimit, 1, MaxLimit);
+
+        var listings = CatalogQueryBuilder.Filter(db.Listings.AsNoTracking(), query);
+
+        if (query.Cursor is { Length: > 0 } cursor)
+        {
+            if (!CatalogCursor.TryDecode(cursor, CatalogQueryBuilder.Token(sort), out var key, out var afterId))
+                return Problem(title: "Некорректный курсор", statusCode: StatusCodes.Status400BadRequest);
+            listings = CatalogQueryBuilder.ApplyKeyset(listings, sort, key, afterId);
+        }
+
+        // Тянем на одну запись больше лимита — так узнаём hasMore без отдельного запроса.
+        // Первое фото — коррелированным подзапросом (Select), без Include всей коллекции.
+        var rows = await CatalogQueryBuilder.ApplyOrder(listings, sort)
+            .Take(limit + 1)
+            .Select(l => new CatalogRow(
+                l.Id, l.Slug, l.Title, l.Price, l.PriceType, l.City, l.Category,
+                l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
+                l.PublishedAt, l.CreatedAt, l.ViewsCount))
             .ToListAsync(ct);
 
-        return Ok(items);
+        var hasMore = rows.Count > limit;
+        var page = rows.Take(limit).ToList();
+        var nextCursor = hasMore
+            ? CatalogCursor.Encode(
+                CatalogQueryBuilder.Token(sort),
+                CatalogQueryBuilder.NextKey(sort, page[^1]),
+                page[^1].Id)
+            : null;
+
+        var items = page.Select(r => r.ToCard()).ToList();
+        return Ok(new CatalogPageResponse(items, nextCursor, hasMore));
+    }
+
+    /// <summary>
+    /// Общее количество по тем же фильтрам, что и каталог. Точный COUNT дорог,
+    /// поэтому результат кэшируется на 60 секунд по набору фильтров.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("count")]
+    public async Task<ActionResult<ListingCountResponse>> Count(
+        [FromQuery] CatalogQuery query, CancellationToken ct)
+    {
+        if (ValidateFilters(query) is { } bad)
+            return bad;
+
+        var cacheKey = CountCacheKey(query);
+        if (!cache.TryGetValue(cacheKey, out long total))
+        {
+            total = await CatalogQueryBuilder.Filter(db.Listings.AsNoTracking(), query).LongCountAsync(ct);
+            cache.Set(cacheKey, total, CountCacheTtl);
+        }
+
+        return Ok(new ListingCountResponse(total));
     }
 
     [AllowAnonymous]
@@ -222,6 +286,37 @@ public class ListingsController(
     }
 
     // ---- helpers ----
+
+    /// <summary>Общие проверки фильтров каталога (для /listings и /listings/count). null — ок.</summary>
+    private ObjectResult? ValidateFilters(CatalogQuery query)
+    {
+        if (query.Cities is { Count: > MaxCities })
+            return Problem(title: $"Слишком много городов в фильтре (максимум {MaxCities})",
+                statusCode: StatusCodes.Status400BadRequest);
+
+        if (query.PriceFrom is { } from && query.PriceTo is { } to && from > to)
+            return Problem(title: "priceFrom не может быть больше priceTo",
+                statusCode: StatusCodes.Status400BadRequest);
+
+        return null;
+    }
+
+    /// <summary>Стабильный ключ кэша количества по набору фильтров (сорт/курсор/лимит не влияют).</summary>
+    private static string CountCacheKey(CatalogQuery q)
+    {
+        var cities = q.Cities is { Count: > 0 }
+            ? string.Join('.', q.Cities.Select(c => (int)c).OrderBy(c => c))
+            : "-";
+        return string.Join('|',
+            "count",
+            q.Category?.ToString() ?? "-",
+            q.Subcategory?.ToString() ?? "-",
+            cities,
+            q.PriceFrom?.ToString() ?? "-",
+            q.PriceTo?.ToString() ?? "-",
+            q.Condition?.ToString() ?? "-",
+            q.PriceType?.ToString() ?? "-");
+    }
 
     /// <summary>Проверки при публикации: подтверждённый контакт + лимит «в обороте». null — ок.</summary>
     private async Task<ObjectResult?> PublishGuardAsync(Guid userId, CancellationToken ct)
