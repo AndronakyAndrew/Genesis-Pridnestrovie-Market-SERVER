@@ -58,6 +58,13 @@ public class Listing : BaseEntity, IOwnedResource
     /// </summary>
     public int FavoritesCount { get; private set; }
 
+    /// <summary>
+    /// Приоритет в очереди модерации. Обычно 0; поднимается автоматикой жалоб
+    /// (N независимых Fraud/Prohibited на объявление) — тогда объявление уходит
+    /// в PendingReview и в начало очереди модерации. Извне не редактируется.
+    /// </summary>
+    public int ModerationPriority { get; private set; }
+
     public DateTimeOffset? PublishedAt { get; set; }
 
     /// <summary>Метка мягкого удаления. Заполнена ⇒ объявление скрыто query-фильтром.</summary>

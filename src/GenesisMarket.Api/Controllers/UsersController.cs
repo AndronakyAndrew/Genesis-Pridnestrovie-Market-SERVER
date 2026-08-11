@@ -38,8 +38,9 @@ public class UsersController(AppDbContext db) : ApiControllerBase
             user.Profile.AvatarUrl,
             registeredAt,
             activeListings,
-            AverageRating: null, // появится с отзывами (шаг 11)
-            ReviewsCount: 0,
+            // Денормализованный агрегат отзывов (поддерживается триггером reviews_rating_sync).
+            AverageRating: user.AverageRating,
+            ReviewsCount: user.ReviewsCount,
             user.PhoneVerified));
     }
 }

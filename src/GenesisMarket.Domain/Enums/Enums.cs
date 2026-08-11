@@ -86,3 +86,37 @@ public enum VerificationChannel
     Email,
     Phone
 }
+
+/// <summary>
+/// Тип объекта жалобы. В БД хранится строкой (не входит в native enum-ы каталога).
+/// </summary>
+public enum ReportTargetType
+{
+    Listing,
+    User,
+    Review
+}
+
+/// <summary>Причина жалобы. В БД хранится строкой.</summary>
+public enum ReportReason
+{
+    Spam,
+    Fraud,
+    Prohibited,
+    WrongCategory,
+    Duplicate,
+    PriceViolation,
+    Other
+}
+
+/// <summary>
+/// Статус обработки жалобы. В БД хранится строкой.
+/// New → InReview → Resolved; ветка Rejected (жалоба отклонена модератором).
+/// </summary>
+public enum ReportStatus
+{
+    New,
+    InReview,
+    Resolved,
+    Rejected
+}

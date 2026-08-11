@@ -190,6 +190,52 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         return await db.ContactReveals.CountAsync(r => r.ListingId == listingId);
     }
 
+    /// <summary>Пишет факт раскрытия контактов (гейт для отзыва) напрямую в журнал.</summary>
+    public async Task SeedContactRevealAsync(Guid listingId, Guid viewerUserId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.ContactReveals.Add(new ContactReveal
+        {
+            ListingId = listingId,
+            ViewerUserId = viewerUserId,
+            IpHash = "seed-iphash"
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Денормализованный агрегат отзывов продавца (для проверки триггера).</summary>
+    public async Task<(double? Average, int Count)> UserRatingAsync(Guid userId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var u = await db.Users.AsNoTracking()
+            .Where(x => x.Id == userId)
+            .Select(x => new { x.AverageRating, x.ReviewsCount })
+            .FirstAsync();
+        return (u.AverageRating, u.ReviewsCount);
+    }
+
+    /// <summary>Текущий статус и приоритет очереди модерации объявления (для проверки автоматики).</summary>
+    public async Task<(string Status, int ModerationPriority)> ListingModerationAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var l = await db.Listings.IgnoreQueryFilters()
+            .Where(x => x.Id == listingId)
+            .Select(x => new { x.Status, x.ModerationPriority })
+            .FirstAsync();
+        return (l.Status.ToString(), l.ModerationPriority);
+    }
+
+    /// <summary>Сколько жалоб записано на объект (для проверки дедупликации).</summary>
+    public async Task<int> ReportCountAsync(Guid targetId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.Reports.CountAsync(r => r.TargetId == targetId);
+    }
+
     /// <summary>Денормализованный счётчик избранного у объявления (для проверки триггера).</summary>
     public async Task<int> FavoritesCountAsync(Guid listingId)
     {

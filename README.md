@@ -465,6 +465,33 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 13. Слой доверия: отзывы и жалобы
+
+**Что сделано:**
+- Две сущности (миграция `AddTrustLayer`): `Review` (Id, ListingId, AuthorId, TargetUserId, Rating 1..5, Text ≤1000, IsHidden, HiddenByUserId?) и `Report` (TargetType `{Listing,User,Review}`, TargetId, ReporterId?, ReporterIpHash?, Reason `{Spam,Fraud,Prohibited,WrongCategory,Duplicate,PriceViolation,Other}`, Comment ≤500, Status `{New,InReview,Resolved,Rejected}`, ResolvedByUserId?, ResolvedAt?, Resolution?). Enum-ы жалоб — строками (`HasConversion<string>()`), не native-типами.
+- **Отзывы.** `POST /api/reviews` (`[Authorize]`), `GET /api/users/{id}/reviews` (публичный, курсорная пагинация, скрытые не отдаются), `PUT /api/reviews/{id}` (правка автором в окне 24ч), `POST /api/reviews/{id}/hide` (`[Authorize(Policy="Moderator")]`, идемпотентно).
+- **Гейт анти-накрутки:** оставить отзыв можно, только если этот пользователь ранее вызывал `/contact` по объявлению (проверка `AnyAsync` по `ContactReveals` с `ViewerUserId`). Нет ни одной попытки контакта → `403`.
+- **Один отзыв на пару (AuthorId, ListingId)** — уникальный индекс; повтор → `409` (гонку ловим по `23505`). **Отзыв самому себе** (автор = владелец объявления) → `400`, проверяется до гейта контактов.
+- **`AverageRating`/`ReviewsCount` у пользователя — денормализованные поля,** пересчёт **триггером БД `trg_reviews_rating`** (функция `reviews_rating_sync`, `AFTER INSERT/UPDATE/DELETE ON reviews`) в той же транзакции, что и запись/правка/скрытие. Скрытые отзывы (`IsHidden`) в агрегат не входят; `AverageRating = NULL`, когда видимых отзывов нет. Публичный профиль (`PublicProfileResponse`) теперь отдаёт реальные значения.
+- **Жалобы.** `POST /api/reports` — **доступен анонимам** (мошенничество замечает и незарегистрированный). Rate-limit in-memory: **5/час на IpHash** (аноним), **20/час на пользователя** (`IReportRateLimiter`, тот же приём, что у раскрытия контактов). Дубликат жалобы того же репортёра на тот же объект (среди открытых `New/InReview`) → `200` **без новой записи**; для анонима репортёр опознаётся по `ReporterIpHash` (HMAC IP, сырой IP не хранится). Несуществующий объект → `404`.
+- **Автоматика модерации:** при **≥3 независимых** открытых жалобах `Fraud`/`Prohibited` на одно объявление — автоперевод `Active → PendingReview` и подъём `ModerationPriority` (в начало очереди). Независимость = различные `ReporterId`, для анонимов — различные `ReporterIpHash`. Порог и приоритет — в конфиге (секция `Trust`). Запись жалобы и автоперевод — в одной транзакции.
+- Тесты (Testcontainers): отзыв без предшествующего contact-reveal → 403; второй отзыв на то же объявление → 409; отзыв самому себе → 400; пересчёт агрегата (среднее из двух); скрытие модератором убирает отзыв из выдачи и из агрегата; правка автором в окне и запрет чужому; дедуп жалобы; 3 независимых Fraud → PendingReview; 2 не хватает; 404 на несуществующий объект; анонимный приём + rate-limit.
+
+**Почему именно так:**
+- **Гейт по `ContactReveals`, а не по заказам** — сделки офлайн, «заказа» может не быть; но раскрытие контакта — минимальный след реального намерения, отсекающий накрутку без единой попытки связаться.
+- **Триггер для агрегата рейтинга** — как у `favoritesCount`: профиль отдаёт рейтинг без `AVG`/`COUNT` на каждый запрос, и агрегат всегда согласован (пересчёт в одной транзакции с изменением отзыва, включая скрытие).
+- **Жалобы анонимам + `ReporterIpHash`** — приём сигнала важнее, чем регистрация репортёра; HMAC IP даёт дедуп и подсчёт независимости, не сохраняя сырой IP (как в анти-скрейпинге контактов).
+- **Порог 3 независимых, а не N жалоб** — один пользователь (или один IP) не может в одиночку отправить объявление на модерацию; нужна независимая корроборация.
+- **`ModerationPriority` в `Listing`** — «начало очереди» выражено полем сортировки, а не отдельной таблицей очереди (её ещё нет); когда появится UI модерации — сортировка по `ModerationPriority DESC` уже готова.
+
+**Ключевые файлы:** `Api/Controllers/{ReviewsController,ReportsController}.cs`, `Api/Contracts/{ReviewDtos,ReportDtos}.cs`,
+`Api/Trust/{TrustOptions,ReportRateLimiter,TrustServiceCollectionExtensions}.cs`, `Api/Controllers/UsersController.cs` (реальные `AverageRating`/`ReviewsCount`),
+`Domain/Entities/{Review,Report}.cs`, `Domain/Enums/Enums.cs` (три enum-а жалоб), `Domain/Entities/User.cs` (`AverageRating`/`ReviewsCount`), `Domain/Entities/Listing.cs` (`ModerationPriority`),
+`Infrastructure/Persistence/Configurations/{ReviewConfiguration,ReportConfiguration}.cs`,
+`Infrastructure/Persistence/Migrations/*_AddTrustLayer.cs` (таблицы + триггер рейтинга), тесты `tests/GenesisMarket.Tests/{ReviewsTests,ReportsTests}.cs`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
@@ -484,4 +511,5 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 - **Аватар (`POST /api/me/avatar`) — минимальная реализация**: валидация типа по magic bytes + размер,
   серверный ключ, сохранение в MinIO; `AvatarUrl` хранит ключ объекта. Обработка (ресайз, снятие EXIF,
   WebP) и presigned-URL для отдачи — шаг 8; заменит текущую реализацию.
-- **AverageRating/ReviewsCount в публичном профиле — заглушки** (null/0): появятся с отзывами (шаг 11).
+- **Модерация жалоб — только приём и автоматика.** Эндпоинтов разбора (список очереди, `Resolve`/`Reject`, смена `Status`) пока нет: поля `Status`/`ResolvedBy*`/`Resolution` и `ModerationPriority` заполнены под будущий UI модератора. Скрытие отзывов (`/hide`) уже есть.
+- **Rate-limit жалоб — in-memory** (на инстанс), как и остальные лимиты. При нескольких инстансах API нужен общий стор (Redis).
