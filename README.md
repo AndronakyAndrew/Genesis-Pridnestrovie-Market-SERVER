@@ -301,6 +301,52 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 `Api/Auth/SecurityStampValidator.cs` (проверка IsDeleted),
 `Infrastructure/Persistence/Migrations/*_AddUserIsDeleted.cs`, тесты `tests/GenesisMarket.Tests/ProfileTests.cs`.
 
+### 8. Каталог объявлений (курсорная пагинация, count с кэшем)
+
+**Что сделано:**
+- `GET /api/listings` — витрина со свободными фильтрами: `category`, `subcategory`, `cities` (несколько),
+  `priceFrom`/`priceTo` (long), `condition`, `priceType`, `sort`, `cursor`, `limit`.
+- **Курсорная (keyset), не offset:** курсор — base64url от кортежа (значение поля сортировки, `Id`-тайбрейкер).
+  Ответ `{ items, nextCursor, hasMore }`. `limit` по умолчанию 20, максимум 50 (**больше — обрезается, не ошибка**).
+- **Сортировка строго из белого списка** (`new | price_asc | price_desc | popular`) через enum `CatalogSort`;
+  ORDER BY не собирается из строки запроса. Договорные цены (`Price IS NULL`) при сортировке по цене — всегда в конце.
+- **Только `Active` попадает в каталог** — `Sold/Archived/PendingReview/Rejected` и черновики не видны никогда,
+  включая случай, когда запрос делает их владелец (эндпоинт вообще не ветвится по владельцу).
+- **Валидация:** `cities` > 7 → 400; `priceFrom > priceTo` → 400; неизвестный `sort` → 400; битый/чужой `cursor` → 400
+  (в курсоре хранится маркер сортировки и сверяется с запросом).
+- `GET /api/listings/count` — общее количество по тем же фильтрам, **кэш `IMemoryCache` на 60 c** по набору
+  фильтров (точный `COUNT` на каждый запрос не делаем).
+- **DTO карточки `ListingCardResponse`**: Id, Slug, Title, Price, PriceType, City, Category, FirstImageUrl,
+  PublishedAt, IsBumped. **Телефона, email и UserId владельца в карточке нет.**
+- **Производительность:** `AsNoTracking` на всех чтениях; первое изображение — коррелированным подзапросом
+  (`Images.OrderBy(SortOrder).Select(ThumbKey).FirstOrDefault()`), **без `Include` всей коллекции**;
+  тянем `limit + 1` строку — так `hasMore` без отдельного запроса.
+- Схему **не меняли** (миграции нет): «new» сортируется по `CreatedAt`, чтобы задействовать индекс шага 1
+  `IX_listings_Status_CreatedAt`.
+
+**Планы запросов** (EXPLAIN ANALYZE, 20k строк, см. диагностику ниже) — используются индексы шага 1:
+- `Active + sort=new` → `Index Scan using IX_listings_Status_CreatedAt` + Incremental Sort (CreatedAt presorted);
+- `Active + category + city + sort=new` → `Bitmap Index Scan on IX_listings_Category_City_Status` + top-N heapsort;
+- `Active + category + priceRange + sort=price_asc` → тот же индекс для фильтра + quicksort по цене
+  (индекса под сортировку по цене в шаге 1 нет — это ожидаемо, объём отсортированных строк ограничен фильтром).
+
+**Почему именно так:**
+- **Keyset, а не offset** — стабильная пагинация без «съезда» при вставках и без роста стоимости на глубоких страницах;
+  `Id`-тайбрейкер даёт строго детерминированный порядок при равных значениях поля сортировки.
+- **`sort` через enum-белый-список** — исключает SQL-инъекцию через ORDER BY и «случайные» поля сортировки.
+- **`count` кэшируется** — точный `COUNT(*)` по растущей таблице дорог; для витрины достаточно приблизительного числа,
+  обновляемого раз в минуту.
+- **Карточка — отдельный DTO с минимумом** — по умолчанию нельзя «забыть» скрыть контакты/владельца.
+- **«new» по `CreatedAt`** — переиспользуем существующий индекс шага 1 вместо новой миграции в прод.
+
+**Ключевые файлы:** `Api/Controllers/ListingsController.cs` (`GetAll`, `Count`),
+`Api/Listings/CatalogQueryBuilder.cs` (фильтры/сортировки/keyset), `Api/Listings/CatalogCursor.cs` (кодек курсора),
+`Api/Contracts/CatalogDtos.cs`, тесты `tests/GenesisMarket.Tests/CatalogTests.cs`,
+диагностика планов `tests/GenesisMarket.Tests/CatalogExplainDiagnostics.cs` (помечена `Skip`, запускать вручную).
+
+> Побочный фикс: в `appsettings.json` секция `Listings` не закрывалась `}` перед `Phone` — файл был невалидным
+> JSON и приложение не стартовало. Исправлено.
+
 ---
 
 ## Известные ограничения
@@ -309,6 +355,10 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
   в репозитории отсутствует; текущие 42 подкатегории — заглушка, заменить на реальный список.
 - **Бакет MinIO `listings` не создаётся автоматически** — сейчас создаётся вручную (шаг 3 запуска).
   TODO: init-контейнер `mc` или «ensure bucket» при старте API.
+- **`FirstImageUrl` в карточке каталога — это `ThumbKey` (ключ объекта), а не готовый URL.** Отдача/подписание
+  ссылок на фото — шаг 2 (загрузка фото); тогда проекция станет реальным URL. Пока фото нет — поле `null`.
+- **`IsBumped` в карточке каталога всегда `false`.** Продвижение (bump) — шаг 7; отдельной колонки в схему
+  умышленно не добавляли, чтобы не угадывать будущую модель промо. Когда появится — здесь будет реальное условие.
 - **SMS — заглушка `DevSmsSender`** (код в лог `[DEV SMS] …`). Подтверждение телефона доступно,
   но на проде не гейтит публикацию (гейт = почта). Реальная отправка — вторая реализация `ISmsSender`
   (SMS-провайдер или Telegram/Viber-бот).
