@@ -35,6 +35,14 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         Environment.SetEnvironmentVariable(
             "ConnectionStrings__Postgres", _postgres.GetConnectionString());
 
+        // Ключ HMAC для хеширования IP — чтобы раскрытие контактов писало IpHash, а не сырой IP.
+        Environment.SetEnvironmentVariable(
+            "Security__IpHashKey", "test-iphash-key-0123456789abcdef0123456789abcdef");
+
+        // Задержку анонимам в тестах убираем — проверяем логику, а не тайминг.
+        Environment.SetEnvironmentVariable("ContactReveal__MinDelayMs", "0");
+        Environment.SetEnvironmentVariable("ContactReveal__MaxDelayMs", "0");
+
         // Первое обращение к Services собирает хост (с уже выставленной строкой).
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -156,6 +164,30 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return await db.SearchMisses.CountAsync(m => m.Query == query);
+    }
+
+    /// <summary>Настройка контактных каналов продавца (для тестов раскрытия контактов).</summary>
+    public async Task ConfigureContactAsync(
+        Guid userId, bool showPhone = true,
+        string? telegram = null, bool viber = false, bool whatsapp = false)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Profiles
+            .Where(p => p.UserId == userId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(p => p.ShowPhoneInListing, showPhone)
+                .SetProperty(p => p.TelegramUsername, telegram)
+                .SetProperty(p => p.ViberEnabled, viber)
+                .SetProperty(p => p.WhatsappEnabled, whatsapp));
+    }
+
+    /// <summary>Сколько раскрытий контактов записано по объявлению.</summary>
+    public async Task<int> ContactRevealCountAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.ContactReveals.CountAsync(r => r.ListingId == listingId);
     }
 
     public async Task BanUserAsync(Guid userId)

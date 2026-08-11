@@ -10,8 +10,10 @@ public static class ListingsServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.Configure<ListingOptions>(configuration.GetSection(ListingOptions.Section));
+        services.Configure<ContactRevealOptions>(configuration.GetSection(ContactRevealOptions.Section));
         services.AddScoped<IListingModerationPolicy, ListingModerationPolicy>();
         services.AddScoped<IListingViewCounter, ListingViewCounter>();
+        services.AddScoped<IContactRevealService, ContactRevealService>();
         services.AddValidatorsFromAssemblyContaining<CreateListingRequestValidator>();
         return services;
     }

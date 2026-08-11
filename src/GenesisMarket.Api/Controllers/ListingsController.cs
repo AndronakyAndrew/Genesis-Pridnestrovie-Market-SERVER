@@ -27,6 +27,7 @@ public class ListingsController(
     IAuthorizationService authorization,
     IListingModerationPolicy moderation,
     IListingViewCounter viewCounter,
+    IContactRevealService contactReveal,
     IValidator<CreateListingRequest> createValidator,
     IValidator<UpdateListingRequest> updateValidator,
     IMemoryCache cache,
@@ -226,7 +227,7 @@ public class ListingsController(
         if (listing.Status == ListingStatus.Active)
             await viewCounter.RegisterAsync(listing.Id, ClientIp(), ct);
 
-        return Ok(Map(listing));
+        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     [AllowAnonymous]
@@ -240,7 +241,52 @@ public class ListingsController(
         if (listing.Status == ListingStatus.Active)
             await viewCounter.RegisterAsync(listing.Id, ClientIp(), ct);
 
-        return Ok(Map(listing));
+        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct)));
+    }
+
+    /// <summary>
+    /// Раскрытие контактов продавца. Отдаёт телефон и deeplink'и мессенджеров
+    /// ТОЛЬКО если объявление Active, продавец не забанен и ShowPhoneInListing = true;
+    /// иначе — единый 404 без объяснения причины. Телефон нигде больше в API не отдаётся.
+    /// Анти-скрейпинг: rate-limit по (IpHash, UserId), задержка анонимам, журнал раскрытий.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("{id:guid}/contact")]
+    public async Task<ActionResult<SellerContactResponse>> GetContact(Guid id, CancellationToken ct)
+    {
+        var userId = CurrentUserId();
+        var ipHash = contactReveal.HashIp(ClientIp());
+
+        var rate = contactReveal.CheckRateLimit(ipHash, userId);
+        if (!rate.Allowed)
+            return TooManyRequests((int)Math.Ceiling(rate.RetryAfter.TotalSeconds));
+
+        // Анонимов намеренно замедляем — массовый обход дороже единичного просмотра.
+        if (userId is null)
+            await contactReveal.DelayAnonymousAsync(ct);
+
+        // Телефон/username продавца читаются ТОЛЬКО здесь и только для построения ссылок.
+        var seller = await db.Listings.AsNoTracking()
+            .Where(l => l.Id == id && l.Status == ListingStatus.Active)
+            .Select(l => new
+            {
+                l.Owner!.IsBanned,
+                l.Owner.PhoneE164,
+                ShowPhone = l.Owner.Profile!.ShowPhoneInListing,
+                l.Owner.Profile.TelegramUsername,
+                l.Owner.Profile.ViberEnabled,
+                l.Owner.Profile.WhatsappEnabled
+            })
+            .FirstOrDefaultAsync(ct);
+
+        // Единый 404 без деталей: нет объявления / не Active / бан / показ выключен / нет телефона.
+        if (seller is null || seller.IsBanned || !seller.ShowPhone || string.IsNullOrEmpty(seller.PhoneE164))
+            return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
+
+        await contactReveal.RecordAsync(id, userId, ipHash, ct);
+
+        return Ok(ContactLinkBuilder.Build(
+            seller.PhoneE164, seller.TelegramUsername, seller.ViberEnabled, seller.WhatsappEnabled));
     }
 
     [Authorize]
@@ -322,7 +368,7 @@ public class ListingsController(
         listing.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
-        return Ok(Map(listing));
+        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     [Authorize]
@@ -367,7 +413,7 @@ public class ListingsController(
         listing.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
 
-        return Ok(Map(listing));
+        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     [Authorize]
@@ -381,11 +427,19 @@ public class ListingsController(
         if (status is { } s)
             query = query.Where(l => l.Status == s);
 
-        var items = await query
+        var listings = await query
             .OrderByDescending(l => l.CreatedAt)
-            .Select(l => Map(l))
             .ToListAsync(ct);
 
+        // Агрегат раскрытий — одним GROUP BY по всем id, без N+1.
+        var ids = listings.Select(l => l.Id).ToList();
+        var counts = await db.ContactReveals
+            .Where(r => ids.Contains(r.ListingId))
+            .GroupBy(r => r.ListingId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
+
+        var items = listings.Select(l => Map(l, counts.GetValueOrDefault(l.Id))).ToList();
         return Ok(items);
     }
 
@@ -481,8 +535,12 @@ public class ListingsController(
         return ValidationProblem(ModelState);
     }
 
-    private static ListingResponse Map(Listing l) => new(
+    private static ListingResponse Map(Listing l, int contactRevealCount = 0) => new(
         l.Id, l.Slug, l.Title, l.Description, l.Price, l.PriceType, l.Category,
         l.SubcategoryId, l.City, l.District, l.Condition, l.Status,
-        l.ViewsCount, l.OwnerId, l.CreatedAt, l.PublishedAt);
+        l.ViewsCount, l.OwnerId, l.CreatedAt, l.PublishedAt, contactRevealCount);
+
+    /// <summary>Число раскрытий контактов по объявлению — отдельным запросом (не N+1).</summary>
+    private Task<int> RevealCountAsync(Guid listingId, CancellationToken ct) =>
+        db.ContactReveals.CountAsync(r => r.ListingId == listingId, ct);
 }

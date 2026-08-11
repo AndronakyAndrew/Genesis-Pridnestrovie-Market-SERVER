@@ -415,6 +415,29 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 11. Раскрытие контактов продавца (анти-скрейпинг)
+
+**Что сделано:**
+- Единственный эндпоинт, отдающий телефон: `GET /api/listings/{id}/contact` → `{ phone, telegramUrl, viberUrl, whatsappUrl }`. Отдаётся **только** если объявление `Active`, продавец не забанен и `Profile.ShowPhoneInListing = true` (плюс телефон вообще задан); иначе — **единый 404 без объяснения причины**.
+- Deeplink'и строятся на сервере из E.164-телефона и флагов профиля: `https://t.me/{username}`, `viber://chat?number=%2B{digits}`, `https://wa.me/{digits}`; выключенный канал ⇒ соответствующее поле `null`.
+- **Телефон нигде больше в API не появляется** — ни в `ListingResponse`, ни в карточке каталога, ни в публичном профиле, ни в поиске (в проекциях его просто нет).
+- Анти-скрейпинг: rate-limit с партиционированием по (IpHash, UserId) — **10/час** анонимам (по IpHash), **30/час** авторизованному (по UserId); анонимам добавлена задержка ответа **300–600 мс**; каждое раскрытие пишется в `ContactReveals` (`ListingId`, `ViewerUserId?`, `IpHash`, `CreatedAt`), где IP хранится **только как HMAC-SHA256** (ключ `Security:IpHashKey` из env); при **> 50** раскрытиях с одного IpHash за час — `warning` в лог.
+- `contactRevealCount` в `ListingResponse` — агрегат из `ContactReveals`, считается отдельным запросом (в списке «мои объявления» — одним `GROUP BY`, без N+1).
+- Тесты (Testcontainers): телефон отсутствует в `GET /api/listings` и `GET /api/listings/{id}`; успешное раскрытие отдаёт телефон и серверные deeplink'и и пишет строку в журнал; выключенные каналы дают `null`; `ShowPhoneInListing = false` ⇒ 404 и записи нет; превышение анонимного лимита ⇒ 429 с `Retry-After`.
+
+**Почему именно так:**
+- **Единый 404 для всех причин отказа** (нет объявления / не Active / бан / показ выключен / нет телефона) — не даёт скрейперу отличить «скрыто» от «нет»; телефон и username читаются из БД **только** внутри этого экшена.
+- **IP только как HMAC** — журнал раскрытий не хранит сырой IP (тот же принцип, что у счётчика просмотров); без ключа `Security:IpHashKey` IP не сохраняется.
+- **Задержка анонимам** делает массовый обход дороже единичного просмотра, не мешая обычному пользователю; авторизованных не тормозим (у них выше лимит и они опознаваемы).
+- **`contactRevealCount` отдельным запросом** — агрегат по append-only журналу не тащим джойном в каждую выборку объявлений; в списковых сценариях считаем батчем `GROUP BY`, чтобы не ловить N+1.
+
+**Ключевые файлы:** `Api/Controllers/ListingsController.cs` (`GetContact`), `Api/Contracts/ContactDtos.cs`,
+`Api/Listings/{ContactRevealService,ContactLinkBuilder,ContactRevealOptions}.cs`, `Api/Auth/IpHasher.cs` (переиспользуется),
+`Domain/Entities/ContactReveal.cs`, `Infrastructure/Persistence/Configurations/ContactRevealConfiguration.cs`,
+`Infrastructure/Persistence/Migrations/*_AddContactReveals.cs`, тесты `tests/GenesisMarket.Tests/ContactRevealTests.cs`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
