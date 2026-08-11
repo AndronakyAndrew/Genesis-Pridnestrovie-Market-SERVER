@@ -287,6 +287,71 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         await db.SaveChangesAsync();
     }
 
+    /// <summary>Прямое создание жалобы на объект (для наполнения очереди модерации).</summary>
+    public async Task<Guid> SeedReportAsync(
+        Guid targetId,
+        ReportTargetType targetType = ReportTargetType.Listing,
+        ReportReason reason = ReportReason.Spam,
+        Guid? reporterId = null,
+        string? comment = "Тестовая жалоба")
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var report = new Report
+        {
+            TargetType = targetType,
+            TargetId = targetId,
+            ReporterId = reporterId,
+            Reason = reason,
+            Comment = comment
+        };
+        db.Reports.Add(report);
+        await db.SaveChangesAsync();
+        return report.Id;
+    }
+
+    /// <summary>Сколько записей журнала модерации по объекту (опционально по коду действия).</summary>
+    public async Task<int> ModerationLogCountAsync(Guid targetId, string? action = null)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var q = db.ModerationLogs.Where(m => m.TargetId == targetId);
+        if (action is not null)
+            q = q.Where(m => m.Action == action);
+        return await q.CountAsync();
+    }
+
+    /// <summary>Поднимает приоритет очереди модерации напрямую (эмуляция автофлага для теста сортировки).</summary>
+    public async Task SetListingPriorityAsync(Guid listingId, int priority)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Listings
+            .Where(l => l.Id == listingId)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.ModerationPriority, priority));
+    }
+
+    /// <summary>Забанен ли пользователь (для проверки транзакции бана).</summary>
+    public async Task<(bool IsBanned, DateTimeOffset? Until)> UserBanStateAsync(Guid userId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var u = await db.Users.AsNoTracking()
+            .Where(x => x.Id == userId)
+            .Select(x => new { x.IsBanned, x.BannedUntil })
+            .FirstAsync();
+        return (u.IsBanned, u.BannedUntil);
+    }
+
+    /// <summary>Сколько сообщений outbox указанного типа адресовано пользователю (по JSON payload).</summary>
+    public async Task<int> OutboxNotificationCountAsync(Guid userId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.OutboxMessages
+            .CountAsync(m => m.Type == "notification" && m.Payload.Contains(userId.ToString()));
+    }
+
     public async Task BanUserAsync(Guid userId)
     {
         using var scope = Services.CreateScope();
