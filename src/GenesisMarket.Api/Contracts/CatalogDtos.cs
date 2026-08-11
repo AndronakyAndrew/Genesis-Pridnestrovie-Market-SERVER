@@ -55,7 +55,20 @@ public record ListingCardResponse(
     /// Заголовок с подсветкой совпадений (&lt;mark&gt;…&lt;/mark&gt;). HTML-безопасен:
     /// исходный текст экранируется ДО подсветки. null, если поиск (q) не задан.
     /// </summary>
-    string? TitleHighlight = null);
+    string? TitleHighlight = null,
+    /// <summary>Денормализованный счётчик добавлений в избранное (поле listings).</summary>
+    int FavoritesCount = 0,
+    /// <summary>
+    /// Объявление в избранном у текущего пользователя. Заполняется ОДНИМ запросом
+    /// на всю страницу каталога (список Id + один WHERE IN). Для анонима всегда false.
+    /// </summary>
+    bool IsFavorite = false,
+    /// <summary>
+    /// Объявление недоступно (архив/продано/снято/удалено). В каталоге всегда false
+    /// (там только Active); в «моём избранном» — true, если объявление уже не Active:
+    /// карточка не исчезает молча, а помечается этим флагом.
+    /// </summary>
+    bool IsUnavailable = false);
 
 /// <summary>Страница каталога с курсорной пагинацией.</summary>
 public record CatalogPageResponse(

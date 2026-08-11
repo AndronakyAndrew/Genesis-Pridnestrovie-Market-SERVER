@@ -20,7 +20,11 @@ public record ListingResponse(
     Guid OwnerId,
     DateTimeOffset CreatedAt,
     DateTimeOffset? PublishedAt,
-    int ContactRevealCount = 0);
+    int ContactRevealCount = 0,
+    /// <summary>Денормализованный счётчик добавлений в избранное.</summary>
+    int FavoritesCount = 0,
+    /// <summary>Объявление в избранном у текущего пользователя (false для анонима).</summary>
+    bool IsFavorite = false);
 
 /// <summary>
 /// Создание объявления. Валидируется FluentValidation (см. CreateListingRequestValidator).

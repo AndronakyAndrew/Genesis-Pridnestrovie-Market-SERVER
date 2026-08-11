@@ -20,5 +20,10 @@ public class FavoriteConfiguration : IEntityTypeConfiguration<Favorite>
 
         // Связь с User настроена в UserConfiguration (u.Favorites).
         b.HasIndex(f => f.ListingId);
+
+        // Keyset-пагинация «моего избранного»: свежие сверху (CreatedAt DESC),
+        // ListingId — тайбрейкер. Индекс покрывает WHERE UserId + ORDER BY.
+        b.HasIndex(f => new { f.UserId, f.CreatedAt, f.ListingId })
+            .IsDescending(false, true, true);
     }
 }

@@ -88,7 +88,8 @@ public class ListingsController(
             .Project(CatalogQueryBuilder.ApplyOrder(listings, sort).Take(limit + 1))
             .ToListAsync(ct);
 
-        return Ok(BuildPage(rows, sort, limit, items: rows.Take(limit).Select(r => r.ToCard()).ToList()));
+        return await OkPageAsync(
+            BuildPage(rows, sort, limit, items: rows.Take(limit).Select(r => r.ToCard()).ToList()), ct);
     }
 
     /// <summary>
@@ -132,7 +133,7 @@ public class ListingsController(
 
         var page = rows.Take(limit).ToList();
         var items = await HighlightAsync(page, q, ct);
-        return Ok(BuildPage(rows, sort, limit, items));
+        return await OkPageAsync(BuildPage(rows, sort, limit, items), ct);
     }
 
     /// <summary>Fuzzy-поиск по опечаткам, когда FTS ничего не нашёл. Без keyset (только первая страница).</summary>
@@ -152,7 +153,7 @@ public class ListingsController(
         }
 
         var items = await HighlightAsync(rows, q, ct);
-        return Ok(new CatalogPageResponse(items, NextCursor: null, HasMore: false));
+        return await OkPageAsync(new CatalogPageResponse(items, NextCursor: null, HasMore: false), ct);
     }
 
     /// <summary>Достраивает подсвеченный заголовок (ts_headline) к карточкам страницы.</summary>
@@ -167,6 +168,32 @@ public class ListingsController(
         return rows
             .Select(r => r.ToCard() with { TitleHighlight = highlights.GetValueOrDefault(r.Id) })
             .ToList();
+    }
+
+    /// <summary>
+    /// Отдаёт страницу каталога, дозаполнив <c>isFavorite</c> для текущего пользователя
+    /// ОДНИМ запросом на всю страницу (список Id + WHERE IN), не по одному на карточку.
+    /// Аноним и пустая страница — без дополнительного запроса.
+    /// </summary>
+    private async Task<ActionResult<CatalogPageResponse>> OkPageAsync(CatalogPageResponse page, CancellationToken ct)
+    {
+        var userId = CurrentUserId();
+        if (userId is null || page.Items.Count == 0)
+            return Ok(page);
+
+        var ids = page.Items.Select(i => i.Id).ToList();
+        var favIds = await db.Favorites.AsNoTracking()
+            .Where(f => f.UserId == userId.Value && ids.Contains(f.ListingId))
+            .Select(f => f.ListingId)
+            .ToHashSetAsync(ct);
+
+        if (favIds.Count == 0)
+            return Ok(page);
+
+        var items = page.Items
+            .Select(i => favIds.Contains(i.Id) ? i with { IsFavorite = true } : i)
+            .ToList();
+        return Ok(page with { Items = items });
     }
 
     private static CatalogPageResponse BuildPage(
@@ -227,7 +254,7 @@ public class ListingsController(
         if (listing.Status == ListingStatus.Active)
             await viewCounter.RegisterAsync(listing.Id, ClientIp(), ct);
 
-        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct)));
+        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct), await IsFavoriteAsync(listing.Id, ct)));
     }
 
     [AllowAnonymous]
@@ -241,7 +268,7 @@ public class ListingsController(
         if (listing.Status == ListingStatus.Active)
             await viewCounter.RegisterAsync(listing.Id, ClientIp(), ct);
 
-        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct)));
+        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct), await IsFavoriteAsync(listing.Id, ct)));
     }
 
     /// <summary>
@@ -535,12 +562,21 @@ public class ListingsController(
         return ValidationProblem(ModelState);
     }
 
-    private static ListingResponse Map(Listing l, int contactRevealCount = 0) => new(
+    private static ListingResponse Map(Listing l, int contactRevealCount = 0, bool isFavorite = false) => new(
         l.Id, l.Slug, l.Title, l.Description, l.Price, l.PriceType, l.Category,
         l.SubcategoryId, l.City, l.District, l.Condition, l.Status,
-        l.ViewsCount, l.OwnerId, l.CreatedAt, l.PublishedAt, contactRevealCount);
+        l.ViewsCount, l.OwnerId, l.CreatedAt, l.PublishedAt, contactRevealCount,
+        l.FavoritesCount, isFavorite);
 
     /// <summary>Число раскрытий контактов по объявлению — отдельным запросом (не N+1).</summary>
     private Task<int> RevealCountAsync(Guid listingId, CancellationToken ct) =>
         db.ContactReveals.CountAsync(r => r.ListingId == listingId, ct);
+
+    /// <summary>В избранном ли объявление у текущего пользователя (false для анонима).</summary>
+    private async Task<bool> IsFavoriteAsync(Guid listingId, CancellationToken ct)
+    {
+        var userId = CurrentUserId();
+        return userId is not null && await db.Favorites.AsNoTracking()
+            .AnyAsync(f => f.UserId == userId.Value && f.ListingId == listingId, ct);
+    }
 }

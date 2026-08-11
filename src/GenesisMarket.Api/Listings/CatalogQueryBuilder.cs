@@ -36,12 +36,14 @@ public sealed record CatalogRow(
     DateTimeOffset? PublishedAt,
     DateTimeOffset CreatedAt,
     int ViewsCount,
+    int FavoritesCount,
     float Rank)
 {
     // Продвижение (bump) — шаг 7. Пока в каталоге нет продвинутых объявлений,
     // поэтому флаг всегда false; когда появится, здесь будет реальное условие.
     public ListingCardResponse ToCard() => new(
-        Id, Slug, Title, Price, PriceType, City, Category, FirstImageUrl, PublishedAt, IsBumped: false);
+        Id, Slug, Title, Price, PriceType, City, Category, FirstImageUrl, PublishedAt,
+        IsBumped: false, FavoritesCount: FavoritesCount);
 }
 
 /// <summary>
@@ -110,7 +112,7 @@ public static class CatalogQueryBuilder
         query.Select(l => new CatalogRow(
             l.Id, l.Slug, l.Title, l.Price, l.PriceType, l.City, l.Category,
             l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
-            l.PublishedAt, l.CreatedAt, l.ViewsCount,
+            l.PublishedAt, l.CreatedAt, l.ViewsCount, l.FavoritesCount,
             EF.Property<NpgsqlTsVector>(l, "SearchVector").RankCoverDensity(EF.Functions.WebSearchToTsQuery(Config, text))));
 
     /// <summary>Проекция строки без релевантности (rank = 0): обычный каталог и fallback.</summary>
@@ -118,7 +120,7 @@ public static class CatalogQueryBuilder
         query.Select(l => new CatalogRow(
             l.Id, l.Slug, l.Title, l.Price, l.PriceType, l.City, l.Category,
             l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
-            l.PublishedAt, l.CreatedAt, l.ViewsCount, 0f));
+            l.PublishedAt, l.CreatedAt, l.ViewsCount, l.FavoritesCount, 0f));
 
     /// <summary>
     /// Фильтры каталога. Только Active — Sold/Archived/PendingReview/Rejected и черновики

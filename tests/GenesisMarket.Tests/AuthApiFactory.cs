@@ -190,6 +190,57 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         return await db.ContactReveals.CountAsync(r => r.ListingId == listingId);
     }
 
+    /// <summary>Денормализованный счётчик избранного у объявления (для проверки триггера).</summary>
+    public async Task<int> FavoritesCountAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.Listings.IgnoreQueryFilters()
+            .Where(l => l.Id == listingId).Select(l => l.FavoritesCount).FirstAsync();
+    }
+
+    /// <summary>Меняет статус объявления напрямую (для проверки isUnavailable в избранном).</summary>
+    public async Task SetStatusAsync(Guid listingId, ListingStatus status)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Listings
+            .Where(l => l.Id == listingId)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.Status, status));
+    }
+
+    /// <summary>
+    /// Массово наполняет избранное пользователя (count чужих объявлений + count записей).
+    /// Для проверки лимита без 500 HTTP-вызовов. Триггер счётчика при этом отрабатывает.
+    /// </summary>
+    public async Task SeedManyFavoritesAsync(Guid userId, Guid otherOwnerId, int count)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        for (var i = 0; i < count; i++)
+        {
+            var listing = new Listing
+            {
+                Slug = $"seed-fav-{Guid.NewGuid():N}",
+                Title = "Объявление для лимита избранного",
+                Description = "Тестовое описание для наполнения избранного",
+                Price = 100,
+                PriceType = PriceType.Fixed,
+                Category = Category.Other,
+                SubcategoryId = 42,
+                City = City.Tiraspol,
+                Condition = Condition.Used,
+                Status = ListingStatus.Active,
+                PublishedAt = DateTimeOffset.UtcNow,
+                OwnerId = otherOwnerId
+            };
+            db.Listings.Add(listing);
+            db.Favorites.Add(new Favorite { UserId = userId, ListingId = listing.Id });
+        }
+        await db.SaveChangesAsync();
+    }
+
     public async Task BanUserAsync(Guid userId)
     {
         using var scope = Services.CreateScope();
