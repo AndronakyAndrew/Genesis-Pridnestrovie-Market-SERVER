@@ -19,10 +19,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Message> Messages => Set<Message>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<VerificationCode> VerificationCodes => Set<VerificationCode>();
+    public DbSet<SearchMiss> SearchMisses => Set<SearchMiss>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // pg_trgm — для fuzzy-fallback поиска по опечаткам (similarity()).
+        modelBuilder.HasPostgresExtension("pg_trgm");
 
         // ---- Native enum-типы PostgreSQL (не строки, не числа) ----
         // Метки формирует LowerCaseNameTranslator. Тот же транслятор Npgsql
