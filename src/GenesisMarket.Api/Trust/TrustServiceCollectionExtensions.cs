@@ -8,8 +8,7 @@ public static class TrustServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.Configure<TrustOptions>(configuration.GetSection(TrustOptions.Section));
-        // In-memory счётчики живут между запросами ⇒ singleton (как auth rate-limiter).
-        services.AddSingleton<IReportRateLimiter, ReportRateLimiter>();
+        // Rate-limit жалоб — на встроенном RateLimiter (политика "report", лимиты из TrustOptions).
         return services;
     }
 }

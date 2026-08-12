@@ -2,23 +2,20 @@ using GenesisMarket.Api.Auth;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 
 namespace GenesisMarket.Api.Listings;
 
 /// <summary>
-/// Анти-скрейпинг раскрытия контактов: хеширование IP, rate-limit с
-/// партиционированием по (IpHash, UserId), намеренная задержка анонимам,
-/// журналирование каждого раскрытия и алерт при аномальной активности.
+/// Анти-скрейпинг раскрытия контактов: хеширование IP, намеренная задержка анонимам,
+/// журналирование каждого раскрытия и алерт при аномальной активности. Сам rate-limit
+/// (аноним по IP, авторизованный по пользователю) вынесен на встроенный RateLimiter —
+/// политику "contact" (см. <c>RateLimitingSetup</c>).
 /// </summary>
 public interface IContactRevealService
 {
-    /// <summary>HMAC-SHA256 от IP (hex). Партиция rate-limit и значение для журнала.</summary>
+    /// <summary>HMAC-SHA256 от IP (hex). Значение для журнала раскрытий.</summary>
     string HashIp(string? ip);
-
-    /// <summary>Rate-limit по (IpHash, UserId): аноним — по IpHash, авторизованный — по UserId.</summary>
-    RateLimitResult CheckRateLimit(string ipHash, Guid? userId);
 
     /// <summary>Задержка ответа анонимам (случайная), чтобы массовый обход был дороже.</summary>
     Task DelayAnonymousAsync(CancellationToken ct);
@@ -29,49 +26,17 @@ public interface IContactRevealService
 
 public sealed class ContactRevealService(
     AppDbContext db,
-    IMemoryCache cache,
     IIpHasher ipHasher,
     IOptions<ContactRevealOptions> options,
     ILogger<ContactRevealService> logger) : IContactRevealService
 {
     private readonly ContactRevealOptions _options = options.Value;
 
-    // Партиция rate-limit, когда ключ хеширования IP не задан (dev без Security:IpHashKey).
+    // Значение IpHash для журнала, когда ключ хеширования IP не задан (dev без Security:IpHashKey).
     // Сырой IP при этом всё равно НЕ сохраняется.
     private const string NoKeyHash = "no-key";
 
-    private sealed class Counter(DateTimeOffset resetAt)
-    {
-        public int Count;
-        public DateTimeOffset ResetAt { get; } = resetAt;
-    }
-
     public string HashIp(string? ip) => ipHasher.Hash(ip) ?? NoKeyHash;
-
-    public RateLimitResult CheckRateLimit(string ipHash, Guid? userId)
-    {
-        // Партиция: авторизованный лимитируется по UserId, аноним — по IpHash.
-        var (key, limit) = userId is { } uid
-            ? ($"reveal:u:{uid}", _options.UserPerHour)
-            : ($"reveal:ip:{ipHash}", _options.AnonPerHour);
-
-        var window = TimeSpan.FromHours(1);
-        var counter = cache.GetOrCreate(key, entry =>
-        {
-            entry.AbsoluteExpirationRelativeToNow = window;
-            return new Counter(DateTimeOffset.UtcNow + window);
-        })!;
-
-        lock (counter)
-        {
-            counter.Count++;
-            if (counter.Count <= limit)
-                return new RateLimitResult(true, TimeSpan.Zero);
-
-            var retry = counter.ResetAt - DateTimeOffset.UtcNow;
-            return new RateLimitResult(false, retry > TimeSpan.Zero ? retry : TimeSpan.Zero);
-        }
-    }
 
     public Task DelayAnonymousAsync(CancellationToken ct)
     {

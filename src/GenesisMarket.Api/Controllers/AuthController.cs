@@ -1,11 +1,13 @@
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
+using GenesisMarket.Api.Security;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Auth;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -22,6 +24,7 @@ public class AuthController(
     ITokenService tokenService,
     IRefreshTokenService refreshTokens,
     IAuthRateLimiter rateLimiter,
+    ISecurityAudit securityAudit,
     SecurityStampValidator securityStamp,
     IOptions<PhoneOptions> phoneOptions) : ApiControllerBase
 {
@@ -29,14 +32,10 @@ public class AuthController(
     private const string LoginError = "Неверный email или пароль";
 
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.SensitiveAnon)]
     [HttpPost("register")]
     public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct)
     {
-        var ip = ClientIp();
-        var limit = rateLimiter.CheckRegister(ip);
-        if (!limit.Allowed)
-            return TooManyRequests(limit.RetryAfter);
-
         if (PasswordError(request.Password) is { } pwdError)
             return pwdError;
 
@@ -93,16 +92,21 @@ public class AuthController(
         {
             // Пользователя нет — всё равно проверяем против фиктивного хеша (timing).
             hasher.Verify(request.Password, hasher.DummyHash);
+            securityAudit.LoginFailed();
             return Problem(title: LoginError, statusCode: StatusCodes.Status401Unauthorized);
         }
 
         if (!hasher.Verify(request.Password, user.PasswordHash))
+        {
+            securityAudit.LoginFailed();
             return Problem(title: LoginError, statusCode: StatusCodes.Status401Unauthorized);
+        }
 
         // Пересчёт хеша при смене workFactor.
         if (hasher.NeedsRehash(user.PasswordHash))
             user.PasswordHash = hasher.Hash(request.Password);
 
+        securityAudit.LoginSucceeded(user.Id);
         return Ok(await IssueAsync(user, ip, ct));
     }
 
@@ -176,6 +180,7 @@ public class AuthController(
         await db.SaveChangesAsync(ct);
 
         securityStamp.Invalidate(userId);
+        securityAudit.PasswordChanged(userId);
         return NoContent();
     }
 

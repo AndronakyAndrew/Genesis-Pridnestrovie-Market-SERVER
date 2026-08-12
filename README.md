@@ -846,6 +846,54 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 20. Готовность к публичному запуску (rate-limit, заголовки, наблюдаемость, hardening)
+
+**Что сделано:**
+- **Единая политика rate-limit на встроенном `RateLimiter`** (`Api/Security/RateLimitingSetup.cs`): глобально
+  300/мин на IP; политики `sensitive-anon` (register 3/час на IP), `search` (60/мин на IP), `create-listing`
+  (10/час на пользователя), `contact` (аноним 10/час на IP, авторизованный 30/час), `report` (аноним 5/час на IP,
+  авторизованный 20/час). Превышение — 429 с `Retry-After` и телом ProblemDetails, факт пишется в журнал
+  безопасности. Применение — атрибутами `[EnableRateLimiting]` на экшенах. Health-эндпоинты исключены.
+- **login — гибрид:** точный лимит `(IP, email)` 5/15 мин остаётся проверкой в экшене (`Auth/AuthRateLimiter.cs`),
+  т.к. middleware не видит email (тело ещё не прочитано). Старые in-memory лимитеры contact/report сняты
+  (двойной счёт), их анти-скрейпинг-логика — хеш IP, задержка, журнал — сохранена.
+- **Заголовки безопасности** (`Api/Security/SecurityHeadersMiddleware.cs`): `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, HSTS (только за TLS), CSP (строгий для API, ослабленный
+  для Swagger UI).
+- **ForwardedHeaders** (`Api/Security/NetworkSetup.cs`): за Caddy доверяем только заданным сетям/адресам
+  (`Network__KnownNetworks`/`KnownProxies`) — иначе IP клиента = адрес прокси и rate-limit ломается.
+- **Журнал событий безопасности** (`Api/Security/SecurityAudit.cs`): вход/неудачный вход, смена пароля, действия
+  модератора, бан, доступ к чужому ресурсу, срабатывание rate-limit — структурно, с `Area="security"` и `ipHash`.
+  **Маскирование** секретов при деструктуризации Serilog (`MaskingDestructuringPolicy`): password/token/phone/email → `***`.
+- **OpenTelemetry** (`Api/Observability/ObservabilitySetup.cs`): трейсы ASP.NET Core + HttpClient + EF Core,
+  метрики + рантайм. Экспорт OTLP включается только при заданном `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- **Валидация конфигурации при старте** (`Api/Configuration/OptionsValidationSetup.cs`, `ValidateOnStart`):
+  секреты в `appsettings.json` (кроме локального `appsettings.Development.json`) не допускаются; в Production
+  приложение не поднимается с дефолтным паролем БД, пустым CORS или без `Security:IpHashKey`.
+- **Docker hardening** (`Dockerfile`, `docker-compose.yml`): non-root, `read_only` ФС + `tmpfs /tmp`,
+  `no-new-privileges`, `cap_drop: ALL`, лимиты памяти/CPU/pids, `HEALTHCHECK`. Финальный образ — на runtime-deps.
+- **Резервные копии** (`scripts/`): `backup.sh` (pg_dump `-Fc` + ротация), `restore-check.sh` (восстановление в
+  одноразовый контейнер + sanity-запрос), `check-image-secrets.sh` (нет секретов в слоях). Чеклист релиза —
+  `docs/security-checklist.md` (Проходы 1, 3, 4, 8).
+
+**Почему именно так:**
+- **Встроенный `RateLimiter`, а не самопал** — единая точка, стандартные партиции/окна, корректный 429.
+  Auth-aware партиции (аноним по IP, авторизованный по пользователю) сохранены: иначе один NAT/офис делил бы
+  лимит на всех, а независимые жалобы/раскрытия ломались бы.
+- **Секреты только из env** — инвариант закреплён сканером стартапа, а не только договорённостью.
+- **Экспорт OTLP по флагу** — код готов к наблюдаемости, но не требует коллектора для запуска.
+
+**Планирование бэкапов (crontab на VPS):**
+```cron
+30 3 * * *  cd /opt/genesis/SERVER && ./scripts/backup.sh       >> /var/log/genesis-backup.log 2>&1
+0  4 * * 0  cd /opt/genesis/SERVER && ./scripts/restore-check.sh >> /var/log/genesis-restore.log 2>&1
+```
+
+**Ключевые файлы:** `Api/Program.cs` (пайплайн и регистрации), `Api/Security/*`, `Api/Observability/*`,
+`Api/Configuration/*`, `Dockerfile`, `docker-compose.yml`, `scripts/*`, `docs/security-checklist.md`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
@@ -874,7 +922,9 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 - **Разбан не восстанавливает объявления.** Бан архивирует активные объявления, но `unban` их обратно в `Active`
   не переводит — владелец публикует заново. Осознанное решение: авто-восстановление рискует вернуть в каталог то,
   что и было причиной бана.
-- **Rate-limit жалоб — in-memory** (на инстанс), как и остальные лимиты. При нескольких инстансах API нужен общий стор (Redis).
+- **Rate-limit — in-memory (на инстанс).** Встроенный `RateLimiter` и login-лимит `(IP,email)` считают в памяти
+  процесса. При нескольких инстансах API лимиты умножатся на число реплик — нужен общий стор (Redis) либо
+  лимитирование на уровне Caddy.
 - **SEO-пути фронтенда — договорённость, не автоматика.** Бэкенд отдаёт канонические ссылки под конкретную
   маршрутизацию фронта: карточка `/obyavlenie/{slug}`, категория `/{category}`, город `/city/{city}`, посадочная
   `/{category}/{city}` (значения — как в БД: `realestate`, `tiraspol`). Фронт обязан обслуживать эти URL; при

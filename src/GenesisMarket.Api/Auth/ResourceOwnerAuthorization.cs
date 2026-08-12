@@ -1,3 +1,4 @@
+using GenesisMarket.Api.Security;
 using GenesisMarket.Domain.Common;
 using GenesisMarket.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
@@ -15,7 +16,7 @@ public sealed class ResourceOwnerRequirement : IAuthorizationRequirement
 /// (сейчас Listing; позже Review, SavedSearch — им достаточно реализовать интерфейс).
 /// Разрешает доступ владельцу ЛИБО модератору/админу.
 /// </summary>
-public sealed class ResourceOwnerHandler(ICurrentUser currentUser)
+public sealed class ResourceOwnerHandler(ICurrentUser currentUser, ISecurityAudit securityAudit)
     : AuthorizationHandler<ResourceOwnerRequirement, IOwnedResource>
 {
     protected override Task HandleRequirementAsync(
@@ -30,7 +31,18 @@ public sealed class ResourceOwnerHandler(ICurrentUser currentUser)
         var isOwner = currentUser.UserId is { } id && id == resource.OwnerId;
 
         if (isModerator || isOwner)
+        {
             context.Succeed(requirement);
+            return Task.CompletedTask;
+        }
+
+        // Аутентифицирован, но не владелец и не модератор — попытка доступа к чужому
+        // ресурсу (потенциальный IDOR). Фиксируем в журнале безопасности.
+        if (currentUser.UserId is { } actor)
+        {
+            var resourceId = resource is BaseEntity entity ? entity.Id : Guid.Empty;
+            securityAudit.ResourceForbidden(actor, resource.GetType().Name, resourceId);
+        }
 
         return Task.CompletedTask;
     }

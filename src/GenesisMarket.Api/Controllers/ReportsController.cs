@@ -1,11 +1,13 @@
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
+using GenesisMarket.Api.Security;
 using GenesisMarket.Api.Trust;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -21,7 +23,6 @@ namespace GenesisMarket.Api.Controllers;
 [Route("api/reports")]
 public class ReportsController(
     AppDbContext db,
-    IReportRateLimiter rateLimiter,
     IIpHasher ipHasher,
     IOptions<TrustOptions> options,
     ILogger<ReportsController> logger) : ApiControllerBase
@@ -33,15 +34,15 @@ public class ReportsController(
     /// жалоб) — 200 без новой записи. Иначе 201. Несуществующий объект — 404.
     /// </summary>
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.Report)]
     [HttpPost]
     public async Task<ActionResult<ReportResponse>> Create(CreateReportRequest request, CancellationToken ct)
     {
         var userId = CurrentUserId();
         var ipHash = ipHasher.Hash(ClientIp());
 
-        var rate = rateLimiter.Check(userId, ipHash);
-        if (!rate.Allowed)
-            return TooManyRequests((int)Math.Ceiling(rate.RetryAfter.TotalSeconds));
+        // Rate-limit приёма жалоб — на встроенном RateLimiter (политика "report"):
+        // аноним по IP (5/час), авторизованный по пользователю (20/час).
 
         if (!await TargetExistsAsync(request.TargetType, request.TargetId, ct))
             return Problem(title: "Объект жалобы не найден", statusCode: StatusCodes.Status404NotFound);

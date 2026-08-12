@@ -5,14 +5,15 @@ namespace GenesisMarket.Api.Auth;
 public readonly record struct RateLimitResult(bool Allowed, TimeSpan RetryAfter);
 
 /// <summary>
-/// Ограничение частоты для аутентификации:
-/// login — 5 попыток / 15 мин на пару (IP, email);
-/// register — 3 / час на IP.
+/// Ограничение частоты входа: login — 5 попыток / 15 мин на пару (IP, email).
+/// Именно (IP, email) — встроенный RateLimiter на уровне middleware не видит email
+/// (тело запроса ещё не прочитано), поэтому этот лимит остаётся проверкой в экшене.
+/// Остальные лимиты (register, contact, reports, поиск, глобально) — на встроенном
+/// RateLimiter (см. <c>RateLimitingSetup</c>).
 /// </summary>
 public interface IAuthRateLimiter
 {
     RateLimitResult CheckLogin(string ip, string email);
-    RateLimitResult CheckRegister(string ip);
 }
 
 public sealed class MemoryAuthRateLimiter(IMemoryCache cache) : IAuthRateLimiter
@@ -25,9 +26,6 @@ public sealed class MemoryAuthRateLimiter(IMemoryCache cache) : IAuthRateLimiter
 
     public RateLimitResult CheckLogin(string ip, string email) =>
         Check($"rl:login:{ip}:{email.ToLowerInvariant()}", limit: 5, window: TimeSpan.FromMinutes(15));
-
-    public RateLimitResult CheckRegister(string ip) =>
-        Check($"rl:register:{ip}", limit: 3, window: TimeSpan.FromHours(1));
 
     private RateLimitResult Check(string key, int limit, TimeSpan window)
     {

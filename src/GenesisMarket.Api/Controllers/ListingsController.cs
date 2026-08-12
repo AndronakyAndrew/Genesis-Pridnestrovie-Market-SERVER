@@ -6,6 +6,7 @@ using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Outbox.Telegram;
+using GenesisMarket.Api.Security;
 using GenesisMarket.Api.Seo;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
@@ -13,6 +14,7 @@ using GenesisMarket.Infrastructure.Persistence;
 using GenesisMarket.Infrastructure.Scheduling;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
@@ -53,6 +55,7 @@ public class ListingsController(
     /// Отдаёт витринную карточку (без телефона/email/UserId владельца).
     /// </summary>
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.Search)]
     [HttpGet]
     public async Task<ActionResult<CatalogPageResponse>> GetAll(
         [FromQuery] CatalogQuery query, CancellationToken ct)
@@ -271,15 +274,15 @@ public class ListingsController(
     /// Анти-скрейпинг: rate-limit по (IpHash, UserId), задержка анонимам, журнал раскрытий.
     /// </summary>
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.Contact)]
     [HttpGet("{id:guid}/contact")]
     public async Task<ActionResult<SellerContactResponse>> GetContact(Guid id, CancellationToken ct)
     {
         var userId = CurrentUserId();
         var ipHash = contactReveal.HashIp(ClientIp());
 
-        var rate = contactReveal.CheckRateLimit(ipHash, userId);
-        if (!rate.Allowed)
-            return TooManyRequests((int)Math.Ceiling(rate.RetryAfter.TotalSeconds));
+        // Rate-limit раскрытия — на встроенном RateLimiter (политика "contact"): аноним по IP,
+        // авторизованный по пользователю. Здесь остаётся только анти-скрейпинг задержка/журнал.
 
         // Анонимов намеренно замедляем — массовый обход дороже единичного просмотра.
         if (userId is null)
@@ -310,6 +313,7 @@ public class ListingsController(
     }
 
     [Authorize]
+    [EnableRateLimiting(RateLimitPolicies.CreateListing)]
     [HttpPost]
     public async Task<ActionResult<ListingResponse>> Create(CreateListingRequest request, CancellationToken ct)
     {

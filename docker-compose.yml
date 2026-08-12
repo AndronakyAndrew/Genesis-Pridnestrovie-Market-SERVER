@@ -62,15 +62,36 @@ services:
       Publishing__RequiredVerification: ${PUBLISHING_REQUIRED_VERIFICATION:-Email}
       # CORS — строка origin-ов через запятую.
       Cors__AllowedOrigins: ${CORS_ALLOWED_ORIGINS}
+      # Доверенные обратные прокси (Caddy как TLS-терминатор): без них RemoteIpAddress —
+      # это адрес прокси, и rate-limit/журнал считали бы всех клиентов одним IP.
+      # KnownNetworks — CIDR доверенных сетей (docker-мост), KnownProxies — конкретные IP.
+      Network__KnownNetworks: ${TRUSTED_PROXY_NETWORKS:-172.16.0.0/12}
+      Network__KnownProxies: ${TRUSTED_PROXY_IPS}
+      Network__ForwardLimit: ${TRUSTED_PROXY_FORWARD_LIMIT:-1}
+      # OpenTelemetry: адрес OTLP-коллектора. Пусто -> экспорт выключен (инструментация вхолостую).
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
     ports:
       # host:container. На хосте 8080 занят другим проектом → публикуем на 8090.
       - "${API_HOST_PORT:-8090}:${ASPNETCORE_HTTP_PORTS:-8080}"
+    # ---- Hardening контейнера ----
+    read_only: true                       # ФС только для чтения; писать — только в tmpfs ниже.
+    tmpfs:
+      - /tmp                              # .NET нужен только временный каталог.
+    security_opt:
+      - no-new-privileges:true            # процесс не может повысить привилегии (setuid и пр.).
+    cap_drop:
+      - ALL                               # ни одна Linux-capability не нужна веб-приложению.
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
     networks:
       - genesis
 
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -94,6 +115,8 @@ services:
   minio:
     image: minio/minio:latest
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -112,6 +135,8 @@ services:
   adminer:
     image: adminer:latest
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - postgres
     ports:

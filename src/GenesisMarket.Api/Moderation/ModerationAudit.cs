@@ -1,5 +1,6 @@
 using System.Text.Json;
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Security;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Infrastructure.Persistence;
 
@@ -17,7 +18,8 @@ public interface IModerationAudit
     void Record(string action, string targetType, Guid targetId, string? reason = null, object? payload = null);
 }
 
-public sealed class ModerationAudit(AppDbContext db, ICurrentUser currentUser) : IModerationAudit
+public sealed class ModerationAudit(
+    AppDbContext db, ICurrentUser currentUser, ISecurityAudit securityAudit) : IModerationAudit
 {
     public void Record(string action, string targetType, Guid targetId, string? reason = null, object? payload = null)
     {
@@ -34,5 +36,8 @@ public sealed class ModerationAudit(AppDbContext db, ICurrentUser currentUser) :
             Reason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
             PayloadJson = payload is null ? null : JsonSerializer.Serialize(payload)
         });
+
+        // Тот же факт — в журнал безопасности (отдельный поток событий безопасности).
+        securityAudit.ModeratorAction(actorId, action, targetType, targetId);
     }
 }

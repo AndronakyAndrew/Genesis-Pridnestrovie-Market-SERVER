@@ -1,0 +1,2 @@
+# Shell-скрипты всегда с LF — иначе CRLF ломает shebang на Linux-VPS.
+*.sh text eol=lf
