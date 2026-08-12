@@ -61,6 +61,53 @@ public sealed record CatalogRow(
 /// </summary>
 public static class CatalogQueryBuilder
 {
+    /// <summary>Максимум городов в фильтре — столько городов в ПМР.</summary>
+    public const int MaxCities = 7;
+
+    /// <summary>Предел длины поискового запроса <c>q</c>.</summary>
+    public const int MaxQueryLength = 100;
+
+    /// <summary>
+    /// Trim + нижний регистр + обрезка до <see cref="MaxQueryLength"/>. Пусто ⇒ null (поиска нет).
+    /// Единая нормализация для живого каталога и прогонов сохранённых поисков.
+    /// </summary>
+    public static string? NormalizeText(string? q)
+    {
+        if (string.IsNullOrWhiteSpace(q))
+            return null;
+        var trimmed = q.Trim();
+        if (trimmed.Length > MaxQueryLength)
+            trimmed = trimmed[..MaxQueryLength];
+        return trimmed.ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Кросс-полевые проверки фильтров каталога, общие для живого каталога и сохранённых
+    /// поисков. Возвращает текст ошибки (для 400 / деактивации) или null, если всё корректно.
+    /// </summary>
+    public static string? ValidateFilters(IReadOnlyCollection<City>? cities, long? priceFrom, long? priceTo)
+    {
+        if (cities is { Count: > MaxCities })
+            return $"Слишком много городов в фильтре (максимум {MaxCities})";
+
+        if (priceFrom is { } from && priceTo is { } to && from > to)
+            return "priceFrom не может быть больше priceTo";
+
+        return null;
+    }
+
+    /// <summary>
+    /// Keyset «строго после (PublishedAt, Id)»: только объявления, опубликованные позже
+    /// курсора. Пара (PublishedAt, Id) детерминирует порядок при равных PublishedAt —
+    /// поэтому объявления с одинаковым timestamp не теряются и не дублируются между прогонами.
+    /// </summary>
+    public static IQueryable<Listing> ApplyPublishedAfter(
+        IQueryable<Listing> query, DateTimeOffset afterPublishedAt, Guid afterId) =>
+        query.Where(l =>
+            l.PublishedAt != null &&
+            (l.PublishedAt > afterPublishedAt ||
+             (l.PublishedAt == afterPublishedAt && l.Id.CompareTo(afterId) > 0)));
+
     /// <summary>Разбор токена сортировки из белого списка. null ⇒ невалидный явный токен (400).</summary>
     public static CatalogSort? ParseSort(string? token) => token switch
     {

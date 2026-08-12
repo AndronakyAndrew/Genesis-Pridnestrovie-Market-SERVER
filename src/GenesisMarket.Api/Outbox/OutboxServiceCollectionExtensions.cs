@@ -35,6 +35,7 @@ public static class OutboxServiceCollectionExtensions
         services.AddScoped<IOutboxHandler, ListingExpiringSoonHandler>();
         services.AddScoped<IOutboxHandler, NewReviewHandler>();
         services.AddScoped<IOutboxHandler, ListingPublishedHandler>();
+        services.AddScoped<IOutboxHandler, SavedSearchMatchHandler>();
         services.AddScoped<IOutboxHandler, DeleteImagesHandler>();
         services.AddScoped<IOutboxHandler, DeleteObjectHandler>();
 

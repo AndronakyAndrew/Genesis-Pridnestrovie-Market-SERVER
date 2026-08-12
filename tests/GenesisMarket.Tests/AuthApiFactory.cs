@@ -416,6 +416,46 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         return await svc.RunAsync(CancellationToken.None);
     }
 
+    /// <summary>Прогоняет джоб рассылки сохранённых поисков напрямую (планировщик в тестах выключен).</summary>
+    public async Task<SavedSearchNotificationResult> RunSavedSearchNotificationsAsync()
+    {
+        using var scope = Services.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<ISavedSearchNotificationService>();
+        return await svc.RunAsync(CancellationToken.None);
+    }
+
+    /// <summary>Сдвигает NotifiedAt поиска (для проверки часового гейта и независимости курсора).</summary>
+    public async Task SetSavedSearchNotifiedAtAsync(Guid id, DateTimeOffset? when)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.SavedSearches
+            .Where(s => s.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.NotifiedAt, when));
+    }
+
+    /// <summary>Состояние сохранённого поиска (курсор/уведомление/активность).</summary>
+    public async Task<(Guid? LastNotifiedListingId, DateTimeOffset? NotifiedAt, bool IsActive)> SavedSearchStateAsync(Guid id)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var s = await db.SavedSearches.AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => new { x.LastNotifiedListingId, x.NotifiedAt, x.IsActive })
+            .FirstAsync();
+        return (s.LastNotifiedListingId, s.NotifiedAt, s.IsActive);
+    }
+
+    /// <summary>Портит QueryJson поиска (для проверки, что джоб не доверяет содержимому jsonb).</summary>
+    public async Task SetSavedSearchQueryJsonAsync(Guid id, string json)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.SavedSearches
+            .Where(s => s.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.QueryJson, json));
+    }
+
     /// <summary>Сдвигает «возраст» объявления: BumpedAt/PublishedAt напрямую (для проверки сроков).</summary>
     public async Task SetBumpTimestampsAsync(Guid listingId, DateTimeOffset? bumpedAt, DateTimeOffset? publishedAt = null)
     {

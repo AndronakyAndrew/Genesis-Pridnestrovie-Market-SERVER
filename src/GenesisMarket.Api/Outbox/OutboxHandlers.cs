@@ -152,6 +152,62 @@ public sealed class ListingPublishedHandler(AppDbContext db, ITelegramClient tel
     }
 }
 
+/// <summary>
+/// Новые объявления по сохранённому поиску → одно уведомление автору со списком (до 10).
+/// Канал берётся из настройки самого поиска (может отличаться от профильного).
+/// </summary>
+public sealed class SavedSearchMatchHandler(AppDbContext db, IUserNotifier notifier) : IOutboxHandler
+{
+    public string Type => OutboxMessage.SavedSearchMatch;
+
+    public async Task HandleAsync(OutboxMessage message, CancellationToken ct)
+    {
+        var p = OutboxPayload.Parse<SavedSearchMatchPayload>(message.Payload);
+
+        var search = await db.SavedSearches.AsNoTracking()
+            .Where(s => s.Id == p.SavedSearchId)
+            .Select(s => new { s.UserId, s.Name, s.NotifyChannel })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new OutboxPermanentException("Сохранённый поиск не найден.");
+
+        // Канал мог быть выключен после постановки сообщения в очередь — тогда молча закрываем.
+        if (search.NotifyChannel == SavedSearchNotifyChannel.None)
+            return;
+
+        // Тянем объявления по id, сохраняя порядок payload; исчезнувшие/удалённые просто пропускаем.
+        var listings = await db.Listings.AsNoTracking()
+            .Where(l => p.ListingIds.Contains(l.Id))
+            .Select(l => new { l.Id, l.Title, l.Price, l.PriceType, l.City, l.Slug })
+            .ToListAsync(ct);
+
+        if (listings.Count == 0)
+            return; // все совпадения уже неактуальны — слать нечего
+
+        var byId = listings.ToDictionary(l => l.Id);
+        var lines = p.ListingIds
+            .Where(byId.ContainsKey)
+            .Select(id => byId[id])
+            .Select(l => $"• {l.Title} — {FormatPrice(l.PriceType, l.Price)} ({l.City})\n  /listing/{l.Slug}");
+
+        var body = $"По вашему поиску «{search.Name}» появились новые объявления:\n\n"
+                   + string.Join("\n", lines);
+
+        var channel = search.NotifyChannel == SavedSearchNotifyChannel.Telegram
+            ? NotificationChannel.Telegram
+            : NotificationChannel.Email;
+
+        await notifier.NotifyViaAsync(search.UserId, channel,
+            $"Новые объявления по поиску «{search.Name}»", body, ct);
+    }
+
+    private static string FormatPrice(PriceType type, decimal? price) => type switch
+    {
+        PriceType.Free => "Бесплатно",
+        PriceType.Negotiable => "Цена договорная",
+        _ => $"{price:N0} руб."
+    };
+}
+
 /// <summary>Удаление объектов из хранилища (MinIO). Payload — JSON-массив ключей.</summary>
 public sealed class DeleteImagesHandler(IObjectStorage storage) : IOutboxHandler
 {
