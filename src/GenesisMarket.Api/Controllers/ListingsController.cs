@@ -6,6 +6,7 @@ using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Outbox.Telegram;
+using GenesisMarket.Api.Seo;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
@@ -35,7 +36,8 @@ public class ListingsController(
     IValidator<UpdateListingRequest> updateValidator,
     IMemoryCache cache,
     IOptions<ListingOptions> options,
-    IOptions<CatalogHygieneOptions> hygiene) : ApiControllerBase
+    IOptions<CatalogHygieneOptions> hygiene,
+    IOptions<SeoOptions> seo) : ApiControllerBase
 {
     // Статусы «в обороте» — учитываются в лимите и проверке дубликатов.
     private static readonly ListingStatus[] InCirculation =
@@ -722,16 +724,20 @@ public class ListingsController(
         return ValidationProblem(ModelState);
     }
 
-    /// <summary>Мапит сущность в DTO, досчитывая daysUntilArchive по конфигурации.</summary>
+    /// <summary>Мапит сущность в DTO, досчитывая daysUntilArchive и канонический URL по конфигурации.</summary>
     private ListingResponse ToResponse(Listing l, int contactRevealCount = 0, bool isFavorite = false) =>
-        Map(l, contactRevealCount, isFavorite, DaysUntilArchive(l));
+        Map(l, contactRevealCount, isFavorite, DaysUntilArchive(l), CanonicalUrl(l.Slug));
 
     private static ListingResponse Map(
-        Listing l, int contactRevealCount, bool isFavorite, int? daysUntilArchive) => new(
+        Listing l, int contactRevealCount, bool isFavorite, int? daysUntilArchive, string? canonicalUrl) => new(
         l.Id, l.Slug, l.Title, l.Description, l.Price, l.PriceType, l.Category,
         l.SubcategoryId, l.City, l.District, l.Condition, l.Status,
         l.ViewsCount, l.OwnerId, l.CreatedAt, l.PublishedAt, contactRevealCount,
-        l.FavoritesCount, isFavorite, daysUntilArchive);
+        l.FavoritesCount, isFavorite, daysUntilArchive, canonicalUrl);
+
+    /// <summary>Канонический адрес карточки. null, если публичный адрес сайта не настроен.</summary>
+    private string? CanonicalUrl(string slug) =>
+        seo.Value.NormalizedBaseUrl is { } baseUrl ? SeoUrls.Listing(baseUrl, slug) : null;
 
     /// <summary>Сколько дней до автоархивации. null для не-Active (у них срок не идёт).</summary>
     private int? DaysUntilArchive(Listing l)
