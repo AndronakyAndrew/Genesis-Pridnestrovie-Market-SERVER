@@ -1,9 +1,12 @@
 using System.Globalization;
+using System.Text.Json;
 using FluentValidation;
 using FluentValidation.Results;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
+using GenesisMarket.Api.Outbox.Telegram;
+using GenesisMarket.Api.Seo;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
@@ -33,7 +36,8 @@ public class ListingsController(
     IValidator<UpdateListingRequest> updateValidator,
     IMemoryCache cache,
     IOptions<ListingOptions> options,
-    IOptions<CatalogHygieneOptions> hygiene) : ApiControllerBase
+    IOptions<CatalogHygieneOptions> hygiene,
+    IOptions<SeoOptions> seo) : ApiControllerBase
 {
     // Статусы «в обороте» — учитываются в лимите и проверке дубликатов.
     private static readonly ListingStatus[] InCirculation =
@@ -41,8 +45,6 @@ public class ListingsController(
 
     private const int DefaultLimit = 20;
     private const int MaxLimit = 50;
-    private const int MaxCities = 7;                       // столько городов в ПМР
-    private const int MaxQueryLength = 100;               // предел длины поискового q
     private static readonly TimeSpan CountCacheTtl = TimeSpan.FromSeconds(60);
 
     /// <summary>
@@ -58,7 +60,7 @@ public class ListingsController(
         if (ValidateFilters(query) is { } bad)
             return bad;
 
-        var q = NormalizeQuery(query.Q);
+        var q = CatalogQueryBuilder.NormalizeText(query.Q);
 
         if (CatalogQueryBuilder.ParseSort(query.Sort) is not { } sort)
             return Problem(title: "Неизвестная сортировка", statusCode: StatusCodes.Status400BadRequest);
@@ -212,17 +214,6 @@ public class ListingsController(
         return new CatalogPageResponse(items, nextCursor, hasMore);
     }
 
-    /// <summary>Trim + нижний регистр + обрезка до 100 символов. Пусто ⇒ null (поиска нет).</summary>
-    private static string? NormalizeQuery(string? q)
-    {
-        if (string.IsNullOrWhiteSpace(q))
-            return null;
-        var trimmed = q.Trim();
-        if (trimmed.Length > MaxQueryLength)
-            trimmed = trimmed[..MaxQueryLength];
-        return trimmed.ToLowerInvariant();
-    }
-
     /// <summary>
     /// Общее количество по тем же фильтрам, что и каталог. Точный COUNT дорог,
     /// поэтому результат кэшируется на 60 секунд по набору фильтров.
@@ -358,6 +349,10 @@ public class ListingsController(
                 return guard;
             var target = await moderation.ResolveOnPublishAsync(userId, ct);
             listing.Publish(target, DateTimeOffset.UtcNow);
+
+            // Сразу активное объявление — анонсируем в Telegram-канал (в той же транзакции).
+            if (target == ListingStatus.Active)
+                EnqueueChannelPublish(listing.Id);
         }
 
         await SaveNewWithSlugAsync(listing, ct);
@@ -415,6 +410,8 @@ public class ListingsController(
 
         // Снятие с публикации = уход в архив (переход — доменным методом).
         listing.Archive(DateTimeOffset.UtcNow);
+        // Помечаем пост в канале «Снято с публикации» (обработчик стерпит отсутствие поста).
+        EnqueueChannelMark(listing.Id, ChannelMark.Archived);
         await db.SaveChangesAsync(ct);
 
         return NoContent();
@@ -439,6 +436,11 @@ public class ListingsController(
 
         var target = await moderation.ResolveOnPublishAsync(userId, ct);
         listing.Publish(target, DateTimeOffset.UtcNow);
+
+        // Сразу активное — анонсируем в Telegram-канал (в той же транзакции).
+        if (target == ListingStatus.Active)
+            EnqueueChannelPublish(listing.Id);
+
         await db.SaveChangesAsync(ct);
 
         return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
@@ -510,6 +512,8 @@ public class ListingsController(
                 statusCode: StatusCodes.Status409Conflict);
 
         listing.MarkSold(DateTimeOffset.UtcNow);
+        // Помечаем пост в канале «Продано» (в той же транзакции; обработчик стерпит отсутствие поста).
+        EnqueueChannelMark(listing.Id, ChannelMark.Sold);
         await db.SaveChangesAsync(ct);
 
         return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
@@ -540,6 +544,8 @@ public class ListingsController(
                 statusCode: StatusCodes.Status409Conflict);
 
         listing.ReactivateFromSold(DateTimeOffset.UtcNow);
+        // Вернулось в продажу — снимаем пометку «Продано» с поста (обработчик правит подпись).
+        EnqueueChannelPublish(listing.Id);
         await db.SaveChangesAsync(ct);
 
         return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
@@ -573,6 +579,12 @@ public class ListingsController(
 
         var requireReview = await HasRecentRejectAsync(userId, ct);
         listing.RestoreFromArchive(requireReview, DateTimeOffset.UtcNow);
+
+        // Вернулось в каталог (Active) — снимаем пометку «Снято» с поста. При уходе на
+        // повторную премодерацию (PendingReview) канал не трогаем: снова опубликуем при одобрении.
+        if (listing.Status == ListingStatus.Active)
+            EnqueueChannelPublish(listing.Id);
+
         await db.SaveChangesAsync(ct);
 
         return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
@@ -610,13 +622,8 @@ public class ListingsController(
     /// <summary>Общие проверки фильтров каталога (для /listings и /listings/count). null — ок.</summary>
     private ObjectResult? ValidateFilters(CatalogQuery query)
     {
-        if (query.Cities is { Count: > MaxCities })
-            return Problem(title: $"Слишком много городов в фильтре (максимум {MaxCities})",
-                statusCode: StatusCodes.Status400BadRequest);
-
-        if (query.PriceFrom is { } from && query.PriceTo is { } to && from > to)
-            return Problem(title: "priceFrom не может быть больше priceTo",
-                statusCode: StatusCodes.Status400BadRequest);
+        if (CatalogQueryBuilder.ValidateFilters(query.Cities, query.PriceFrom, query.PriceTo) is { } error)
+            return Problem(title: error, statusCode: StatusCodes.Status400BadRequest);
 
         return null;
     }
@@ -690,6 +697,26 @@ public class ListingsController(
         }
     }
 
+    /// <summary>
+    /// Ставит в outbox пост объявления в Telegram-канал (перешло в Active). Обработчик
+    /// идемпотентен: повторную активацию он превращает в правку подписи, а не в новый пост.
+    /// Пишется в той же транзакции, что и доменное изменение (общий SaveChanges).
+    /// </summary>
+    private void EnqueueChannelPublish(Guid listingId) =>
+        db.OutboxMessages.Add(new OutboxMessage
+        {
+            Type = OutboxMessage.ListingPublished,
+            Payload = JsonSerializer.Serialize(new { listingId })
+        });
+
+    /// <summary>Ставит в outbox правку поста в канале: пометка «Продано»/«Снято с публикации».</summary>
+    private void EnqueueChannelMark(Guid listingId, string mark) =>
+        db.OutboxMessages.Add(new OutboxMessage
+        {
+            Type = OutboxMessage.ListingChannelUpdate,
+            Payload = JsonSerializer.Serialize(new { listingId, mark })
+        });
+
     private ActionResult Invalid(ValidationResult validation)
     {
         foreach (var error in validation.Errors)
@@ -697,16 +724,20 @@ public class ListingsController(
         return ValidationProblem(ModelState);
     }
 
-    /// <summary>Мапит сущность в DTO, досчитывая daysUntilArchive по конфигурации.</summary>
+    /// <summary>Мапит сущность в DTO, досчитывая daysUntilArchive и канонический URL по конфигурации.</summary>
     private ListingResponse ToResponse(Listing l, int contactRevealCount = 0, bool isFavorite = false) =>
-        Map(l, contactRevealCount, isFavorite, DaysUntilArchive(l));
+        Map(l, contactRevealCount, isFavorite, DaysUntilArchive(l), CanonicalUrl(l.Slug));
 
     private static ListingResponse Map(
-        Listing l, int contactRevealCount, bool isFavorite, int? daysUntilArchive) => new(
+        Listing l, int contactRevealCount, bool isFavorite, int? daysUntilArchive, string? canonicalUrl) => new(
         l.Id, l.Slug, l.Title, l.Description, l.Price, l.PriceType, l.Category,
         l.SubcategoryId, l.City, l.District, l.Condition, l.Status,
         l.ViewsCount, l.OwnerId, l.CreatedAt, l.PublishedAt, contactRevealCount,
-        l.FavoritesCount, isFavorite, daysUntilArchive);
+        l.FavoritesCount, isFavorite, daysUntilArchive, canonicalUrl);
+
+    /// <summary>Канонический адрес карточки. null, если публичный адрес сайта не настроен.</summary>
+    private string? CanonicalUrl(string slug) =>
+        seo.Value.NormalizedBaseUrl is { } baseUrl ? SeoUrls.Listing(baseUrl, slug) : null;
 
     /// <summary>Сколько дней до автоархивации. null для не-Active (у них срок не идёт).</summary>
     private int? DaysUntilArchive(Listing l)

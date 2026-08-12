@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using Xunit;
 
@@ -138,7 +139,7 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
 
         Assert.Equal("Rejected", (await factory.ListingModerationAsync(listingId)).Status);
         // Уведомление автора ушло в outbox.
-        Assert.True(await factory.OutboxNotificationCountAsync(sellerId) >= 1);
+        Assert.True(await factory.OutboxCountAsync(OutboxMessage.ListingRejected, listingId) >= 1);
         // Причина и факт отклонения записаны в журнал.
         Assert.True(await factory.ModerationLogCountAsync(listingId, "listing.reject") >= 1);
     }

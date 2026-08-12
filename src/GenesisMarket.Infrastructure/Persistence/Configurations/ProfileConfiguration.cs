@@ -24,6 +24,12 @@ public class ProfileConfiguration : IEntityTypeConfiguration<Profile>
         b.Property(p => p.AvatarUrl).HasMaxLength(512);
         b.Property(p => p.TelegramUsername).HasMaxLength(64);
 
+        // Канал уведомлений — строкой; по умолчанию почта.
+        b.Property(p => p.NotifyVia)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .HasDefaultValue(Domain.Enums.NotificationChannel.Email);
+
         b.Property(p => p.ShowPhoneInListing).HasDefaultValue(true);
         b.Property(p => p.ViberEnabled).HasDefaultValue(false);
         b.Property(p => p.WhatsappEnabled).HasDefaultValue(false);

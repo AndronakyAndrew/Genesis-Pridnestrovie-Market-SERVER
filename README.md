@@ -591,6 +591,261 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 16. Транзакционный Outbox (доставка уведомлений и внешних побочных эффектов)
+
+**Что сделано:**
+- **Единая инфраструктура внешних отправок.** Раньше в `outbox_messages` был только `delete-object`
+  (удаление объектов MinIO фоновым `BackgroundService`) и «сырые» `notification`, которые никто не доставлял.
+  Теперь это полноценный транзакционный outbox: **типизированные сообщения**, диспетчер, ретраи, финализация,
+  уборка. Продюсеры кладут сообщение в БД **в той же транзакции**, что и доменное изменение — никаких
+  отправок email/Telegram прямо из обработчика запроса (иначе при откате транзакции уведомление уже ушло бы).
+- **Схема (`OutboxMessage`, миграция `AddOutboxPipeline`).** Поля `Status` (`Pending|Processing|Done|Failed`,
+  строкой), `NextAttemptAt` (время следующей попытки, дефолт `now()`), `Attempts`, `Error` (переименован из
+  `LastError`), `Payload`, `CreatedAt`, `ProcessedAt`. Частичный индекс `ix_outbox_due` по `Status='Pending'`
+  под горячий путь диспетчера. Бэкфилл существующих строк в миграции: обработанные и legacy-`notification`
+  переведены в `Done`, непроцессенные `delete-object` остались `Pending` (у них есть совместимый обработчик).
+- **Диспетчер (Quartz, раз в 10 с, батч 50).** Забирает готовые сообщения
+  `SELECT … WHERE Status='Pending' AND NextAttemptAt ≤ now ORDER BY CreatedAt LIMIT 50 **FOR UPDATE SKIP LOCKED**`
+  внутри одной транзакции — несколько инстансов/тиков не возьмут одно сообщение. Каждое отдаётся обработчику по
+  `Type`; исход (`Done`/повтор/`Failed`) фиксируется до COMMIT.
+- **Ретраи — экспоненциальная задержка `10с → 1м → 5м → 30м → 2ч`, максимум 5 попыток**, затем `Status=Failed`
+  и запись в лог. Сообщение **не удаляется** — остаётся для разбора. Задержка **персистентна** (через
+  `NextAttemptAt`), а не in-memory: переживает рестарт и не держит воркер занятым между попытками.
+  `OutboxPermanentException` (битый payload, удалённый адресат, отсутствующий ресурс) → сразу `Failed`, без трат попыток.
+- **Уборщик (Quartz, ежедневно).** Удаляет `Done` старше `Outbox:RetentionDays` (30). `Failed` не трогает.
+- **Каналы — `INotificationChannel`, выбор по настройке пользователя** (`Profile.NotifyVia`, дефолт `Email`):
+  почта (поверх существующего `IEmailSender` — SMTP или dev-лог) и Telegram (`ITelegramClient` — HTTP Bot API,
+  либо dev-лог без токена). Telegram-ЛС требует `Profile.TelegramChatId`; без него канал деградирует к почте.
+  Адресата и контент обработчик достаёт из БД по id — **в `Payload` только идентификаторы**, персональных данных нет.
+- **Типы сообщений и продюсеры:** `listing-approved`/`listing-rejected` (модерация, шаг 14 — заменили «сырой»
+  `notification`), `listing-expiring-soon` (гигиена каталога, шаг 15), `new-review` (создание отзыва, шаг 13),
+  `delete-images` (удаление фото, шаг 10 — объединил парные `delete-object`), `listing-published` (пост в
+  Telegram-канал — обработчик готов, продюсер появится на шаге 16 привязки Telegram).
+- **PII в логах.** `PiiScrubber` вычищает email и телефоны из текста ошибки перед записью в `Error` и в лог
+  (сообщение SMTP-сбоя часто содержит адрес получателя) — логи outbox не содержат email и телефонов.
+- Тесты (Testcontainers): **откат транзакции создания объявления ⇒ сообщения в outbox нет**; диспетчер доставляет
+  и закрывает `Done`; транзиентные сбои ретраятся (растёт `Attempts`, `NextAttemptAt` сдвигается) и после 5 попыток
+  → `Failed`, при этом PII вычищены; permanent-ошибка → сразу `Failed`; `delete-images` реально удаляет объекты из
+  хранилища.
+
+**Почему именно так:**
+- **Outbox, а не прямая отправка** — доставка внешнему сервису не может участвовать в транзакции БД; запись
+  сообщения в той же транзакции + отдельная доставка гарантируют «уведомление ⟺ изменение зафиксировано» без
+  двойной записи и без блокировки HTTP-запроса на медленный SMTP/сеть.
+- **`FOR UPDATE SKIP LOCKED`** — корректная конкурентная выборка на нескольких инстансах без гонки и без ожидания
+  на заблокированных строках.
+- **Персистентный бэкофф через `NextAttemptAt`, а не in-memory Polly-wait** — пауза в 2 часа не должна держать
+  поток воркера и обязана пережить рестарт; поэтому задержка хранится в строке, а не в памяти процесса. (Осознанное
+  отклонение от буквального «Polly» в постановке в пользу транзакционно-корректного варианта.)
+- **Идентификаторы в payload, контент — из БД на момент отправки** — минимум персональных данных «на диске»,
+  и уведомление отражает актуальное состояние (напр. заголовок объявления), а не снимок момента постановки.
+- **Обработчики в слое Api, диспетчер-интерфейс в Infrastructure** — доставка требует каналов/шаблонов (Api), а
+  Quartz-джоб живёт в Infrastructure; джоб вызывает `IOutboxDispatcher` (интерфейс в Infrastructure, реализация в
+  Api), как `CatalogHygieneJob` вызывает `ICatalogHygieneService`.
+
+**Компромисс именования:** поле оставлено как `Payload` (не `PayloadJson` из постановки) — для `delete-images`
+это JSON-массив ключей, а для legacy `delete-object` — «сырой» ключ, так что нейтральное имя точнее.
+
+**Конфигурация:** секция `Outbox` (`DispatchIntervalSeconds`=10, `BatchSize`=50, `CleanupCron`, `RetentionDays`=30),
+секция `Telegram` (`BotToken`, `BroadcastChatId` — только из env). Диспетчер и уборщик отключаются вместе с
+планировщиком (`Scheduling:Enabled=false`, как в тестах — там `IOutboxDispatcher` прогоняется напрямую).
+
+**Ключевые файлы:** `Domain/Entities/OutboxMessage.cs`, `Domain/Enums/Enums.cs` (`OutboxStatus`,
+`NotificationChannel`), `Infrastructure/Outbox/IOutboxDispatcher.cs`,
+`Infrastructure/Scheduling/{OutboxOptions,OutboxDispatchJob,OutboxCleanupJob,SchedulingServiceCollectionExtensions}.cs`,
+`Api/Outbox/*` (`OutboxDispatcher`, `IOutboxHandler`+обработчики, `INotificationChannel`+каналы, `UserNotifier`,
+`ITelegramClient`, `PiiScrubber`, `OutboxServiceCollectionExtensions`),
+продюсеры `Api/Controllers/{ModerationController,ReviewsController,ListingImagesController}.cs` и
+`Infrastructure/Scheduling/CatalogHygieneService.cs`,
+`Infrastructure/Persistence/Migrations/*_AddOutboxPipeline.cs`, тесты `tests/GenesisMarket.Tests/OutboxTests.cs`.
+
+> **Прод-миграция:** `AddOutboxPipeline` переименовывает `LastError→Error`, добавляет `Status`/`NextAttemptAt`
+> в `outbox_messages` и `NotifyVia`/`TelegramChatId` в `profiles`. БД — прод, поэтому миграцию накатывает
+> пользователь (`dotnet ef database update`), с `pg_dump` перед сменой схемы. Планировщик Quartz на старте
+> инициализирует стор, поэтому прод не поднимется без применённой миграции (как и с `AddCatalogHygiene`).
+
+### 17. Сохранённые поиски (возврат пользователей)
+
+**Что сделано:**
+- **`SavedSearch` (миграция `AddSavedSearches`).** Пользователь сохраняет набор фильтров каталога, а фоновый
+  джоб находит по ним новые объявления и уведомляет автора. Поля: `UserId`, `Name`, `QueryJson` (**jsonb**),
+  `LastNotifiedListingId?` (курсор), `LastRunAt`, `IsActive`, `NotifyChannel` (`Email|Telegram|None`, строкой),
+  `NotifiedAt?`, `CreatedAt`. `QueryJson` хранит ровно те же параметры, что принимает `GET /api/listings`
+  (`q, category, subcategory, cities[], priceFrom, priceTo, condition, priceType`) — без `sort/cursor/limit`
+  (это параметры выдачи, а не критерии).
+- **CRUD `POST/GET/PATCH/DELETE /api/saved-searches`** (все `[Authorize]`, владелец проверяется на сервере).
+  Лимит **10 активных поисков** на пользователя. При сохранении/смене критериев/реактивации курсор
+  **привязывается к самому свежему совпадению сейчас** (`SavedSearchQueryPlanner.AnchorAsync`) — подписчик
+  получает только будущие объявления, а не рассылку по всему каталогу.
+- **Единый билдер запроса.** Прогон и живой каталог отбирают объявления **одним и тем же**
+  `CatalogQueryBuilder` (фильтры + FTS). Кросс-полевые проверки (`≤7 городов`, `priceFrom ≤ priceTo`) и
+  нормализация `q` вынесены в `CatalogQueryBuilder` и переиспользуются контроллером каталога и сохранёнными
+  поисками. **Критерии из jsonb не доверяются**: при сохранении и **при каждом прогоне** они заново
+  десериализуются и валидируются; некорректный поиск джоб деактивирует (`IsActive=false`), не рассылая.
+- **`SavedSearchNotificationJob` (Quartz, раз в 15 минут, `[DisallowConcurrentExecution]`, persistent store).**
+  Батчами по 200 активных поисков (keyset по `Id`). Для каждого — тот же запрос каталога с дополнительным
+  условием **по курсору `(PublishedAt, Id) > последнего уведомлённого`**, а не по времени: объявления с
+  одинаковым `PublishedAt` не теряются и не дублируются между прогонами. Найдено больше нуля → **одно**
+  Outbox-сообщение `saved-search-match` со списком (**до 10** объявлений), курсор и `NotifiedAt` двигаются вперёд.
+- **Не чаще одного уведомления на поиск в час**, даже если джоб отработал чаще: поиск с `NotifiedAt` свежее часа
+  джоб пропускает целиком (курсор не трогает — новые объявления не теряются, уедут следующим уведомлением).
+- **Доставка — через тот же Outbox** (шаг 16): обработчик `SavedSearchMatchHandler` собирает письмо из БД по id
+  и шлёт каналом **самого поиска** (`UserNotifier.NotifyViaAsync` — Telegram без `TelegramChatId` деградирует к
+  почте). `None` — не рассылать.
+- Тесты (Testcontainers): **два прогона подряд без новых объявлений дают ровно одно уведомление** (ключевой
+  инвариант ТЗ); курсорная идемпотентность даже при открытом часовом гейте; отсрочка на час без потери; привязка
+  курсора (объявления «до сохранения» не рассылаются); недоверие к jsonb (порча деактивирует); доставка
+  диспетчером; CRUD, лимит 10, `>7` городов → 400, аноним → 401.
+
+**Почему именно так:**
+- **Курсор по `(PublishedAt, Id)`, а не по времени** — при равных `PublishedAt` временной порог либо пропустил бы
+  объявление, либо прислал бы дубль; пара с тай-брейком по `Id` даёт строгий детерминированный порядок.
+- **Привязка курсора при сохранении** — иначе первый же прогон нового поиска, совпавшего с сотнями существующих
+  объявлений, завалил бы подписчика; уведомляем только о том, что появилось **после** сохранения.
+- **Валидация из jsonb при каждом прогоне** — критерии в хранилище могли устареть/испортиться; каталог и джоб
+  должны применять один и тот же набор правил, поэтому валидатор общий.
+- **Сервис в Api, интерфейс/джоб в Infrastructure** — прогон использует `CatalogQueryBuilder` (Api); Quartz-джоб
+  вызывает `ISavedSearchNotificationService` (интерфейс в Infrastructure, реализация в Api), как
+  `OutboxDispatchJob → IOutboxDispatcher` и `CatalogHygieneJob → ICatalogHygieneService`.
+
+**Конфигурация:** секция `SavedSearch` (`NotificationCron`=`0 0/15 * * * ?`, `BatchSize`=200,
+`MaxListingsPerNotification`=10, `MinNotificationIntervalMinutes`=60, `MaxActivePerUser`=10). Джоб отключается
+вместе с планировщиком (`Scheduling:Enabled=false`, как в тестах — там `ISavedSearchNotificationService`
+прогоняется напрямую).
+
+**Ключевые файлы:** `Domain/Entities/SavedSearch.cs`, `Domain/Enums/Enums.cs` (`SavedSearchNotifyChannel`),
+`Infrastructure/Persistence/Configurations/SavedSearchConfiguration.cs`,
+`Infrastructure/Scheduling/{SavedSearchOptions,ISavedSearchNotificationService,SavedSearchNotificationJob}.cs`,
+`Api/SavedSearches/*` (`SavedSearchNotificationService`, `SavedSearchQueryPlanner`, `SavedSearchJson`,
+`SavedSearchServiceCollectionExtensions`), `Api/Controllers/SavedSearchesController.cs`,
+`Api/Contracts/SavedSearchDtos.cs`, `Api/Outbox/{OutboxHandlers,OutboxContracts,UserNotifier}.cs`
+(`SavedSearchMatchHandler`), `Api/Listings/CatalogQueryBuilder.cs` (общие хелперы),
+`Infrastructure/Persistence/Migrations/*_AddSavedSearches.cs`, тесты `tests/GenesisMarket.Tests/SavedSearchTests.cs`.
+
+> **Прод-миграция:** `AddSavedSearches` добавляет таблицу `saved_searches` (аддитивно, без изменения данных).
+> БД — прод, поэтому миграцию накатывает пользователь (`dotnet ef database update`). Новый Quartz-джоб
+> регистрируется в сторе на старте — прод не поднимется без применённой миграции (как и с `AddCatalogHygiene`).
+
+### 18. Публикация объявлений в Telegram-канал (дешёвый канал роста)
+
+**Что сделано:**
+- **Пост при переходе в Active.** Любой переход объявления в `Active` (создание сразу активным, `POST
+  /listings/{id}/publish`, одобрение модератором, возврат из продажи/архива) ставит в Outbox сообщение
+  `listing-published` **в той же транзакции**, что и смена статуса. Доставку выполняет обработчик
+  `ListingPublishedHandler` (шаг 16), отдельно от HTTP-запроса, с ретраями.
+- **Формат поста (plain text).** Заголовок, цена в рублях ПМР, город и категория (русские подписи из
+  `CatalogLabels`), абсолютная ссылка на карточку (`Telegram:WebBaseUrl` + `/listing/{slug}`). **`parse_mode`
+  не используется вовсе** — заголовок/описание пишет пользователь, надёжно экранировать разметку под MarkdownV2
+  (18 спецсимволов) не стоит труда; проще отправлять без разметки.
+- **Фото или текст.** Есть изображение → `sendPhoto` первого по порядку (presigned-URL из MinIO, TTL 1 ч);
+  нет фото → `sendMessage`. Если Telegram не смог обработать картинку (формат/размер/URL) — анонс **не теряем**,
+  публикуем текстом (`TelegramApiException` → фолбэк на `sendMessage`).
+- **Маршрутизация «категория → канал».** Словарь `Telegram:CategoryChannels` (`category → chatId`) с откатом
+  на общий `Telegram:BroadcastChatId`. `message_id` **и chatId** поста сохраняются в `Listing`
+  (`TelegramMessageId`, `TelegramChatId`, миграция `AddListingTelegramPost`) — чтобы позже отредактировать
+  именно тот пост в том канале.
+- **Пометки «Продано»/«Снято».** `mark-sold` и снятие/архивация (в т.ч. **авто-архивация** гигиеной каталога)
+  ставят `listing-channel-update` → `editMessageCaption` (у поста-фото) или `editMessageText` (у текстового)
+  с шапкой «✅ ПРОДАНО» / «⛔ Снято с публикации». Возврат в продажу/из архива — обратная правка на «чистую»
+  подпись. **Если пост удалён вручную — не падаем**: Telegram-ошибки «message to edit not found / can't be
+  edited» трактуются как «править нечего» (обработчик завершается успешно).
+- **Идемпотентность.** `listing-published` при уже существующем `TelegramMessageId` не постит повторно, а правит
+  подпись на чистую (сценарий повторной активации Sold/Archived → Active).
+- **Лимит частоты — проактивно.** `SlidingWindowTelegramRateLimiter` (singleton) держит ≤ **20 сообщений в
+  минуту на канал** скользящим окном **до** отправки, а не реагируя на 429. При всплеске публикаций ждёт
+  освобождения слота до `MaxRateLimitWaitMs`, дальше — откладывает отправку (сообщение вернётся в очередь
+  Outbox), чтобы не держать транзакцию диспетчера.
+- **Ретраи через Polly.** 429 → задержка из `parameters.retry_after` тела ответа (с откатом на заголовок
+  `Retry-After`); сеть/5xx → экспонента `2/4/8/16 c`. Постоянные 4xx (`TelegramApiException`) не ретраятся —
+  их разбирает обработчик. Исчерпание Polly передаёт сбой наверх — там уже персистентные ретраи Outbox.
+- Тесты (Testcontainers): пост в канал категории с сохранением `message_id`; `sendPhoto` при наличии фото;
+  откат на общий канал для категории без своего; правка «Продано»; no-op при отсутствии поста; правка вместо
+  повторного поста при реактивации; полный путь `approve → пост`; модульные тесты лимитера (потолок и
+  независимость по каналам).
+
+**Почему именно так:**
+- **Токен и id каналов — только env.** Секреты не в конфиге репозитория; `Telegram:BotToken` пуст ⇒
+  `LogTelegramClient` пишет намерение в лог (dev-фолбэк, как у почты), реальная сеть не трогается.
+- **chatId поста в БД, а не только message_id** — при маршрутизации по категориям пост живёт в конкретном
+  канале; чтобы его отредактировать позже, нужно знать и канал.
+- **Лимит на стороне обработчика, а не через 429** — упираться в блокировку API и надеяться на ретраи дороже и
+  медленнее, чем заранее разложить отправку по окну; Polly остаётся страховкой на редкий 429.
+- **Фолбэк фото → текст** — картинка в WebP/по URL может не пройти обработку Telegram; терять анонс (главный
+  смысл фичи — рост) из-за этого нельзя, текстовый пост лучше отсутствия.
+
+**Конфигурация:** секция `Telegram` (`BotToken`, `BroadcastChatId`, `WebBaseUrl`, `CategoryChannels` —
+словарь `category→chatId`, `MaxMessagesPerMinutePerChat`=20, `MaxRateLimitWaitMs`=5000; секреты — только env).
+
+**Ключевые файлы:** `Domain/Entities/Listing.cs` (`TelegramChatId/MessageId`, `AttachChannelPost`),
+`Domain/Entities/OutboxMessage.cs` (`ListingPublished`, `ListingChannelUpdate`),
+`Api/Outbox/Telegram/*` (`TelegramOptions`, `ITelegramClient`, `HttpTelegramClient`, `LogTelegramClient`,
+`TelegramRateLimiter`, `TelegramExceptions`, `TelegramPostFormatter`), `Api/Listings/CatalogLabels.cs`,
+`Api/Outbox/{OutboxHandlers,OutboxContracts,NotificationChannels,OutboxServiceCollectionExtensions}.cs`,
+продюсеры `Api/Controllers/{ListingsController,ModerationController}.cs` и
+`Infrastructure/Scheduling/CatalogHygieneService.cs`,
+`Infrastructure/Persistence/Migrations/*_AddListingTelegramPost.cs`,
+тесты `tests/GenesisMarket.Tests/{TelegramPublishTests,CapturingTelegramClient}.cs`.
+
+> **Прод-миграция:** `AddListingTelegramPost` добавляет `TelegramChatId`/`TelegramMessageId` в `listings`
+> (аддитивно, nullable, без изменения данных). БД — прод, миграцию накатывает пользователь
+> (`dotnet ef database update`), с `pg_dump` перед сменой схемы.
+
+---
+
+### 19. Подготовка к индексации: мета, sitemap, robots, посадочные (органический трафик)
+
+**Что сделано:**
+- **`GET /api/listings/{id}/meta`** — готовые данные для `<head>` карточки: `title`, `description`,
+  `canonicalUrl` (`/obyavlenie/{slug}`), og-теги (`ogTitle`, `ogDescription`, `ogImage`) и **JSON-LD
+  `schema.org/Product`** с `offers` (`price`, `priceCurrency`, `availability`, `itemCondition`, `seller`).
+  `ogImage` — presigned-ссылка на первое фото с **длинным TTL** (`Seo:OgImageTtlDays`, по умолчанию 7 дней):
+  og-картинку кэшируют соцсети/поисковики, короткий TTL давал бы «битые» превью в выдаче.
+- **Валюта — `RUP`.** У рубля ПМР нет кода ISO-4217. В JSON-LD `priceCurrency` = **`RUP`** (не `RUB`/`MDL` —
+  это другие валюты), а человеку валюта поясняется **текстом** в `description` («Цена указана в рублях ПМР (RUP)»).
+  Для договорной цены (`Negotiable`) поле `price` в offers **опускается** (пустую цену schema.org не любит).
+- **HTTP-коды под судьбу URL в индексе.** Удалённое (soft-delete) → **410 Gone** (поисковик убирает URL из
+  индекса); снятое с публикации (`Archived`/`Sold`) → **200** с `isArchived: true` и `noIndex: true`
+  (фронт ставит `<meta name=robots content=noindex>`, но URL остаётся); черновик/премодерация/отклонённое
+  (публичного URL не было) и несуществующее → **404**. Разница 410↔404 намеренная: 410 говорит убрать URL, 404 — нет.
+- **`canonicalUrl` в DTO объявления.** `GET /api/listings/{id}` (и `by-slug`, «мои», и т.д.) всегда несут
+  `canonicalUrl` — единый канонический адрес для `<link rel=canonical>` и шеринга.
+- **`GET /sitemap.xml`** — главная, все категории, все города, все `Active` объявления. Пока URL ≤ порога
+  (`Seo:SitemapSplitThreshold`=45 000) — один `<urlset>`; больше — **sitemap-index** с разбивкой по
+  `Seo:SitemapPageSize`=40 000 (`/sitemap-static.xml` + `/sitemap-listings-{n}.xml`). Генерация **потоковая**
+  (`IAsyncEnumerable` из EF прямо в тело ответа через `XmlWriter`) — весь список в память не материализуется.
+  Число активных объявлений кэшируется на час; ответы отдаются с `Cache-Control: public, max-age=3600`.
+- **`GET /robots.txt`** — закрывает служебные API (`/api/moderation/`, `/api/me/`, `/api/auth/`) и указывает
+  `Sitemap:`. Каталог и карточки остаются открыты.
+- **`GET /api/seo/landing/{category}/{city}`** — данные для статических посадочных «Купить квартиру в
+  Тирасполе»: счётчик активных объявлений, диапазон цен (`priceFrom`/`priceTo` по объявлениям с ценой) и топ
+  подкатегорий (по числу объявлений). Неизвестная пара категория/город → 404.
+- Тесты (Testcontainers): мета Active (canonical/og/JSON-LD/RUP/InStock), договорная цена без `price`,
+  архив/продано (200 + noindex + Discontinued/SoldOut), 410 для удалённого, 404 для черновика/несуществующего,
+  `canonicalUrl` в DTO, robots, sitemap (urlset + loc объявления + Cache-Control), посадочная и её 404.
+
+**Почему именно так:**
+- **Мета собирает сервер, а не фронт** — SSR/краулер получает готовые title/description/JSON-LD, логика
+  формирования (валюта, availability, обрезка описания) не дублируется и не расходится с бэкендом.
+- **Потоковый sitemap** — объявлений могут быть сотни тысяч; `ToListAsync` на весь каталог держал бы память и
+  задерживал первый байт. XML пишется по мере чтения курсора БД.
+- **410 vs 200-noindex** — разное намерение: удалённое надо стереть из индекса (410), снятое с публикации может
+  вернуться (200 + noindex сохраняет URL «на паузе»).
+- **`Seo:WebBaseUrl` пуст ⇒ 503.** Без публичного адреса индексировать нечего и абсолютные ссылки не построить;
+  `canonicalUrl` в DTO объявления в этом случае `null` (dev), эндпоинты мета/sitemap/посадочных — 503.
+
+**Конфигурация:** секция `Seo` (`WebBaseUrl` — только env, обычно = адресу фронтенда; `SiteName`,
+`OgImageTtlDays`=7, `SitemapSplitThreshold`=45000, `SitemapPageSize`=40000, `SitemapCacheSeconds`=3600).
+
+**Ключевые файлы:** `Api/Seo/*` (`SeoOptions`, `SeoUrls`, `ListingMetaBuilder`, `SeoServiceCollectionExtensions`),
+`Api/Controllers/{SeoController,SitemapController}.cs`, `Api/Contracts/SeoDtos.cs`,
+`Api/Contracts/ListingDtos.cs` (`CanonicalUrl`), `Api/Controllers/ListingsController.cs` (проброс canonical),
+тесты `tests/GenesisMarket.Tests/SeoTests.cs`.
+
+> **Прод:** миграций нет (только чтение). Перед запуском задать `SEO_WEB_BASE_URL` (env) — иначе SEO-эндпоинты
+> отдают 503, а `canonicalUrl` в DTO объявлений приходит `null`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
@@ -610,10 +865,23 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 - **Аватар (`POST /api/me/avatar`) — минимальная реализация**: валидация типа по magic bytes + размер,
   серверный ключ, сохранение в MinIO; `AvatarUrl` хранит ключ объекта. Обработка (ресайз, снятие EXIF,
   WebP) и presigned-URL для отдачи — шаг 8; заменит текущую реализацию.
-- **Уведомления — только запись в Outbox, без доставки.** Reject-объявления кладёт `OutboxMessage.Notification`
-  в БД, но обработчика доставки уведомлений пока нет (существующий `ObjectDeletionOutboxProcessor` берёт только
-  `delete-object`) — это шаг 14. До него сообщения копятся необработанными; это ожидаемо.
+- **Telegram-доставка личных уведомлений — привязка ЛС нет.** Транзакционный outbox доставляет уведомления
+  (фича 16); **личный** канал Telegram работает только при заполненном `Profile.TelegramChatId`, а флоу его
+  привязки (бот, `/start`, сохранение chat_id) ещё не построен. До него `NotifyVia=Telegram` без chat_id
+  деградирует к почте. **Публикация объявлений в каналы (фича 18) от этого не зависит** — она шлёт в каналы по
+  их chatId из конфигурации. Без `Telegram:BotToken` Telegram-клиент пишет в лог (`[DEV TELEGRAM] …`), как
+  dev-фолбэк почты.
 - **Разбан не восстанавливает объявления.** Бан архивирует активные объявления, но `unban` их обратно в `Active`
   не переводит — владелец публикует заново. Осознанное решение: авто-восстановление рискует вернуть в каталог то,
   что и было причиной бана.
 - **Rate-limit жалоб — in-memory** (на инстанс), как и остальные лимиты. При нескольких инстансах API нужен общий стор (Redis).
+- **SEO-пути фронтенда — договорённость, не автоматика.** Бэкенд отдаёт канонические ссылки под конкретную
+  маршрутизацию фронта: карточка `/obyavlenie/{slug}`, категория `/{category}`, город `/city/{city}`, посадочная
+  `/{category}/{city}` (значения — как в БД: `realestate`, `tiraspol`). Фронт обязан обслуживать эти URL; при
+  смене схемы путей — синхронно править `Api/Seo/SeoUrls.cs`. Пост Telegram-канала пока ссылается на **старый**
+  путь `/listing/{slug}` (`TelegramPostFormatter`) — свести к `/obyavlenie/{slug}` отдельным шагом.
+- **`Seo:WebBaseUrl` дублирует `Telegram:WebBaseUrl`.** Обычно это один и тот же адрес фронтенда, но заданы
+  двумя переменными (`SEO_WEB_BASE_URL`, `TELEGRAM_WEB_BASE_URL`). Позже разумно свести к общей секции `Site`.
+- **Sitemap объявлений — offset-пагинация** (`Skip/Take` по `Id`). Для сотен тысяч глубокие страницы дают рост
+  стоимости `OFFSET`; ответы кэшируются на час и запрашиваются краулером редко, так что приемлемо. При кратном
+  росте каталога перейти на keyset по `Id`.

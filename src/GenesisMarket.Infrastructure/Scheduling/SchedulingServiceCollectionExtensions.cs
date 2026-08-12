@@ -17,6 +17,8 @@ public static class SchedulingServiceCollectionExtensions
         string postgresConnectionString)
     {
         services.Configure<CatalogHygieneOptions>(configuration.GetSection(CatalogHygieneOptions.Section));
+        services.Configure<OutboxOptions>(configuration.GetSection(OutboxOptions.Section));
+        services.Configure<SavedSearchOptions>(configuration.GetSection(SavedSearchOptions.Section));
 
         // Сервис-логика доступна всегда (в т.ч. когда планировщик выключен — для тестов/ручного прогона).
         services.AddScoped<ICatalogHygieneService, CatalogHygieneService>();
@@ -29,6 +31,15 @@ public static class SchedulingServiceCollectionExtensions
         var cron = configuration[$"{SchedulingSection}:HygieneCron"];
         if (string.IsNullOrWhiteSpace(cron))
             cron = "0 0 3 * * ?";
+
+        var outbox = configuration.GetSection(OutboxOptions.Section).Get<OutboxOptions>() ?? new OutboxOptions();
+        var dispatchInterval = Math.Max(1, outbox.DispatchIntervalSeconds);
+
+        var savedSearch = configuration.GetSection(SavedSearchOptions.Section).Get<SavedSearchOptions>()
+                          ?? new SavedSearchOptions();
+        var savedSearchCron = string.IsNullOrWhiteSpace(savedSearch.NotificationCron)
+            ? "0 0/15 * * * ?"
+            : savedSearch.NotificationCron;
 
         services.AddQuartz(q =>
         {
@@ -54,6 +65,42 @@ public static class SchedulingServiceCollectionExtensions
                 .ForJob(CatalogHygieneJob.Key)
                 .WithIdentity("catalog-hygiene-daily")
                 .WithCronSchedule(cron, x => x.WithMisfireHandlingInstructionDoNothing()));
+
+            // ---- Транзакционный outbox: диспетчер (частый тик) + уборщик (ежедневно) ----
+            q.AddJob<OutboxDispatchJob>(j => j
+                .WithIdentity(OutboxDispatchJob.Key)
+                .StoreDurably()
+                .WithDescription("Доставка сообщений outbox (email/Telegram/хранилище)"));
+
+            q.AddTrigger(t => t
+                .ForJob(OutboxDispatchJob.Key)
+                .WithIdentity("outbox-dispatch-interval")
+                .WithSimpleSchedule(x => x
+                    .WithIntervalInSeconds(dispatchInterval)
+                    .RepeatForever()
+                    // При пропуске (узел был занят/выключен) не копим отставшие тики — один следующий.
+                    .WithMisfireHandlingInstructionNextWithRemainingCount()));
+
+            q.AddJob<OutboxCleanupJob>(j => j
+                .WithIdentity(OutboxCleanupJob.Key)
+                .StoreDurably()
+                .WithDescription("Удаление доставленных сообщений outbox старше срока хранения"));
+
+            q.AddTrigger(t => t
+                .ForJob(OutboxCleanupJob.Key)
+                .WithIdentity("outbox-cleanup-daily")
+                .WithCronSchedule(outbox.CleanupCron, x => x.WithMisfireHandlingInstructionDoNothing()));
+
+            // ---- Сохранённые поиски: рассылка новых совпадений (по умолчанию раз в 15 минут) ----
+            q.AddJob<SavedSearchNotificationJob>(j => j
+                .WithIdentity(SavedSearchNotificationJob.Key)
+                .StoreDurably()
+                .WithDescription("Поиск новых объявлений по сохранённым поискам и уведомление авторов"));
+
+            q.AddTrigger(t => t
+                .ForJob(SavedSearchNotificationJob.Key)
+                .WithIdentity("saved-search-notification-interval")
+                .WithCronSchedule(savedSearchCron, x => x.WithMisfireHandlingInstructionDoNothing()));
         });
 
         // WaitForJobsToComplete — не рвём выполнение джоба при остановке приложения.

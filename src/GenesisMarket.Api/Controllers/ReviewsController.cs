@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Domain.Entities;
@@ -75,6 +76,14 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
             Text = text
         };
         db.Reviews.Add(review);
+
+        // Уведомление адресату отзыва — через outbox в той же транзакции (SaveChanges).
+        // Только id отзыва: адресата, оценку и текст обработчик достанет из БД.
+        db.OutboxMessages.Add(new OutboxMessage
+        {
+            Type = OutboxMessage.NewReview,
+            Payload = JsonSerializer.Serialize(new { reviewId = review.Id })
+        });
 
         try
         {

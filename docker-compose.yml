@@ -48,6 +48,16 @@ services:
       Smtp__From: ${SMTP_FROM:-no-reply@genesis-hq.com}
       Smtp__FromName: ${SMTP_FROM_NAME:-Genesis Market}
       Smtp__UseSsl: ${SMTP_USE_SSL:-true}
+      # Telegram-бот (уведомления/посты через outbox). Пусто -> dev-лог, доставка почтой.
+      Telegram__BotToken: ${TELEGRAM_BOT_TOKEN}
+      Telegram__BroadcastChatId: ${TELEGRAM_BROADCAST_CHAT_ID}
+      # Публичный адрес фронтенда для ссылок в постах канала.
+      Telegram__WebBaseUrl: ${TELEGRAM_WEB_BASE_URL}
+      # Маршрутизация «категория -> канал» задаётся переменными Telegram__CategoryChannels__<category>.
+      # SEO: публичный адрес сайта для канонических ссылок, sitemap, og-тегов и JSON-LD.
+      # Пусто -> SEO-эндпоинты отдают 503 (индексировать нечего). Обычно = адресу фронтенда.
+      Seo__WebBaseUrl: ${SEO_WEB_BASE_URL}
+      Seo__SiteName: ${SEO_SITE_NAME:-Genesis Market}
       # Что обязательно для публикации: None | Email | Phone | Both.
       Publishing__RequiredVerification: ${PUBLISHING_REQUIRED_VERIFICATION:-Email}
       # CORS — строка origin-ов через запятую.

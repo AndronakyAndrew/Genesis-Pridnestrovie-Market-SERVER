@@ -197,6 +197,13 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<int>("SubcategoryId")
                         .HasColumnType("integer");
 
+                    b.Property<string>("TelegramChatId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long?>("TelegramMessageId")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(120)
@@ -382,17 +389,29 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("LastError")
+                    b.Property<string>("Error")
                         .HasMaxLength(2048)
                         .HasColumnType("character varying(2048)");
 
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
                     b.Property<string>("Payload")
                         .IsRequired()
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)");
+                        .HasMaxLength(4096)
+                        .HasColumnType("character varying(4096)");
 
                     b.Property<DateTimeOffset?>("ProcessedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Pending");
 
                     b.Property<string>("Type")
                         .IsRequired()
@@ -401,7 +420,11 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ProcessedAt", "CreatedAt");
+                    b.HasIndex("ProcessedAt");
+
+                    b.HasIndex("Status", "NextAttemptAt", "CreatedAt")
+                        .HasDatabaseName("ix_outbox_due")
+                        .HasFilter("\"Status\" = 'Pending'");
 
                     b.ToTable("outbox_messages", (string)null);
                 });
@@ -426,10 +449,20 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .HasMaxLength(60)
                         .HasColumnType("character varying(60)");
 
+                    b.Property<string>("NotifyVia")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Email");
+
                     b.Property<bool>("ShowPhoneInListing")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
+
+                    b.Property<long?>("TelegramChatId")
+                        .HasColumnType("bigint");
 
                     b.Property<string>("TelegramUsername")
                         .HasMaxLength(64)
@@ -615,6 +648,62 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_reviews_rating_range", "\"Rating\" >= 1 AND \"Rating\" <= 5");
 
                             t.HasCheckConstraint("ck_reviews_text_length", "char_length(\"Text\") <= 1000");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.SavedSearch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<Guid?>("LastNotifiedListingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("LastRunAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTimeOffset?>("NotifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NotifyChannel")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("QueryJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("IsActive", "NotifiedAt")
+                        .HasFilter("\"IsActive\"");
+
+                    b.ToTable("saved_searches", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_saved_searches_name_length", "char_length(\"Name\") >= 1 AND char_length(\"Name\") <= 100");
                         });
                 });
 
@@ -1219,6 +1308,17 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Navigation("Author");
 
                     b.Navigation("Listing");
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.SavedSearch", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.VerificationCode", b =>

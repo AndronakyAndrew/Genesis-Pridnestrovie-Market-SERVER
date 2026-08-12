@@ -12,10 +12,28 @@ public class OutboxMessageConfiguration : IEntityTypeConfiguration<OutboxMessage
         b.HasKey(m => m.Id);
 
         b.Property(m => m.Type).HasMaxLength(64).IsRequired();
-        b.Property(m => m.Payload).HasMaxLength(1024).IsRequired();
-        b.Property(m => m.LastError).HasMaxLength(2048);
+        b.Property(m => m.Payload).HasMaxLength(4096).IsRequired();
+        b.Property(m => m.Error).HasMaxLength(2048);
 
-        // Обработчик выбирает необработанные (ProcessedAt IS NULL) по возрастанию CreatedAt.
-        b.HasIndex(m => new { m.ProcessedAt, m.CreatedAt });
+        // Статус — строкой (операционный enum, не входит в native enum-ы каталога).
+        // Дефолт на уровне БД — Pending: новые строки и существующие при миграции валидны.
+        b.Property(m => m.Status)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .HasDefaultValue(Domain.Enums.OutboxStatus.Pending)
+            .IsRequired();
+
+        // Дефолт NextAttemptAt — now(): существующая строка сразу готова к попытке;
+        // при обычной вставке значение задаёт приложение.
+        b.Property(m => m.NextAttemptAt).HasDefaultValueSql("now()");
+
+        // Горячий путь диспетчера: выбрать Pending, у которых подошло время попытки,
+        // по возрастанию CreatedAt (FIFO). Частичный индекс — только по обрабатываемым.
+        b.HasIndex(m => new { m.Status, m.NextAttemptAt, m.CreatedAt })
+            .HasDatabaseName("ix_outbox_due")
+            .HasFilter("\"Status\" = 'Pending'");
+
+        // Отдельный джоб-уборщик выбирает Done по ProcessedAt.
+        b.HasIndex(m => m.ProcessedAt);
     }
 }

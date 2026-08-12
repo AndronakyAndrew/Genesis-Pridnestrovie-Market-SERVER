@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using Xunit;
 
@@ -223,16 +224,16 @@ public class CatalogHygieneTests(AuthApiFactory factory) : IClassFixture<AuthApi
         var upcomingState = await factory.LifecycleStateAsync(upcoming);
         Assert.Equal("Active", upcomingState.Status);
         Assert.NotNull(upcomingState.ArchiveWarningAt);
-        Assert.Equal(1, await factory.OutboxNotificationCountAsync(warnOwner));
+        Assert.Equal(1, await factory.OutboxCountAsync(OutboxMessage.ListingExpiringSoon, upcoming));
 
         var freshState = await factory.LifecycleStateAsync(fresh);
         Assert.Equal("Active", freshState.Status);
         Assert.Null(freshState.ArchiveWarningAt);
-        Assert.Equal(0, await factory.OutboxNotificationCountAsync(freshOwner));
+        Assert.Equal(0, await factory.OutboxCountAsync(OutboxMessage.ListingExpiringSoon, fresh));
 
         // Повторный прогон на тех же данных ничего не меняет (идемпотентность).
         await factory.RunCatalogHygieneAsync();
-        Assert.Equal(1, await factory.OutboxNotificationCountAsync(warnOwner));
+        Assert.Equal(1, await factory.OutboxCountAsync(OutboxMessage.ListingExpiringSoon, upcoming));
         Assert.Equal("Archived", (await factory.LifecycleStateAsync(expired)).Status);
     }
 

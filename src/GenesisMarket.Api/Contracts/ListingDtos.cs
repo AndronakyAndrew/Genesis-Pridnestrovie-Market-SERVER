@@ -29,7 +29,12 @@ public record ListingResponse(
     /// Сколько дней до автоархивации (от coalesce(BumpedAt, PublishedAt) + срок из конфигурации).
     /// Заполняется только для Active-объявлений; для остальных статусов — null.
     /// </summary>
-    int? DaysUntilArchive = null);
+    int? DaysUntilArchive = null,
+    /// <summary>
+    /// Канонический публичный адрес карточки (<c>/obyavlenie/{slug}</c>) — для &lt;link rel=canonical&gt;
+    /// и шеринга. null, если публичный адрес сайта не настроен (<c>Seo:WebBaseUrl</c>).
+    /// </summary>
+    string? CanonicalUrl = null);
 
 /// <summary>
 /// Создание объявления. Валидируется FluentValidation (см. CreateListingRequestValidator).

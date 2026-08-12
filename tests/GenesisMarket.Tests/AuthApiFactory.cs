@@ -2,6 +2,7 @@ using GenesisMarket.Api.Auth;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Auth;
+using GenesisMarket.Infrastructure.Outbox;
 using GenesisMarket.Infrastructure.Persistence;
 using GenesisMarket.Infrastructure.Scheduling;
 using GenesisMarket.Infrastructure.Storage;
@@ -44,6 +45,15 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         Environment.SetEnvironmentVariable("ContactReveal__MinDelayMs", "0");
         Environment.SetEnvironmentVariable("ContactReveal__MaxDelayMs", "0");
 
+        // Telegram-каналы для проверки публикации и маршрутизации «категория → канал».
+        // Токен не задаём (реальную сеть не трогаем; клиент подменён CapturingTelegramClient).
+        Environment.SetEnvironmentVariable("Telegram__BroadcastChatId", "test-broadcast");
+        Environment.SetEnvironmentVariable("Telegram__CategoryChannels__home", "test-home");
+        Environment.SetEnvironmentVariable("Telegram__WebBaseUrl", "https://market.test");
+
+        // Публичный адрес сайта для SEO (canonical/sitemap/og/JSON-LD) — иначе эндпоинты отдают 503.
+        Environment.SetEnvironmentVariable("Seo__WebBaseUrl", "https://market.test");
+
         // Первое обращение к Services собирает хост (с уже выставленной строкой).
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -67,13 +77,25 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             services.AddSingleton<IObjectStorage>(sp => sp.GetRequiredService<FakeObjectStorage>());
 
             // Фоновые сервисы, которым нужен реальный MinIO, в тестах не запускаем.
+            // Доставку outbox гоняем вручную через RunOutboxAsync (планировщик выключен).
             RemoveHostedService<MinioBucketInitializer>(services);
-            RemoveHostedService<ObjectDeletionOutboxProcessor>(services);
+
+            // Тестовый обработчик, всегда падающий транзиентно — для проверки ретраев/эскалации.
+            services.AddScoped<GenesisMarket.Api.Outbox.IOutboxHandler, TestFailingOutboxHandler>();
+
+            // Telegram-клиент подменяем перехватывающим — проверяем посты/правки без сети.
+            services.RemoveAll<GenesisMarket.Api.Outbox.Telegram.ITelegramClient>();
+            services.AddSingleton<CapturingTelegramClient>();
+            services.AddSingleton<GenesisMarket.Api.Outbox.Telegram.ITelegramClient>(
+                sp => sp.GetRequiredService<CapturingTelegramClient>());
         });
     }
 
     /// <summary>Доступ к фейковому хранилищу для проверок в тестах загрузки фото.</summary>
     public FakeObjectStorage Storage => Services.GetRequiredService<FakeObjectStorage>();
+
+    /// <summary>Перехваченные вызовы Telegram (посты/правки) для проверок публикации в канал.</summary>
+    public CapturingTelegramClient Telegram => Services.GetRequiredService<CapturingTelegramClient>();
 
     private static void RemoveHostedService<T>(IServiceCollection services)
     {
@@ -147,6 +169,48 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         db.Listings.Add(listing);
         await db.SaveChangesAsync();
         return listing.Id;
+    }
+
+    /// <summary>Добавляет объявлению изображение (только строку БД — для проверки sendPhoto).</summary>
+    public async Task SeedListingImageAsync(Guid listingId, int sortOrder = 0)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var key = $"listings/{listingId}/{Guid.NewGuid():N}.webp";
+        db.ListingImages.Add(new ListingImage
+        {
+            ListingId = listingId,
+            ObjectKey = key,
+            ThumbKey = key.Replace(".webp", "_thumb.webp"),
+            SortOrder = sortOrder,
+            Width = 800,
+            Height = 600
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Проставляет объявлению координаты поста в Telegram (эмуляция уже опубликованного).</summary>
+    public async Task SetTelegramPostAsync(Guid listingId, string chatId, long messageId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Listings.IgnoreQueryFilters()
+            .Where(l => l.Id == listingId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(l => l.TelegramChatId, chatId)
+                .SetProperty(l => l.TelegramMessageId, messageId));
+    }
+
+    /// <summary>Координаты поста объявления в Telegram-канале (после публикации).</summary>
+    public async Task<(string? ChatId, long? MessageId)> TelegramPostAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var l = await db.Listings.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.Id == listingId)
+            .Select(x => new { x.TelegramChatId, x.TelegramMessageId })
+            .FirstAsync();
+        return (l.TelegramChatId, l.TelegramMessageId);
     }
 
     /// <summary>Выставляет счётчик просмотров напрямую (для сортировки popular).</summary>
@@ -244,6 +308,16 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return await db.Listings.IgnoreQueryFilters()
             .Where(l => l.Id == listingId).Select(l => l.FavoritesCount).FirstAsync();
+    }
+
+    /// <summary>Мягко удаляет объявление (проставляет DeletedAt) — для проверки 410 Gone в SEO-мета.</summary>
+    public async Task SoftDeleteListingAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Listings.IgnoreQueryFilters()
+            .Where(l => l.Id == listingId)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.DeletedAt, DateTimeOffset.UtcNow));
     }
 
     /// <summary>Меняет статус объявления напрямую (для проверки isUnavailable в избранном).</summary>
@@ -344,13 +418,55 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         return (u.IsBanned, u.BannedUntil);
     }
 
-    /// <summary>Сколько сообщений outbox указанного типа адресовано пользователю (по JSON payload).</summary>
-    public async Task<int> OutboxNotificationCountAsync(Guid userId)
+    /// <summary>Сколько сообщений outbox указанного типа ссылается на id (по JSON payload).</summary>
+    public async Task<int> OutboxCountAsync(string type, Guid id)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var needle = id.ToString();
         return await db.OutboxMessages
-            .CountAsync(m => m.Type == "notification" && m.Payload.Contains(userId.ToString()));
+            .CountAsync(m => m.Type == type && m.Payload.Contains(needle));
+    }
+
+    /// <summary>Прогоняет один тик диспетчера outbox напрямую (планировщик в тестах выключен).</summary>
+    public async Task<OutboxDispatchResult> RunOutboxAsync()
+    {
+        using var scope = Services.CreateScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<IOutboxDispatcher>();
+        return await dispatcher.DispatchOnceAsync(CancellationToken.None);
+    }
+
+    /// <summary>Кладёт сообщение в outbox напрямую (для сценариев диспетчера); возвращает его Id.</summary>
+    public async Task<Guid> EnqueueOutboxAsync(string type, string payload)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var message = new OutboxMessage { Type = type, Payload = payload };
+        db.OutboxMessages.Add(message);
+        await db.SaveChangesAsync();
+        return message.Id;
+    }
+
+    /// <summary>Состояние сообщения outbox (для проверок ретраев/финализации).</summary>
+    public async Task<(OutboxStatus Status, int Attempts, string? Error, DateTimeOffset NextAttemptAt)> OutboxStateAsync(Guid id)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var m = await db.OutboxMessages.AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => new { x.Status, x.Attempts, x.Error, x.NextAttemptAt })
+            .FirstAsync();
+        return (m.Status, m.Attempts, m.Error, m.NextAttemptAt);
+    }
+
+    /// <summary>Делает сообщение готовым к немедленной попытке (сдвигает NextAttemptAt в прошлое).</summary>
+    public async Task MakeOutboxDueAsync(Guid id)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.OutboxMessages
+            .Where(x => x.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.NextAttemptAt, DateTimeOffset.UtcNow.AddSeconds(-1)));
     }
 
     public async Task BanUserAsync(Guid userId)
@@ -368,6 +484,46 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         using var scope = Services.CreateScope();
         var svc = scope.ServiceProvider.GetRequiredService<ICatalogHygieneService>();
         return await svc.RunAsync(CancellationToken.None);
+    }
+
+    /// <summary>Прогоняет джоб рассылки сохранённых поисков напрямую (планировщик в тестах выключен).</summary>
+    public async Task<SavedSearchNotificationResult> RunSavedSearchNotificationsAsync()
+    {
+        using var scope = Services.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<ISavedSearchNotificationService>();
+        return await svc.RunAsync(CancellationToken.None);
+    }
+
+    /// <summary>Сдвигает NotifiedAt поиска (для проверки часового гейта и независимости курсора).</summary>
+    public async Task SetSavedSearchNotifiedAtAsync(Guid id, DateTimeOffset? when)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.SavedSearches
+            .Where(s => s.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.NotifiedAt, when));
+    }
+
+    /// <summary>Состояние сохранённого поиска (курсор/уведомление/активность).</summary>
+    public async Task<(Guid? LastNotifiedListingId, DateTimeOffset? NotifiedAt, bool IsActive)> SavedSearchStateAsync(Guid id)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var s = await db.SavedSearches.AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => new { x.LastNotifiedListingId, x.NotifiedAt, x.IsActive })
+            .FirstAsync();
+        return (s.LastNotifiedListingId, s.NotifiedAt, s.IsActive);
+    }
+
+    /// <summary>Портит QueryJson поиска (для проверки, что джоб не доверяет содержимому jsonb).</summary>
+    public async Task SetSavedSearchQueryJsonAsync(Guid id, string json)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.SavedSearches
+            .Where(s => s.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.QueryJson, json));
     }
 
     /// <summary>Сдвигает «возраст» объявления: BumpedAt/PublishedAt напрямую (для проверки сроков).</summary>

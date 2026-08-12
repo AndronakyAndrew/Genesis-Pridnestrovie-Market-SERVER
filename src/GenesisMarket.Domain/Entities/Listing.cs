@@ -102,7 +102,33 @@ public class Listing : BaseEntity, IOwnedResource
     public Guid OwnerId { get; set; }
     public User? Owner { get; set; }
 
+    /// <summary>
+    /// Идентификатор канала/чата, куда объявление было опубликовано в Telegram
+    /// (маршрутизация категория → канал; может отличаться от общего канала). Заполнен
+    /// вместе с <see cref="TelegramMessageId"/> — нужен, чтобы позже отредактировать
+    /// именно тот пост (пометки «Продано»/«Снято»). null ⇒ в канал ещё не постили.
+    /// </summary>
+    public string? TelegramChatId { get; set; }
+
+    /// <summary>
+    /// message_id опубликованного поста в Telegram (см. <see cref="TelegramChatId"/>).
+    /// Заполняется обработчиком outbox после успешной отправки. null ⇒ поста нет
+    /// (не публиковали, отправка не удалась или пост был удалён вручную).
+    /// </summary>
+    public long? TelegramMessageId { get; set; }
+
     public ICollection<ListingImage> Images { get; set; } = new List<ListingImage>();
+
+    /// <summary>
+    /// Привязать объявление к опубликованному посту канала. Единственная точка записи
+    /// координат поста (chatId + messageId) — вызывается обработчиком outbox после
+    /// успешного sendPhoto/sendMessage.
+    /// </summary>
+    public void AttachChannelPost(string chatId, long messageId)
+    {
+        TelegramChatId = chatId;
+        TelegramMessageId = messageId;
+    }
 
     /// <summary>Единственная точка изменения счётчика просмотров в доменной модели.</summary>
     public void RegisterView() => ViewsCount++;
