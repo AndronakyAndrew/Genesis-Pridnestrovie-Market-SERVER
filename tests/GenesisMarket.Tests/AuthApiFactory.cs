@@ -45,6 +45,12 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         Environment.SetEnvironmentVariable("ContactReveal__MinDelayMs", "0");
         Environment.SetEnvironmentVariable("ContactReveal__MaxDelayMs", "0");
 
+        // Telegram-каналы для проверки публикации и маршрутизации «категория → канал».
+        // Токен не задаём (реальную сеть не трогаем; клиент подменён CapturingTelegramClient).
+        Environment.SetEnvironmentVariable("Telegram__BroadcastChatId", "test-broadcast");
+        Environment.SetEnvironmentVariable("Telegram__CategoryChannels__home", "test-home");
+        Environment.SetEnvironmentVariable("Telegram__WebBaseUrl", "https://market.test");
+
         // Первое обращение к Services собирает хост (с уже выставленной строкой).
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -73,11 +79,20 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
 
             // Тестовый обработчик, всегда падающий транзиентно — для проверки ретраев/эскалации.
             services.AddScoped<GenesisMarket.Api.Outbox.IOutboxHandler, TestFailingOutboxHandler>();
+
+            // Telegram-клиент подменяем перехватывающим — проверяем посты/правки без сети.
+            services.RemoveAll<GenesisMarket.Api.Outbox.Telegram.ITelegramClient>();
+            services.AddSingleton<CapturingTelegramClient>();
+            services.AddSingleton<GenesisMarket.Api.Outbox.Telegram.ITelegramClient>(
+                sp => sp.GetRequiredService<CapturingTelegramClient>());
         });
     }
 
     /// <summary>Доступ к фейковому хранилищу для проверок в тестах загрузки фото.</summary>
     public FakeObjectStorage Storage => Services.GetRequiredService<FakeObjectStorage>();
+
+    /// <summary>Перехваченные вызовы Telegram (посты/правки) для проверок публикации в канал.</summary>
+    public CapturingTelegramClient Telegram => Services.GetRequiredService<CapturingTelegramClient>();
 
     private static void RemoveHostedService<T>(IServiceCollection services)
     {
@@ -151,6 +166,48 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         db.Listings.Add(listing);
         await db.SaveChangesAsync();
         return listing.Id;
+    }
+
+    /// <summary>Добавляет объявлению изображение (только строку БД — для проверки sendPhoto).</summary>
+    public async Task SeedListingImageAsync(Guid listingId, int sortOrder = 0)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var key = $"listings/{listingId}/{Guid.NewGuid():N}.webp";
+        db.ListingImages.Add(new ListingImage
+        {
+            ListingId = listingId,
+            ObjectKey = key,
+            ThumbKey = key.Replace(".webp", "_thumb.webp"),
+            SortOrder = sortOrder,
+            Width = 800,
+            Height = 600
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Проставляет объявлению координаты поста в Telegram (эмуляция уже опубликованного).</summary>
+    public async Task SetTelegramPostAsync(Guid listingId, string chatId, long messageId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Listings.IgnoreQueryFilters()
+            .Where(l => l.Id == listingId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(l => l.TelegramChatId, chatId)
+                .SetProperty(l => l.TelegramMessageId, messageId));
+    }
+
+    /// <summary>Координаты поста объявления в Telegram-канале (после публикации).</summary>
+    public async Task<(string? ChatId, long? MessageId)> TelegramPostAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var l = await db.Listings.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.Id == listingId)
+            .Select(x => new { x.TelegramChatId, x.TelegramMessageId })
+            .FirstAsync();
+        return (l.TelegramChatId, l.TelegramMessageId);
     }
 
     /// <summary>Выставляет счётчик просмотров напрямую (для сортировки popular).</summary>

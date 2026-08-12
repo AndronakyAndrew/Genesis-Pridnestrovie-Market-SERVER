@@ -79,6 +79,10 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
         b.Property(l => l.FavoritesCount).HasDefaultValue(0);
         b.Property(l => l.ModerationPriority).HasDefaultValue(0);
 
+        // Координаты поста в Telegram-канале (заполняются обработчиком outbox после отправки).
+        // chatId Telegram — до 32 символов (числовой id канала/чата с ведущим -100…).
+        b.Property(l => l.TelegramChatId).HasMaxLength(64);
+
         // FK на справочник подкатегорий (не свободный текст).
         b.HasOne(l => l.Subcategory)
             .WithMany(s => s.Listings)

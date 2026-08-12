@@ -51,6 +51,9 @@ services:
       # Telegram-бот (уведомления/посты через outbox). Пусто -> dev-лог, доставка почтой.
       Telegram__BotToken: ${TELEGRAM_BOT_TOKEN}
       Telegram__BroadcastChatId: ${TELEGRAM_BROADCAST_CHAT_ID}
+      # Публичный адрес фронтенда для ссылок в постах канала.
+      Telegram__WebBaseUrl: ${TELEGRAM_WEB_BASE_URL}
+      # Маршрутизация «категория -> канал» задаётся переменными Telegram__CategoryChannels__<category>.
       # Что обязательно для публикации: None | Email | Phone | Both.
       Publishing__RequiredVerification: ${PUBLISHING_REQUIRED_VERIFICATION:-Email}
       # CORS — строка origin-ов через запятую.

@@ -21,6 +21,12 @@ public sealed record NewReviewPayload(Guid ReviewId);
 /// <summary>Payload <see cref="Domain.Entities.OutboxMessage.ListingPublished"/>.</summary>
 public sealed record ListingPublishedPayload(Guid ListingId);
 
+/// <summary>
+/// Payload <see cref="Domain.Entities.OutboxMessage.ListingChannelUpdate"/>.
+/// <paramref name="Mark"/> — <c>sold</c> или <c>archived</c> (см. <see cref="Telegram.ChannelMark"/>).
+/// </summary>
+public sealed record ListingChannelUpdatePayload(Guid ListingId, string Mark);
+
 /// <summary>Payload <see cref="Domain.Entities.OutboxMessage.SavedSearchMatch"/>.</summary>
 public sealed record SavedSearchMatchPayload(Guid SavedSearchId, IReadOnlyList<Guid> ListingIds);
 

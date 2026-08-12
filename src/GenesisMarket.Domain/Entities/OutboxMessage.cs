@@ -65,8 +65,21 @@ public class OutboxMessage
     /// <summary>Новый отзыв → уведомление адресату отзыва. Payload: <c>{ reviewId }</c>.</summary>
     public const string NewReview = "new-review";
 
-    /// <summary>Объявление опубликовано → пост в Telegram-канал (шаг 16). Payload: <c>{ listingId }</c>.</summary>
+    /// <summary>
+    /// Объявление опубликовано (перешло в Active) → пост в публичный Telegram-канал (шаг 16).
+    /// Payload: <c>{ listingId }</c>. Обработчик идемпотентен: если пост по объявлению уже есть
+    /// (<see cref="Listing.TelegramMessageId"/>), правит существующую подпись на «чистую»
+    /// (снимает пометки «Продано»/«Снято») вместо повторной публикации.
+    /// </summary>
     public const string ListingPublished = "listing-published";
+
+    /// <summary>
+    /// Пометить пост объявления в Telegram-канале как «Продано»/«Снято с публикации»
+    /// (editMessageCaption/editMessageText). Payload: <c>{ listingId, mark }</c>,
+    /// где <c>mark</c> — <c>sold</c> или <c>archived</c>. Если поста нет или он удалён
+    /// вручную — обработчик молча завершается.
+    /// </summary>
+    public const string ListingChannelUpdate = "listing-channel-update";
 
     /// <summary>
     /// Найдены новые объявления по сохранённому поиску → уведомление автору поиска.

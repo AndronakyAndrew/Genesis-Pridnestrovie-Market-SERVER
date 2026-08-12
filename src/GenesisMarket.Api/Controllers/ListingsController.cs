@@ -1,9 +1,11 @@
 using System.Globalization;
+using System.Text.Json;
 using FluentValidation;
 using FluentValidation.Results;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
+using GenesisMarket.Api.Outbox.Telegram;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
@@ -345,6 +347,10 @@ public class ListingsController(
                 return guard;
             var target = await moderation.ResolveOnPublishAsync(userId, ct);
             listing.Publish(target, DateTimeOffset.UtcNow);
+
+            // Сразу активное объявление — анонсируем в Telegram-канал (в той же транзакции).
+            if (target == ListingStatus.Active)
+                EnqueueChannelPublish(listing.Id);
         }
 
         await SaveNewWithSlugAsync(listing, ct);
@@ -402,6 +408,8 @@ public class ListingsController(
 
         // Снятие с публикации = уход в архив (переход — доменным методом).
         listing.Archive(DateTimeOffset.UtcNow);
+        // Помечаем пост в канале «Снято с публикации» (обработчик стерпит отсутствие поста).
+        EnqueueChannelMark(listing.Id, ChannelMark.Archived);
         await db.SaveChangesAsync(ct);
 
         return NoContent();
@@ -426,6 +434,11 @@ public class ListingsController(
 
         var target = await moderation.ResolveOnPublishAsync(userId, ct);
         listing.Publish(target, DateTimeOffset.UtcNow);
+
+        // Сразу активное — анонсируем в Telegram-канал (в той же транзакции).
+        if (target == ListingStatus.Active)
+            EnqueueChannelPublish(listing.Id);
+
         await db.SaveChangesAsync(ct);
 
         return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
@@ -497,6 +510,8 @@ public class ListingsController(
                 statusCode: StatusCodes.Status409Conflict);
 
         listing.MarkSold(DateTimeOffset.UtcNow);
+        // Помечаем пост в канале «Продано» (в той же транзакции; обработчик стерпит отсутствие поста).
+        EnqueueChannelMark(listing.Id, ChannelMark.Sold);
         await db.SaveChangesAsync(ct);
 
         return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
@@ -527,6 +542,8 @@ public class ListingsController(
                 statusCode: StatusCodes.Status409Conflict);
 
         listing.ReactivateFromSold(DateTimeOffset.UtcNow);
+        // Вернулось в продажу — снимаем пометку «Продано» с поста (обработчик правит подпись).
+        EnqueueChannelPublish(listing.Id);
         await db.SaveChangesAsync(ct);
 
         return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
@@ -560,6 +577,12 @@ public class ListingsController(
 
         var requireReview = await HasRecentRejectAsync(userId, ct);
         listing.RestoreFromArchive(requireReview, DateTimeOffset.UtcNow);
+
+        // Вернулось в каталог (Active) — снимаем пометку «Снято» с поста. При уходе на
+        // повторную премодерацию (PendingReview) канал не трогаем: снова опубликуем при одобрении.
+        if (listing.Status == ListingStatus.Active)
+            EnqueueChannelPublish(listing.Id);
+
         await db.SaveChangesAsync(ct);
 
         return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
@@ -671,6 +694,26 @@ public class ListingsController(
             }
         }
     }
+
+    /// <summary>
+    /// Ставит в outbox пост объявления в Telegram-канал (перешло в Active). Обработчик
+    /// идемпотентен: повторную активацию он превращает в правку подписи, а не в новый пост.
+    /// Пишется в той же транзакции, что и доменное изменение (общий SaveChanges).
+    /// </summary>
+    private void EnqueueChannelPublish(Guid listingId) =>
+        db.OutboxMessages.Add(new OutboxMessage
+        {
+            Type = OutboxMessage.ListingPublished,
+            Payload = JsonSerializer.Serialize(new { listingId })
+        });
+
+    /// <summary>Ставит в outbox правку поста в канале: пометка «Продано»/«Снято с публикации».</summary>
+    private void EnqueueChannelMark(Guid listingId, string mark) =>
+        db.OutboxMessages.Add(new OutboxMessage
+        {
+            Type = OutboxMessage.ListingChannelUpdate,
+            Payload = JsonSerializer.Serialize(new { listingId, mark })
+        });
 
     private ActionResult Invalid(ValidationResult validation)
     {

@@ -1,8 +1,7 @@
-using System.Net.Http.Json;
 using System.Text.Encodings.Web;
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Outbox.Telegram;
 using GenesisMarket.Domain.Enums;
-using Microsoft.Extensions.Options;
 
 namespace GenesisMarket.Api.Outbox;
 
@@ -34,63 +33,10 @@ public sealed class EmailNotificationChannel(IEmailSender email) : INotification
     }
 }
 
-/// <summary>Настройки Telegram-бота. Секция <c>Telegram</c>. Токен — только из env.</summary>
-public sealed class TelegramOptions
-{
-    public const string Section = "Telegram";
-
-    /// <summary>Токен бота (<c>Telegram__BotToken</c>). Пусто ⇒ используется dev-лог вместо отправки.</summary>
-    public string BotToken { get; set; } = "";
-
-    /// <summary>
-    /// Идентификатор публичного канала/чата для постов об опубликованных объявлениях (шаг 16).
-    /// Пусто ⇒ доставка <c>ListingPublished</c> невозможна.
-    /// </summary>
-    public string BroadcastChatId { get; set; } = "";
-}
-
-/// <summary>Минимальный клиент Telegram Bot API (sendMessage).</summary>
-public interface ITelegramClient
-{
-    Task SendMessageAsync(string chatId, string text, CancellationToken ct);
-
-    /// <summary>Есть ли публичный канал для постов (для обработчика <c>ListingPublished</c>).</summary>
-    string? BroadcastChatId { get; }
-}
-
-/// <summary>Боевой клиент: шлёт sendMessage через HTTP. Ошибку транслирует исключением (ретрай).</summary>
-public sealed class HttpTelegramClient(HttpClient http, IOptions<TelegramOptions> options) : ITelegramClient
-{
-    private readonly TelegramOptions _o = options.Value;
-
-    public string? BroadcastChatId =>
-        string.IsNullOrWhiteSpace(_o.BroadcastChatId) ? null : _o.BroadcastChatId;
-
-    public async Task SendMessageAsync(string chatId, string text, CancellationToken ct)
-    {
-        var url = $"https://api.telegram.org/bot{_o.BotToken}/sendMessage";
-        using var response = await http.PostAsJsonAsync(
-            url, new { chat_id = chatId, text, disable_web_page_preview = true }, ct);
-
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException(
-                $"Telegram sendMessage вернул {(int)response.StatusCode}.");
-    }
-}
-
-/// <summary>Dev-клиент: не ходит в сеть, пишет в лог (когда токен не задан).</summary>
-public sealed class LogTelegramClient(ILogger<LogTelegramClient> logger) : ITelegramClient
-{
-    public string? BroadcastChatId => "dev-broadcast";
-
-    public Task SendMessageAsync(string chatId, string text, CancellationToken ct)
-    {
-        logger.LogWarning("[DEV TELEGRAM] chatId={ChatId} | {Text}", chatId, text);
-        return Task.CompletedTask;
-    }
-}
-
-/// <summary>Telegram-канал уведомлений: адрес — chatId пользователя.</summary>
+/// <summary>
+/// Telegram-канал уведомлений: адрес — личный chatId пользователя. Личные сообщения
+/// шлём обычным текстом (без parse_mode): содержимое собирается сервером и не размечается.
+/// </summary>
 public sealed class TelegramNotificationChannel(ITelegramClient client) : INotificationChannel
 {
     public NotificationChannel Kind => NotificationChannel.Telegram;
