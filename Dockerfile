@@ -32,5 +32,10 @@ USER $APP_UID
 
 COPY --from=build /app/publish .
 
+# Проверка живости: busybox wget есть в alpine-образе. Порт по умолчанию 8080
+# (совпадает с ASPNETCORE_HTTP_PORTS в docker-compose). /health/live — без зависимостей.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+    CMD wget --quiet --spider http://127.0.0.1:8080/health/live || exit 1
+
 # Kestrel слушает порт из ASPNETCORE_HTTP_PORTS (задаётся в окружении).
 ENTRYPOINT ["dotnet", "GenesisMarket.Api.dll"]

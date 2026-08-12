@@ -1,10 +1,13 @@
 using System.Text.Json.Serialization;
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Configuration;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Middleware;
 using GenesisMarket.Api.Moderation;
+using GenesisMarket.Api.Observability;
 using GenesisMarket.Api.Outbox;
 using GenesisMarket.Api.SavedSearches;
+using GenesisMarket.Api.Security;
 using GenesisMarket.Api.Seo;
 using GenesisMarket.Api.Trust;
 using GenesisMarket.Infrastructure;
@@ -27,6 +30,8 @@ try
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
         .Enrich.FromLogContext()
+        // Маскирование секретов при деструктуризации ({@obj}): password/token/phone/email → ***.
+        .Destructure.With(new MaskingDestructuringPolicy())
         .WriteTo.Console(new RenderedCompactJsonFormatter()));
 
     // ---- CORS: origin-ы строго из конфигурации, без AllowAnyOrigin ----
@@ -41,6 +46,22 @@ try
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials()));
+
+    // ---- Валидация конфигурации при старте: пустой JWT-ключ, дефолтный пароль БД,
+    //      пустой CORS, секреты в appsettings — не дают приложению подняться ----
+    builder.Services.AddGenesisOptionsValidation(builder.Configuration, builder.Environment);
+
+    // ---- Доверие к заголовкам обратного прокси (Caddy): корректный IP и схема (HTTPS) ----
+    builder.Services.AddGenesisForwardedHeaders(builder.Configuration);
+
+    // ---- Единая политика rate-limit на встроенном RateLimiter (429 + Retry-After) ----
+    builder.Services.AddGenesisRateLimiting(builder.Configuration);
+
+    // ---- OpenTelemetry: трейсы (HTTP + EF Core) и метрики (экспорт OTLP по env) ----
+    builder.Services.AddGenesisObservability(builder.Configuration);
+
+    // ---- Журнал событий безопасности (вход, бан, доступ к чужому ресурсу, rate-limit) ----
+    builder.Services.AddScoped<ISecurityAudit, SecurityAudit>();
 
     // ---- Инфраструктура: PostgreSQL + MinIO + их health checks ----
     builder.Services.AddInfrastructure(builder.Configuration);
@@ -84,8 +105,12 @@ try
 
     var app = builder.Build();
 
-    // Порядок middleware важен: исключения ловим первыми.
+    // Порядок middleware важен.
+    // ForwardedHeaders — первым: дальше по пайплайну RemoteIpAddress и IsHttps уже реальные.
+    app.UseForwardedHeaders();
     app.UseExceptionHandler();
+    // Заголовки безопасности — рано, чтобы попадали и на ответы-ошибки.
+    app.UseMiddleware<SecurityHeadersMiddleware>();
     app.UseMiddleware<RequestIdEnricherMiddleware>();
     app.UseSerilogRequestLogging();
 
@@ -101,6 +126,9 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
 
+    // Rate-limit после аутентификации: политики «на пользователя» видят identity.
+    app.UseRateLimiter();
+
     app.MapControllers();
 
     // ---- Health checks ----
@@ -109,14 +137,14 @@ try
     app.MapHealthChecks("/health/live", new HealthCheckOptions
     {
         Predicate = _ => false
-    }).AllowAnonymous();
+    }).AllowAnonymous().DisableRateLimiting();
 
     // /health/ready — готовность: Postgres и MinIO (тег "ready").
     app.MapHealthChecks("/health/ready", new HealthCheckOptions
     {
         Predicate = check => check.Tags.Contains("ready"),
         ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
-    }).AllowAnonymous();
+    }).AllowAnonymous().DisableRateLimiting();
 
     app.Run();
 }

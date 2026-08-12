@@ -26,6 +26,15 @@
 
     <!-- Ретраи обращений к Telegram Bot API (429 с учётом retry_after, транзиентные сбои) -->
     <PackageReference Include="Polly" Version="7.2.4" />
+
+    <!-- OpenTelemetry: трейсы (ASP.NET Core + HttpClient + EF Core) и метрики (рантайм).
+         Экспорт по OTLP включается только при заданном OTEL_EXPORTER_OTLP_ENDPOINT. -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.10.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.10.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.10.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" Version="1.0.0-beta.12" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.10.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.10.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -25,5 +25,16 @@ internal static class TestBootstrap
         // Планировщик Quartz в тестах не поднимаем: джоб гигиены прогоняем напрямую
         // через ICatalogHygieneService. Так тесты детерминированы и без фоновых потоков.
         Environment.SetEnvironmentVariable("Scheduling__Enabled", "false");
+
+        // Rate-limit: у одного тестового приложения все запросы приходят с одного IP
+        // ("unknown"), поэтому IP-партиционированные политики (глобальная, поиск,
+        // sensitive-anon для register, создание объявлений) распустили бы функциональные
+        // тесты. Поднимаем их до практически безлимитных значений. Политики contact и
+        // report остаются на реальных лимитах (ContactReveal/Trust) — их проверяют
+        // отдельные тесты на 429 (аноним партиционируется тем же общим IP).
+        Environment.SetEnvironmentVariable("RateLimit__GlobalPerMinute", "1000000");
+        Environment.SetEnvironmentVariable("RateLimit__SearchPerMinute", "1000000");
+        Environment.SetEnvironmentVariable("RateLimit__SensitiveAnonPerHour", "1000000");
+        Environment.SetEnvironmentVariable("RateLimit__CreateListingPerHour", "1000000");
     }
 }
