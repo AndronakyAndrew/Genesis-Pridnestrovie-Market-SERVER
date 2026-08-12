@@ -14,6 +14,12 @@ public interface IObjectStorage
 
     Task<Stream> GetAsync(string objectName, CancellationToken ct = default);
 
+    /// <summary>
+    /// Читает объект; возвращает <c>null</c>, если его нет (без исключения). Для публичной
+    /// прокси-отдачи картинок через API — 404 вместо 500 на отсутствующий ключ.
+    /// </summary>
+    Task<Stream?> TryGetAsync(string objectName, CancellationToken ct = default);
+
     Task RemoveAsync(string objectName, CancellationToken ct = default);
 
     /// <summary>

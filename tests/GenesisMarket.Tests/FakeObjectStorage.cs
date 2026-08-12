@@ -27,6 +27,11 @@ public sealed class FakeObjectStorage : IObjectStorage
         return Task.FromResult<Stream>(new MemoryStream(bytes));
     }
 
+    public Task<Stream?> TryGetAsync(string objectName, CancellationToken ct = default)
+        => Task.FromResult(_objects.TryGetValue(objectName, out var bytes)
+            ? (Stream?)new MemoryStream(bytes)
+            : null);
+
     public Task RemoveAsync(string objectName, CancellationToken ct = default)
     {
         _objects.TryRemove(objectName, out _);

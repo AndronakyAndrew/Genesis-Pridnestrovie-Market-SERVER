@@ -1,5 +1,6 @@
 using System.Text.Json;
 using GenesisMarket.Api.Contracts;
+using GenesisMarket.Api.Listings;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Infrastructure.Imaging;
 using GenesisMarket.Infrastructure.Persistence;
@@ -28,8 +29,6 @@ public class ListingImagesController(
     // Тот же лимит на уровне запроса/multipart + небольшой запас на обёртку формы.
     private const long MaxRequestBytes = MaxImageBytes + 1024 * 1024;
 
-    private static readonly TimeSpan PresignTtl = TimeSpan.FromHours(1);
-
     /// <summary>Список изображений объявления по порядку. Публично (для карточки объявления).</summary>
     [AllowAnonymous]
     [HttpGet]
@@ -45,7 +44,7 @@ public class ListingImagesController(
             .OrderBy(i => i.SortOrder)
             .ToListAsync(ct);
 
-        return Ok(await MapAllAsync(images, ct));
+        return Ok(MapAll(images));
     }
 
     /// <summary>
@@ -125,7 +124,7 @@ public class ListingImagesController(
         db.ListingImages.Add(image);
         await db.SaveChangesAsync(ct);
 
-        var dto = await MapAsync(image, ct);
+        var dto = Map(image);
         return CreatedAtAction(nameof(GetImages), new { listingId }, dto);
     }
 
@@ -195,23 +194,17 @@ public class ListingImagesController(
         await db.SaveChangesAsync(ct);
 
         var ordered = images.OrderBy(i => i.SortOrder).ToList();
-        return Ok(await MapAllAsync(ordered, ct));
+        return Ok(MapAll(ordered));
     }
 
     // ---- helpers ----
 
-    private async Task<ListingImageResponse> MapAsync(ListingImage i, CancellationToken ct)
-    {
-        var url = await storage.GetPresignedUrlAsync(i.ObjectKey, PresignTtl, ct);
-        var thumb = await storage.GetPresignedUrlAsync(i.ThumbKey, PresignTtl, ct);
-        return new ListingImageResponse(i.Id, i.SortOrder, i.Width, i.Height, url, thumb);
-    }
+    // URL ведут на публичный прокси API (/api/images/{key}); presigned MinIO наружу не отдаём.
+    private ListingImageResponse Map(ListingImage i) => new(
+        i.Id, i.SortOrder, i.Width, i.Height,
+        // ObjectKey/ThumbKey у сохранённого изображения всегда заданы.
+        ImageUrls.Build(Request, i.ObjectKey)!, ImageUrls.Build(Request, i.ThumbKey)!);
 
-    private async Task<List<ListingImageResponse>> MapAllAsync(List<ListingImage> images, CancellationToken ct)
-    {
-        var result = new List<ListingImageResponse>(images.Count);
-        foreach (var i in images)
-            result.Add(await MapAsync(i, ct));
-        return result;
-    }
+    private List<ListingImageResponse> MapAll(IEnumerable<ListingImage> images) =>
+        images.Select(Map).ToList();
 }

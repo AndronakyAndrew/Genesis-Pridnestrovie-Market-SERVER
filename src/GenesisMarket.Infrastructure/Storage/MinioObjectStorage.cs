@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Minio;
 using Minio.DataModel.Args;
+using Minio.Exceptions;
 
 namespace GenesisMarket.Infrastructure.Storage;
 
@@ -38,6 +39,18 @@ public class MinioObjectStorage(IMinioClient client, IOptions<MinioOptions> opti
         await client.GetObjectAsync(args, ct);
         ms.Position = 0;
         return ms;
+    }
+
+    public async Task<Stream?> TryGetAsync(string objectName, CancellationToken ct = default)
+    {
+        try
+        {
+            return await GetAsync(objectName, ct);
+        }
+        catch (ObjectNotFoundException)
+        {
+            return null;
+        }
     }
 
     public async Task RemoveAsync(string objectName, CancellationToken ct = default)

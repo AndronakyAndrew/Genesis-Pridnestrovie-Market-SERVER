@@ -184,6 +184,16 @@ public class ListingsController(
     /// </summary>
     private async Task<ActionResult<CatalogPageResponse>> OkPageAsync(CatalogPageResponse page, CancellationToken ct)
     {
+        // FirstImageUrl из проекции — это ключ объекта (ThumbKey). Превращаем в абсолютный
+        // URL прокси API. Делаем до любых early-return, чтобы работало и для анонимов.
+        if (page.Items.Count > 0)
+            page = page with
+            {
+                Items = page.Items
+                    .Select(i => i with { FirstImageUrl = ImageUrls.Build(Request, i.FirstImageUrl) })
+                    .ToList()
+            };
+
         var userId = CurrentUserId();
         if (userId is null || page.Items.Count == 0)
             return Ok(page);
