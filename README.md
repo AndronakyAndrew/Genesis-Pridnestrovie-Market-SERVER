@@ -83,6 +83,81 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+## Публичный запуск через ngrok (ноутбук как сервер, docker compose)
+
+Сценарий: стек крутится в `docker compose` на рабочем ноутбуке, наружу — **постоянный
+ngrok-домен**. Наружу пробрасывается **только API**; Postgres (5434) и MinIO (9000/9001)
+остаются локальными. Порядок ниже — обязательный чеклист, не «желательно».
+
+**1. Переключиться в Production.** Иначе публично открыты Swagger и стектрейсы в ошибках.
+В `.env`:
+
+```dotenv
+ASPNETCORE_ENVIRONMENT=Production
+# Секреты — 32+ байта случайных. Только здесь (в appsettings их класть нельзя — старт упадёт).
+JWT_SECRET=<openssl rand -base64 48>
+IPHASH_KEY=<openssl rand -base64 48>
+POSTGRES_PASSWORD=<надёжный, НЕ genesis/postgres>
+MINIO_ROOT_PASSWORD=<надёжный>
+# Публичный origin фронтенда (не API). Через запятую, без завершающего слэша.
+CORS_ALLOWED_ORIGINS=https://<домен-фронтенда>
+# ngrok → хост-порт → контейнер: клиентский IP берётся из X-Forwarded-For, доверяем docker-сети.
+TRUSTED_PROXY_NETWORKS=172.16.0.0/12
+```
+
+В Production валидатор конфигурации **не даст подняться** с дефолтным паролем БД, пустым
+CORS или без `IPHASH_KEY` — это защита, а не помеха.
+
+**2. Сменить пароль роли БД.** Существующий том создан с `genesis/genesis`; в Production он
+запрещён. Меняем пароль в самой БД и синхронно в `.env` (`POSTGRES_PASSWORD`):
+
+```bash
+docker compose exec postgres psql -U genesis -d genesis -c "ALTER ROLE genesis PASSWORD '<новый>';"
+```
+
+**3. Поднять стек и применить миграции:**
+
+```bash
+docker compose up -d --build
+dotnet ef database update -p src/GenesisMarket.Infrastructure -s src/GenesisMarket.Api
+```
+
+**4. Пробросить ТОЛЬКО API постоянным доменом:**
+
+```bash
+ngrok http --domain=<твой-постоянный>.ngrok.app 8090     # 8090 = API_HOST_PORT
+```
+
+Postgres и MinIO через ngrok **не** туннелировать.
+
+**5. Проверить посадку (снаружи, по ngrok-домену):**
+
+```bash
+curl -sI https://<домен>/health/live          # 200; есть security-заголовки и Strict-Transport-Security
+curl -s  -o /dev/null -w "%{http_code}\n" https://<домен>/swagger   # 404 — Swagger закрыт в Production
+```
+
+- Ошибки не содержат стектрейсов (только `traceId`).
+- **Client IP доходит корректно** (иначе глобальный лимит 300/мин зарежет всех разом). Проверка:
+  сделай >300 быстрых `GET /api/listings` — 429 должен прийти только твоему клиенту. Если 429
+  «на всех сразу», XFF не доходит: посмотри реальный gateway
+  `docker network inspect server_genesis | grep Gateway` и подставь его в `TRUSTED_PROXY_NETWORKS`
+  (или `TRUSTED_PROXY_IPS`).
+
+**Важные оговорки публичного запуска:**
+
+- **Фото пока не отдаются наружу.** Картинки — presigned-ссылки MinIO (`Minio__Endpoint=minio:9000`),
+  адрес внутренний → у внешних клиентов изображения не загрузятся. Нужен отдельный публичный путь к
+  MinIO (свой ngrok-туннель/реверс-прокси на MinIO + `Minio__Endpoint`/`UseSsl` под этот адрес, т.к.
+  подпись включает хост) или CDN. Отдельная задача, вне слоя безопасности.
+- **Rate-limit — in-memory на инстанс.** Один контейнер `api` — ок. Масштабирование → Redis.
+- **HSTS.** На постоянном домене — правильно (браузер запомнит https). Если когда-нибудь сменишь
+  домен, помни про `max-age` (2 года) и `includeSubDomains`.
+- **ngrok-free** показывает клиентам страницу-предупреждение; для боевого сервиса нужен платный план
+  с зарезервированным доменом (у тебя он и есть).
+
+---
+
 ## Инварианты — что НЕЛЬЗЯ ломать
 
 1. **Схема БД меняется только миграцией EF Core.** Никакого ручного SQL по таблицам.
