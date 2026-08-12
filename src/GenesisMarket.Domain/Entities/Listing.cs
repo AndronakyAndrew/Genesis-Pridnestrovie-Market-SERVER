@@ -42,6 +42,13 @@ public class Listing : BaseEntity, IOwnedResource
 
     public Condition Condition { get; set; } = Condition.NotApplicable;
 
+    /// <summary>
+    /// Статус объявления. Для жизненного цикла каталога (публикация, поднятие,
+    /// продажа, архивация, восстановление) меняется ТОЛЬКО через доменные методы
+    /// этого класса (см. <see cref="Publish"/>, <see cref="Bump"/>, <see cref="Archive"/>,
+    /// <see cref="MarkSold"/>, <see cref="ReactivateFromSold"/>, <see cref="RestoreFromArchive"/>),
+    /// а не присваиванием в контроллере.
+    /// </summary>
     public ListingStatus Status { get; set; } = ListingStatus.Draft;
 
     /// <summary>
@@ -67,6 +74,27 @@ public class Listing : BaseEntity, IOwnedResource
 
     public DateTimeOffset? PublishedAt { get; set; }
 
+    /// <summary>
+    /// Момент последнего поднятия («bump»). По нему (с откатом на <see cref="PublishedAt"/>)
+    /// строится сортировка каталога по умолчанию и отсчёт срока автоархивации.
+    /// Меняется только доменными методами (<see cref="Bump"/>, <see cref="Publish"/>,
+    /// <see cref="RestoreFromArchive"/>).
+    /// </summary>
+    public DateTimeOffset? BumpedAt { get; private set; }
+
+    /// <summary>Момент ухода в архив. Нужен для окна восстановления (90 дней).</summary>
+    public DateTimeOffset? ArchivedAt { get; private set; }
+
+    /// <summary>Момент отметки «продано». Нужен для окна обратного перехода Sold → Active (7 дней).</summary>
+    public DateTimeOffset? SoldAt { get; private set; }
+
+    /// <summary>
+    /// Момент, когда автору отправлено предупреждение о скорой архивации. Заполнено ⇒
+    /// повторно не уведомляем; сбрасывается при поднятии/восстановлении. Обеспечивает
+    /// идемпотентность джоба автоархивации.
+    /// </summary>
+    public DateTimeOffset? ArchiveWarningAt { get; private set; }
+
     /// <summary>Метка мягкого удаления. Заполнена ⇒ объявление скрыто query-фильтром.</summary>
     public DateTimeOffset? DeletedAt { get; set; }
 
@@ -78,4 +106,114 @@ public class Listing : BaseEntity, IOwnedResource
 
     /// <summary>Единственная точка изменения счётчика просмотров в доменной модели.</summary>
     public void RegisterView() => ViewsCount++;
+
+    // ---- Переходы жизненного цикла (единственный способ менять статус/метки каталога) ----
+
+    /// <summary>
+    /// Публикация черновика: Draft → Active | PendingReview. Фиксирует <see cref="PublishedAt"/>;
+    /// для сразу активного объявления задаёт и <see cref="BumpedAt"/> (позиция в каталоге).
+    /// Итоговый статус (нужна ли премодерация) решает вызывающий и передаёт в <paramref name="target"/>.
+    /// </summary>
+    public void Publish(ListingStatus target, DateTimeOffset now)
+    {
+        if (Status != ListingStatus.Draft)
+            throw new InvalidOperationException($"Опубликовать можно только черновик (текущий статус: {Status}).");
+        if (target is not (ListingStatus.Active or ListingStatus.PendingReview))
+            throw new ArgumentException("Публикация допускает переход только в Active или PendingReview.", nameof(target));
+
+        Status = target;
+        PublishedAt = now;
+        if (target == ListingStatus.Active)
+            BumpedAt = now;
+        ArchiveWarningAt = null;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Поднятие: обновляет <see cref="BumpedAt"/> у активного объявления и сбрасывает
+    /// отметку предупреждения об архивации. Соблюдение лимита частоты — забота вызывающего.
+    /// </summary>
+    public void Bump(DateTimeOffset now)
+    {
+        if (Status != ListingStatus.Active)
+            throw new InvalidOperationException($"Поднять можно только активное объявление (текущий статус: {Status}).");
+
+        BumpedAt = now;
+        ArchiveWarningAt = null;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Уход в архив: любой статус → Archived (кроме уже архивного — идемпотентно).
+    /// Фиксирует <see cref="ArchivedAt"/> для окна восстановления.
+    /// </summary>
+    public void Archive(DateTimeOffset now)
+    {
+        if (Status == ListingStatus.Archived)
+            return; // повторный вызов ничего не меняет
+
+        Status = ListingStatus.Archived;
+        ArchivedAt = now;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Отметка, что автору отправлено предупреждение о скорой архивации.
+    /// Идемпотентность джоба: после вызова объявление в выборку предупреждений не попадает.
+    /// </summary>
+    public void MarkArchiveWarned(DateTimeOffset now)
+    {
+        ArchiveWarningAt = now;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Отметить проданным: Active → Sold. Объявление остаётся доступным по прямой ссылке,
+    /// но уходит из каталога. Фиксирует <see cref="SoldAt"/> для окна обратного перехода.
+    /// </summary>
+    public void MarkSold(DateTimeOffset now)
+    {
+        if (Status != ListingStatus.Active)
+            throw new InvalidOperationException($"Отметить проданным можно только активное объявление (текущий статус: {Status}).");
+
+        Status = ListingStatus.Sold;
+        SoldAt = now;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Обратный переход из продажи: Sold → Active. Позицию в каталоге (<see cref="BumpedAt"/>)
+    /// намеренно НЕ обновляем, чтобы «продал/вернул» не использовали для поднятия.
+    /// Соблюдение окна (7 дней с <see cref="SoldAt"/>) — забота вызывающего.
+    /// </summary>
+    public void ReactivateFromSold(DateTimeOffset now)
+    {
+        if (Status != ListingStatus.Sold)
+            throw new InvalidOperationException($"Вернуть в продажу можно только проданное объявление (текущий статус: {Status}).");
+
+        Status = ListingStatus.Active;
+        SoldAt = null;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Восстановление из архива: Archived → Active | PendingReview. При возврате в каталог
+    /// объявление получает свежий <see cref="BumpedAt"/> (обнуляет отсчёт архивации).
+    /// Нужна ли повторная премодерация (<paramref name="requireReview"/>) и соблюдение окна
+    /// (90 дней с <see cref="ArchivedAt"/>) решает вызывающий.
+    /// </summary>
+    public void RestoreFromArchive(bool requireReview, DateTimeOffset now)
+    {
+        if (Status != ListingStatus.Archived)
+            throw new InvalidOperationException($"Восстановить можно только архивное объявление (текущий статус: {Status}).");
+
+        Status = requireReview ? ListingStatus.PendingReview : ListingStatus.Active;
+        ArchivedAt = null;
+        if (Status == ListingStatus.Active)
+        {
+            BumpedAt = now;
+            ArchiveWarningAt = null;
+        }
+        UpdatedAt = now;
+    }
 }

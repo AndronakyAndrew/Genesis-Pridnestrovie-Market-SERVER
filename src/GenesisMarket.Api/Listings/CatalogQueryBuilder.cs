@@ -10,6 +10,11 @@ namespace GenesisMarket.Api.Listings;
 /// <summary>Белый список сортировок каталога. ORDER BY не собирается из строки запроса.</summary>
 public enum CatalogSort
 {
+    /// <summary>
+    /// По умолчанию: по убыванию «свежести поднятия» — coalesce(BumpedAt, PublishedAt, CreatedAt) DESC.
+    /// Поднятое объявление (bump) поднимается в начало каталога.
+    /// </summary>
+    Bumped,
     New,
     PriceAsc,
     PriceDesc,
@@ -34,16 +39,20 @@ public sealed record CatalogRow(
     Category Category,
     string? FirstImageUrl,
     DateTimeOffset? PublishedAt,
+    DateTimeOffset? BumpedAt,
     DateTimeOffset CreatedAt,
     int ViewsCount,
     int FavoritesCount,
     float Rank)
 {
-    // Продвижение (bump) — шаг 7. Пока в каталоге нет продвинутых объявлений,
-    // поэтому флаг всегда false; когда появится, здесь будет реальное условие.
+    /// <summary>Ключ сортировки по умолчанию: последнее поднятие с откатом на публикацию/создание.</summary>
+    public DateTimeOffset BumpKey => BumpedAt ?? PublishedAt ?? CreatedAt;
+
+    // «Поднято» = объявление хотя бы раз поднимали после публикации (BumpedAt позже PublishedAt).
     public ListingCardResponse ToCard() => new(
         Id, Slug, Title, Price, PriceType, City, Category, FirstImageUrl, PublishedAt,
-        IsBumped: false, FavoritesCount: FavoritesCount);
+        IsBumped: BumpedAt is { } b && PublishedAt is { } p && b > p,
+        FavoritesCount: FavoritesCount);
 }
 
 /// <summary>
@@ -55,7 +64,8 @@ public static class CatalogQueryBuilder
     /// <summary>Разбор токена сортировки из белого списка. null ⇒ невалидный явный токен (400).</summary>
     public static CatalogSort? ParseSort(string? token) => token switch
     {
-        null or "" or "new" => CatalogSort.New,
+        null or "" or "bumped" => CatalogSort.Bumped,   // по умолчанию — по поднятию
+        "new" => CatalogSort.New,
         "price_asc" => CatalogSort.PriceAsc,
         "price_desc" => CatalogSort.PriceDesc,
         "popular" => CatalogSort.Popular,
@@ -66,11 +76,12 @@ public static class CatalogQueryBuilder
     /// <summary>Обратный токен для записи в курсор.</summary>
     public static string Token(CatalogSort sort) => sort switch
     {
+        CatalogSort.New => "new",
         CatalogSort.PriceAsc => "price_asc",
         CatalogSort.PriceDesc => "price_desc",
         CatalogSort.Popular => "popular",
         CatalogSort.Relevance => "relevance",
-        _ => "new"
+        _ => "bumped"
     };
 
     // ---- Полнотекстовый поиск (FTS) и fuzzy-fallback ----
@@ -112,7 +123,7 @@ public static class CatalogQueryBuilder
         query.Select(l => new CatalogRow(
             l.Id, l.Slug, l.Title, l.Price, l.PriceType, l.City, l.Category,
             l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
-            l.PublishedAt, l.CreatedAt, l.ViewsCount, l.FavoritesCount,
+            l.PublishedAt, l.BumpedAt, l.CreatedAt, l.ViewsCount, l.FavoritesCount,
             EF.Property<NpgsqlTsVector>(l, "SearchVector").RankCoverDensity(EF.Functions.WebSearchToTsQuery(Config, text))));
 
     /// <summary>Проекция строки без релевантности (rank = 0): обычный каталог и fallback.</summary>
@@ -120,7 +131,7 @@ public static class CatalogQueryBuilder
         query.Select(l => new CatalogRow(
             l.Id, l.Slug, l.Title, l.Price, l.PriceType, l.City, l.Category,
             l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
-            l.PublishedAt, l.CreatedAt, l.ViewsCount, l.FavoritesCount, 0f));
+            l.PublishedAt, l.BumpedAt, l.CreatedAt, l.ViewsCount, l.FavoritesCount, 0f));
 
     /// <summary>
     /// Фильтры каталога. Только Active — Sold/Archived/PendingReview/Rejected и черновики
@@ -163,6 +174,13 @@ public static class CatalogQueryBuilder
     {
         switch (sort)
         {
+            case CatalogSort.Bumped:
+            {
+                var bumped = new DateTimeOffset(long.Parse(sortKey, CultureInfo.InvariantCulture), TimeSpan.Zero);
+                return query.Where(l =>
+                    (l.BumpedAt ?? l.PublishedAt ?? l.CreatedAt) < bumped ||
+                    ((l.BumpedAt ?? l.PublishedAt ?? l.CreatedAt) == bumped && l.Id.CompareTo(afterId) < 0));
+            }
             case CatalogSort.New:
             {
                 var created = new DateTimeOffset(long.Parse(sortKey, CultureInfo.InvariantCulture), TimeSpan.Zero);
@@ -216,7 +234,8 @@ public static class CatalogQueryBuilder
             .OrderBy(l => l.Price == null).ThenBy(l => l.Price).ThenBy(l => l.Id),
         CatalogSort.PriceDesc => query
             .OrderBy(l => l.Price == null).ThenByDescending(l => l.Price).ThenBy(l => l.Id),
-        _ => query.OrderByDescending(l => l.CreatedAt).ThenByDescending(l => l.Id)
+        _ => query
+            .OrderByDescending(l => l.BumpedAt ?? l.PublishedAt ?? l.CreatedAt).ThenByDescending(l => l.Id)
     };
 
     /// <summary>Значение поля сортировки последней строки страницы — для следующего курсора.</summary>
@@ -226,6 +245,8 @@ public static class CatalogQueryBuilder
         CatalogSort.Popular => row.ViewsCount.ToString(CultureInfo.InvariantCulture),
         // "R" — round-trip float: ключ курсора совпадёт с пересчитанным ts_rank_cd.
         CatalogSort.Relevance => row.Rank.ToString("R", CultureInfo.InvariantCulture),
-        _ => row.Price is { } p ? p.ToString(CultureInfo.InvariantCulture) : "n"
+        CatalogSort.PriceAsc or CatalogSort.PriceDesc =>
+            row.Price is { } p ? p.ToString(CultureInfo.InvariantCulture) : "n",
+        _ => row.BumpKey.UtcTicks.ToString(CultureInfo.InvariantCulture)
     };
 }

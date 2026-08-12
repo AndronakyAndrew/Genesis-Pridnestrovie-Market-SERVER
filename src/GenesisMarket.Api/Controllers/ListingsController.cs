@@ -7,6 +7,7 @@ using GenesisMarket.Api.Listings;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
+using GenesisMarket.Infrastructure.Scheduling;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -31,7 +32,8 @@ public class ListingsController(
     IValidator<CreateListingRequest> createValidator,
     IValidator<UpdateListingRequest> updateValidator,
     IMemoryCache cache,
-    IOptions<ListingOptions> options) : ApiControllerBase
+    IOptions<ListingOptions> options,
+    IOptions<CatalogHygieneOptions> hygiene) : ApiControllerBase
 {
     // Статусы «в обороте» — учитываются в лимите и проверке дубликатов.
     private static readonly ListingStatus[] InCirculation =
@@ -254,7 +256,7 @@ public class ListingsController(
         if (listing.Status == ListingStatus.Active)
             await viewCounter.RegisterAsync(listing.Id, ClientIp(), ct);
 
-        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct), await IsFavoriteAsync(listing.Id, ct)));
+        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct), await IsFavoriteAsync(listing.Id, ct)));
     }
 
     [AllowAnonymous]
@@ -268,7 +270,7 @@ public class ListingsController(
         if (listing.Status == ListingStatus.Active)
             await viewCounter.RegisterAsync(listing.Id, ClientIp(), ct);
 
-        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct), await IsFavoriteAsync(listing.Id, ct)));
+        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct), await IsFavoriteAsync(listing.Id, ct)));
     }
 
     /// <summary>
@@ -354,12 +356,12 @@ public class ListingsController(
         {
             if (await PublishGuardAsync(userId, ct) is { } guard)
                 return guard;
-            listing.Status = await moderation.ResolveOnPublishAsync(userId, ct);
-            listing.PublishedAt = DateTimeOffset.UtcNow;
+            var target = await moderation.ResolveOnPublishAsync(userId, ct);
+            listing.Publish(target, DateTimeOffset.UtcNow);
         }
 
         await SaveNewWithSlugAsync(listing, ct);
-        return CreatedAtAction(nameof(GetById), new { id = listing.Id }, Map(listing));
+        return CreatedAtAction(nameof(GetById), new { id = listing.Id }, ToResponse(listing));
     }
 
     [Authorize]
@@ -395,7 +397,7 @@ public class ListingsController(
         listing.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
-        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct)));
+        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     [Authorize]
@@ -411,8 +413,8 @@ public class ListingsController(
         if (!result.Succeeded)
             return Forbid();
 
-        listing.Status = ListingStatus.Archived;
-        listing.UpdatedAt = DateTimeOffset.UtcNow;
+        // Снятие с публикации = уход в архив (переход — доменным методом).
+        listing.Archive(DateTimeOffset.UtcNow);
         await db.SaveChangesAsync(ct);
 
         return NoContent();
@@ -435,12 +437,145 @@ public class ListingsController(
         if (await PublishGuardAsync(userId, ct) is { } guard)
             return guard;
 
-        listing.Status = await moderation.ResolveOnPublishAsync(userId, ct);
-        listing.PublishedAt = DateTimeOffset.UtcNow;
-        listing.UpdatedAt = DateTimeOffset.UtcNow;
+        var target = await moderation.ResolveOnPublishAsync(userId, ct);
+        listing.Publish(target, DateTimeOffset.UtcNow);
         await db.SaveChangesAsync(ct);
 
-        return Ok(Map(listing, await RevealCountAsync(listing.Id, ct)));
+        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
+    }
+
+    /// <summary>
+    /// Поднятие объявления: обновляет BumpedAt (объявление всплывает в начало каталога).
+    /// Бесплатно, не чаще одного раза в N дней (платных услуг в MVP нет). Лимит проверяется
+    /// на сервере под блокировкой строки (SELECT ... FOR UPDATE): два параллельных запроса
+    /// не поднимут объявление дважды — второй дождётся первого и увидит свежий BumpedAt.
+    /// </summary>
+    [Authorize]
+    [HttpPost("{id:guid}/bump")]
+    public async Task<ActionResult<ListingResponse>> Bump(Guid id, CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+        var now = DateTimeOffset.UtcNow;
+        var cooldown = TimeSpan.FromDays(hygiene.Value.BumpCooldownDays);
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        // FOR UPDATE держит блокировку строки до конца транзакции. IgnoreQueryFilters —
+        // чтобы EF не оборачивал SQL подзапросом (тогда FOR UPDATE был бы не на верхнем уровне);
+        // мягкое удаление проверяем вручную ниже.
+        var listing = (await db.Listings
+            .FromSql($"SELECT * FROM listings WHERE \"Id\" = {id} FOR UPDATE")
+            .IgnoreQueryFilters()
+            .ToListAsync(ct)).FirstOrDefault();
+
+        if (listing is null || listing.DeletedAt != null || listing.OwnerId != userId)
+            return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
+
+        if (listing.Status != ListingStatus.Active)
+            return Problem(title: "Поднять можно только активное объявление",
+                statusCode: StatusCodes.Status409Conflict);
+
+        if (listing.BumpedAt is { } last && now - last < cooldown)
+        {
+            var retryAfter = last + cooldown - now;
+            return TooManyRequests(
+                (int)Math.Ceiling(retryAfter.TotalSeconds),
+                title: $"Поднимать объявление можно раз в {hygiene.Value.BumpCooldownDays} дн.");
+        }
+
+        listing.Bump(now);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
+    }
+
+    /// <summary>
+    /// Отметить объявление проданным: Active → Sold. Оно остаётся доступным по прямой
+    /// ссылке (там отзывы и история), но уходит из каталога и получает noindex на фронте.
+    /// Обратный переход Sold → Active разрешён в течение N дней (см. <see cref="Reactivate"/>).
+    /// </summary>
+    [Authorize]
+    [HttpPost("{id:guid}/mark-sold")]
+    public async Task<ActionResult<ListingResponse>> MarkSold(Guid id, CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+
+        var listing = await db.Listings.FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
+        if (listing is null)
+            return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
+
+        if (listing.Status != ListingStatus.Active)
+            return Problem(title: "Отметить проданным можно только активное объявление",
+                statusCode: StatusCodes.Status409Conflict);
+
+        listing.MarkSold(DateTimeOffset.UtcNow);
+        await db.SaveChangesAsync(ct);
+
+        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
+    }
+
+    /// <summary>
+    /// Вернуть проданное объявление в продажу: Sold → Active. Разрешено только в течение
+    /// <see cref="CatalogHygieneOptions.SoldReactivationDays"/> дней с момента продажи.
+    /// </summary>
+    [Authorize]
+    [HttpPost("{id:guid}/reactivate")]
+    public async Task<ActionResult<ListingResponse>> Reactivate(Guid id, CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+
+        var listing = await db.Listings.FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
+        if (listing is null)
+            return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
+
+        if (listing.Status != ListingStatus.Sold)
+            return Problem(title: "Вернуть в продажу можно только проданное объявление",
+                statusCode: StatusCodes.Status409Conflict);
+
+        var window = TimeSpan.FromDays(hygiene.Value.SoldReactivationDays);
+        if (listing.SoldAt is { } soldAt && DateTimeOffset.UtcNow - soldAt > window)
+            return Problem(
+                title: $"Вернуть в продажу можно только в течение {hygiene.Value.SoldReactivationDays} дн. после продажи",
+                statusCode: StatusCodes.Status409Conflict);
+
+        listing.ReactivateFromSold(DateTimeOffset.UtcNow);
+        await db.SaveChangesAsync(ct);
+
+        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
+    }
+
+    /// <summary>
+    /// Восстановить объявление из архива: Archived → Active. Разрешено, если с момента
+    /// архивации прошло не более <see cref="CatalogHygieneOptions.RestoreWithinDays"/> дней.
+    /// Если автор получал reject за последние N дней — восстановление проходит премодерацию
+    /// заново (Archived → PendingReview).
+    /// </summary>
+    [Authorize]
+    [HttpPost("{id:guid}/restore")]
+    public async Task<ActionResult<ListingResponse>> Restore(Guid id, CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+
+        var listing = await db.Listings.FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
+        if (listing is null)
+            return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
+
+        if (listing.Status != ListingStatus.Archived)
+            return Problem(title: "Восстановить можно только объявление из архива",
+                statusCode: StatusCodes.Status409Conflict);
+
+        var window = TimeSpan.FromDays(hygiene.Value.RestoreWithinDays);
+        if (listing.ArchivedAt is { } archivedAt && DateTimeOffset.UtcNow - archivedAt > window)
+            return Problem(
+                title: $"Восстановить можно только в течение {hygiene.Value.RestoreWithinDays} дн. после архивации",
+                statusCode: StatusCodes.Status409Conflict);
+
+        var requireReview = await HasRecentRejectAsync(userId, ct);
+        listing.RestoreFromArchive(requireReview, DateTimeOffset.UtcNow);
+        await db.SaveChangesAsync(ct);
+
+        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     [Authorize]
@@ -466,7 +601,7 @@ public class ListingsController(
             .Select(g => new { g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
 
-        var items = listings.Select(l => Map(l, counts.GetValueOrDefault(l.Id))).ToList();
+        var items = listings.Select(l => ToResponse(l, counts.GetValueOrDefault(l.Id))).ToList();
         return Ok(items);
     }
 
@@ -562,11 +697,41 @@ public class ListingsController(
         return ValidationProblem(ModelState);
     }
 
-    private static ListingResponse Map(Listing l, int contactRevealCount = 0, bool isFavorite = false) => new(
+    /// <summary>Мапит сущность в DTO, досчитывая daysUntilArchive по конфигурации.</summary>
+    private ListingResponse ToResponse(Listing l, int contactRevealCount = 0, bool isFavorite = false) =>
+        Map(l, contactRevealCount, isFavorite, DaysUntilArchive(l));
+
+    private static ListingResponse Map(
+        Listing l, int contactRevealCount, bool isFavorite, int? daysUntilArchive) => new(
         l.Id, l.Slug, l.Title, l.Description, l.Price, l.PriceType, l.Category,
         l.SubcategoryId, l.City, l.District, l.Condition, l.Status,
         l.ViewsCount, l.OwnerId, l.CreatedAt, l.PublishedAt, contactRevealCount,
-        l.FavoritesCount, isFavorite);
+        l.FavoritesCount, isFavorite, daysUntilArchive);
+
+    /// <summary>Сколько дней до автоархивации. null для не-Active (у них срок не идёт).</summary>
+    private int? DaysUntilArchive(Listing l)
+    {
+        if (l.Status != ListingStatus.Active)
+            return null;
+        var basis = l.BumpedAt ?? l.PublishedAt ?? l.CreatedAt;
+        var archiveAt = basis.AddDays(hygiene.Value.ArchiveAfterDays);
+        var remaining = (archiveAt - DateTimeOffset.UtcNow).TotalDays;
+        return (int)Math.Max(0, Math.Ceiling(remaining));
+    }
+
+    /// <summary>
+    /// Получал ли автор reject по любому из своих объявлений за последние RejectLookbackDays
+    /// дней. Источник — журнал модерации (listing.reject), связанный с объявлениями автора.
+    /// </summary>
+    private async Task<bool> HasRecentRejectAsync(Guid userId, CancellationToken ct)
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-hygiene.Value.RejectLookbackDays);
+        return await db.ModerationLogs
+            .Where(m => m.Action == ModerationLog.ActionRejectListing && m.CreatedAt >= cutoff)
+            .Join(db.Listings.IgnoreQueryFilters(),
+                m => m.TargetId, l => l.Id, (m, l) => l.OwnerId)
+            .AnyAsync(ownerId => ownerId == userId, ct);
+    }
 
     /// <summary>Число раскрытий контактов по объявлению — отдельным запросом (не N+1).</summary>
     private Task<int> RevealCountAsync(Guid listingId, CancellationToken ct) =>

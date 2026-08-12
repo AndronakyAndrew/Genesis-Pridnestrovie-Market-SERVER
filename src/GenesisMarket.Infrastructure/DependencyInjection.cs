@@ -1,5 +1,6 @@
 using GenesisMarket.Infrastructure.Auth;
 using GenesisMarket.Infrastructure.Persistence;
+using GenesisMarket.Infrastructure.Scheduling;
 using GenesisMarket.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -55,6 +56,9 @@ public static class DependencyInjection
         services.AddHealthChecks()
             .AddNpgSql(postgres, name: "postgres", tags: ["ready"])
             .AddCheck<MinioHealthCheck>("minio", tags: ["ready"]);
+
+        // ---- Планировщик (Quartz): гигиена каталога. Персистентный стор — та же БД. ----
+        services.AddScheduling(configuration, postgres);
 
         return services;
     }

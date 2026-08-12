@@ -3,6 +3,7 @@ using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Auth;
 using GenesisMarket.Infrastructure.Persistence;
+using GenesisMarket.Infrastructure.Scheduling;
 using GenesisMarket.Infrastructure.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -359,6 +360,74 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         await db.Users
             .Where(u => u.Id == userId)
             .ExecuteUpdateAsync(s => s.SetProperty(u => u.IsBanned, true));
+    }
+
+    /// <summary>Прогоняет джоб гигиены каталога напрямую (в тестах планировщик выключен).</summary>
+    public async Task<HygieneResult> RunCatalogHygieneAsync()
+    {
+        using var scope = Services.CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<ICatalogHygieneService>();
+        return await svc.RunAsync(CancellationToken.None);
+    }
+
+    /// <summary>Сдвигает «возраст» объявления: BumpedAt/PublishedAt напрямую (для проверки сроков).</summary>
+    public async Task SetBumpTimestampsAsync(Guid listingId, DateTimeOffset? bumpedAt, DateTimeOffset? publishedAt = null)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Listings
+            .Where(l => l.Id == listingId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(l => l.BumpedAt, bumpedAt)
+                .SetProperty(l => l.PublishedAt, publishedAt ?? bumpedAt));
+    }
+
+    /// <summary>Задаёт SoldAt напрямую (для проверки окна реактивации).</summary>
+    public async Task SetSoldAtAsync(Guid listingId, DateTimeOffset soldAt)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Listings
+            .Where(l => l.Id == listingId)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.SoldAt, soldAt));
+    }
+
+    /// <summary>Задаёт ArchivedAt напрямую (для проверки окна восстановления).</summary>
+    public async Task SetArchivedAtAsync(Guid listingId, DateTimeOffset archivedAt)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Listings
+            .Where(l => l.Id == listingId)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.ArchivedAt, archivedAt));
+    }
+
+    /// <summary>Пишет запись журнала модерации о reject объявления (для проверки повторной премодерации).</summary>
+    public async Task SeedRejectLogAsync(Guid listingId, Guid moderatorId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.ModerationLogs.Add(new ModerationLog
+        {
+            ActorId = moderatorId,
+            Action = ModerationLog.ActionRejectListing,
+            TargetType = ModerationLog.TargetListing,
+            TargetId = listingId
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Полное состояние жизненного цикла объявления (для проверки переходов и джоба).</summary>
+    public async Task<(string Status, DateTimeOffset? BumpedAt, DateTimeOffset? ArchivedAt,
+        DateTimeOffset? SoldAt, DateTimeOffset? ArchiveWarningAt)> LifecycleStateAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var l = await db.Listings.IgnoreQueryFilters()
+            .Where(x => x.Id == listingId)
+            .Select(x => new { x.Status, x.BumpedAt, x.ArchivedAt, x.SoldAt, x.ArchiveWarningAt })
+            .FirstAsync();
+        return (l.Status.ToString(), l.BumpedAt, l.ArchivedAt, l.SoldAt, l.ArchiveWarningAt);
     }
 
     async Task IAsyncLifetime.DisposeAsync()
