@@ -2,6 +2,7 @@ using GenesisMarket.Api.Auth;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Auth;
+using GenesisMarket.Infrastructure.Outbox;
 using GenesisMarket.Infrastructure.Persistence;
 using GenesisMarket.Infrastructure.Scheduling;
 using GenesisMarket.Infrastructure.Storage;
@@ -67,8 +68,11 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             services.AddSingleton<IObjectStorage>(sp => sp.GetRequiredService<FakeObjectStorage>());
 
             // Фоновые сервисы, которым нужен реальный MinIO, в тестах не запускаем.
+            // Доставку outbox гоняем вручную через RunOutboxAsync (планировщик выключен).
             RemoveHostedService<MinioBucketInitializer>(services);
-            RemoveHostedService<ObjectDeletionOutboxProcessor>(services);
+
+            // Тестовый обработчик, всегда падающий транзиентно — для проверки ретраев/эскалации.
+            services.AddScoped<GenesisMarket.Api.Outbox.IOutboxHandler, TestFailingOutboxHandler>();
         });
     }
 
@@ -344,13 +348,55 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         return (u.IsBanned, u.BannedUntil);
     }
 
-    /// <summary>Сколько сообщений outbox указанного типа адресовано пользователю (по JSON payload).</summary>
-    public async Task<int> OutboxNotificationCountAsync(Guid userId)
+    /// <summary>Сколько сообщений outbox указанного типа ссылается на id (по JSON payload).</summary>
+    public async Task<int> OutboxCountAsync(string type, Guid id)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var needle = id.ToString();
         return await db.OutboxMessages
-            .CountAsync(m => m.Type == "notification" && m.Payload.Contains(userId.ToString()));
+            .CountAsync(m => m.Type == type && m.Payload.Contains(needle));
+    }
+
+    /// <summary>Прогоняет один тик диспетчера outbox напрямую (планировщик в тестах выключен).</summary>
+    public async Task<OutboxDispatchResult> RunOutboxAsync()
+    {
+        using var scope = Services.CreateScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<IOutboxDispatcher>();
+        return await dispatcher.DispatchOnceAsync(CancellationToken.None);
+    }
+
+    /// <summary>Кладёт сообщение в outbox напрямую (для сценариев диспетчера); возвращает его Id.</summary>
+    public async Task<Guid> EnqueueOutboxAsync(string type, string payload)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var message = new OutboxMessage { Type = type, Payload = payload };
+        db.OutboxMessages.Add(message);
+        await db.SaveChangesAsync();
+        return message.Id;
+    }
+
+    /// <summary>Состояние сообщения outbox (для проверок ретраев/финализации).</summary>
+    public async Task<(OutboxStatus Status, int Attempts, string? Error, DateTimeOffset NextAttemptAt)> OutboxStateAsync(Guid id)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var m = await db.OutboxMessages.AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => new { x.Status, x.Attempts, x.Error, x.NextAttemptAt })
+            .FirstAsync();
+        return (m.Status, m.Attempts, m.Error, m.NextAttemptAt);
+    }
+
+    /// <summary>Делает сообщение готовым к немедленной попытке (сдвигает NextAttemptAt в прошлое).</summary>
+    public async Task MakeOutboxDueAsync(Guid id)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.OutboxMessages
+            .Where(x => x.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.NextAttemptAt, DateTimeOffset.UtcNow.AddSeconds(-1)));
     }
 
     public async Task BanUserAsync(Guid userId)

@@ -107,21 +107,12 @@ public sealed class CatalogHygieneService(
                 var basis = listing.BumpedAt ?? listing.PublishedAt ?? listing.CreatedAt;
                 var archiveAt = basis.AddDays(_o.ArchiveAfterDays);
 
-                // Уведомление автора — через outbox в той же транзакции (доставит обработчик шага 14).
+                // Уведомление автора — через outbox в той же транзакции (доставит диспетчер).
+                // В payload только идентификаторы: адресата и текст обработчик соберёт из БД.
                 db.OutboxMessages.Add(new OutboxMessage
                 {
-                    Type = OutboxMessage.Notification,
-                    Payload = JsonSerializer.Serialize(new
-                    {
-                        userId = listing.OwnerId,
-                        kind = "listing_expiring",
-                        listingId = listing.Id,
-                        listingSlug = listing.Slug,
-                        archiveAt,
-                        // Ссылка «продлить» — поднятие объявления; обработчик уведомлений строит URL.
-                        action = "bump",
-                        text = WarningText(listing.Title, archiveAt)
-                    })
+                    Type = OutboxMessage.ListingExpiringSoon,
+                    Payload = JsonSerializer.Serialize(new { listingId = listing.Id, archiveAt })
                 });
 
                 listing.MarkArchiveWarned(now);
@@ -136,8 +127,4 @@ public sealed class CatalogHygieneService(
 
         return total;
     }
-
-    private static string WarningText(string title, DateTimeOffset archiveAt) =>
-        $"Объявление «{title}» будет автоматически архивировано {archiveAt:dd.MM.yyyy}. " +
-        "Поднимите его, чтобы продлить публикацию.";
 }

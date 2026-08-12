@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Infrastructure.Imaging;
@@ -147,8 +148,12 @@ public class ListingImagesController(
 
         db.ListingImages.Remove(image);
         // Удаление объектов — через outbox, не синхронно в обработчике HTTP-запроса.
-        db.OutboxMessages.Add(new OutboxMessage { Type = OutboxMessage.DeleteObject, Payload = image.ObjectKey });
-        db.OutboxMessages.Add(new OutboxMessage { Type = OutboxMessage.DeleteObject, Payload = image.ThumbKey });
+        // Оригинал и превью — одним сообщением (JSON-массив ключей) в той же транзакции.
+        db.OutboxMessages.Add(new OutboxMessage
+        {
+            Type = OutboxMessage.DeleteImages,
+            Payload = JsonSerializer.Serialize(new[] { image.ObjectKey, image.ThumbKey })
+        });
         await db.SaveChangesAsync(ct);
 
         return NoContent();

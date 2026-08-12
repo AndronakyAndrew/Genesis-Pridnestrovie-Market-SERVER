@@ -591,6 +591,81 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 16. Транзакционный Outbox (доставка уведомлений и внешних побочных эффектов)
+
+**Что сделано:**
+- **Единая инфраструктура внешних отправок.** Раньше в `outbox_messages` был только `delete-object`
+  (удаление объектов MinIO фоновым `BackgroundService`) и «сырые» `notification`, которые никто не доставлял.
+  Теперь это полноценный транзакционный outbox: **типизированные сообщения**, диспетчер, ретраи, финализация,
+  уборка. Продюсеры кладут сообщение в БД **в той же транзакции**, что и доменное изменение — никаких
+  отправок email/Telegram прямо из обработчика запроса (иначе при откате транзакции уведомление уже ушло бы).
+- **Схема (`OutboxMessage`, миграция `AddOutboxPipeline`).** Поля `Status` (`Pending|Processing|Done|Failed`,
+  строкой), `NextAttemptAt` (время следующей попытки, дефолт `now()`), `Attempts`, `Error` (переименован из
+  `LastError`), `Payload`, `CreatedAt`, `ProcessedAt`. Частичный индекс `ix_outbox_due` по `Status='Pending'`
+  под горячий путь диспетчера. Бэкфилл существующих строк в миграции: обработанные и legacy-`notification`
+  переведены в `Done`, непроцессенные `delete-object` остались `Pending` (у них есть совместимый обработчик).
+- **Диспетчер (Quartz, раз в 10 с, батч 50).** Забирает готовые сообщения
+  `SELECT … WHERE Status='Pending' AND NextAttemptAt ≤ now ORDER BY CreatedAt LIMIT 50 **FOR UPDATE SKIP LOCKED**`
+  внутри одной транзакции — несколько инстансов/тиков не возьмут одно сообщение. Каждое отдаётся обработчику по
+  `Type`; исход (`Done`/повтор/`Failed`) фиксируется до COMMIT.
+- **Ретраи — экспоненциальная задержка `10с → 1м → 5м → 30м → 2ч`, максимум 5 попыток**, затем `Status=Failed`
+  и запись в лог. Сообщение **не удаляется** — остаётся для разбора. Задержка **персистентна** (через
+  `NextAttemptAt`), а не in-memory: переживает рестарт и не держит воркер занятым между попытками.
+  `OutboxPermanentException` (битый payload, удалённый адресат, отсутствующий ресурс) → сразу `Failed`, без трат попыток.
+- **Уборщик (Quartz, ежедневно).** Удаляет `Done` старше `Outbox:RetentionDays` (30). `Failed` не трогает.
+- **Каналы — `INotificationChannel`, выбор по настройке пользователя** (`Profile.NotifyVia`, дефолт `Email`):
+  почта (поверх существующего `IEmailSender` — SMTP или dev-лог) и Telegram (`ITelegramClient` — HTTP Bot API,
+  либо dev-лог без токена). Telegram-ЛС требует `Profile.TelegramChatId`; без него канал деградирует к почте.
+  Адресата и контент обработчик достаёт из БД по id — **в `Payload` только идентификаторы**, персональных данных нет.
+- **Типы сообщений и продюсеры:** `listing-approved`/`listing-rejected` (модерация, шаг 14 — заменили «сырой»
+  `notification`), `listing-expiring-soon` (гигиена каталога, шаг 15), `new-review` (создание отзыва, шаг 13),
+  `delete-images` (удаление фото, шаг 10 — объединил парные `delete-object`), `listing-published` (пост в
+  Telegram-канал — обработчик готов, продюсер появится на шаге 16 привязки Telegram).
+- **PII в логах.** `PiiScrubber` вычищает email и телефоны из текста ошибки перед записью в `Error` и в лог
+  (сообщение SMTP-сбоя часто содержит адрес получателя) — логи outbox не содержат email и телефонов.
+- Тесты (Testcontainers): **откат транзакции создания объявления ⇒ сообщения в outbox нет**; диспетчер доставляет
+  и закрывает `Done`; транзиентные сбои ретраятся (растёт `Attempts`, `NextAttemptAt` сдвигается) и после 5 попыток
+  → `Failed`, при этом PII вычищены; permanent-ошибка → сразу `Failed`; `delete-images` реально удаляет объекты из
+  хранилища.
+
+**Почему именно так:**
+- **Outbox, а не прямая отправка** — доставка внешнему сервису не может участвовать в транзакции БД; запись
+  сообщения в той же транзакции + отдельная доставка гарантируют «уведомление ⟺ изменение зафиксировано» без
+  двойной записи и без блокировки HTTP-запроса на медленный SMTP/сеть.
+- **`FOR UPDATE SKIP LOCKED`** — корректная конкурентная выборка на нескольких инстансах без гонки и без ожидания
+  на заблокированных строках.
+- **Персистентный бэкофф через `NextAttemptAt`, а не in-memory Polly-wait** — пауза в 2 часа не должна держать
+  поток воркера и обязана пережить рестарт; поэтому задержка хранится в строке, а не в памяти процесса. (Осознанное
+  отклонение от буквального «Polly» в постановке в пользу транзакционно-корректного варианта.)
+- **Идентификаторы в payload, контент — из БД на момент отправки** — минимум персональных данных «на диске»,
+  и уведомление отражает актуальное состояние (напр. заголовок объявления), а не снимок момента постановки.
+- **Обработчики в слое Api, диспетчер-интерфейс в Infrastructure** — доставка требует каналов/шаблонов (Api), а
+  Quartz-джоб живёт в Infrastructure; джоб вызывает `IOutboxDispatcher` (интерфейс в Infrastructure, реализация в
+  Api), как `CatalogHygieneJob` вызывает `ICatalogHygieneService`.
+
+**Компромисс именования:** поле оставлено как `Payload` (не `PayloadJson` из постановки) — для `delete-images`
+это JSON-массив ключей, а для legacy `delete-object` — «сырой» ключ, так что нейтральное имя точнее.
+
+**Конфигурация:** секция `Outbox` (`DispatchIntervalSeconds`=10, `BatchSize`=50, `CleanupCron`, `RetentionDays`=30),
+секция `Telegram` (`BotToken`, `BroadcastChatId` — только из env). Диспетчер и уборщик отключаются вместе с
+планировщиком (`Scheduling:Enabled=false`, как в тестах — там `IOutboxDispatcher` прогоняется напрямую).
+
+**Ключевые файлы:** `Domain/Entities/OutboxMessage.cs`, `Domain/Enums/Enums.cs` (`OutboxStatus`,
+`NotificationChannel`), `Infrastructure/Outbox/IOutboxDispatcher.cs`,
+`Infrastructure/Scheduling/{OutboxOptions,OutboxDispatchJob,OutboxCleanupJob,SchedulingServiceCollectionExtensions}.cs`,
+`Api/Outbox/*` (`OutboxDispatcher`, `IOutboxHandler`+обработчики, `INotificationChannel`+каналы, `UserNotifier`,
+`ITelegramClient`, `PiiScrubber`, `OutboxServiceCollectionExtensions`),
+продюсеры `Api/Controllers/{ModerationController,ReviewsController,ListingImagesController}.cs` и
+`Infrastructure/Scheduling/CatalogHygieneService.cs`,
+`Infrastructure/Persistence/Migrations/*_AddOutboxPipeline.cs`, тесты `tests/GenesisMarket.Tests/OutboxTests.cs`.
+
+> **Прод-миграция:** `AddOutboxPipeline` переименовывает `LastError→Error`, добавляет `Status`/`NextAttemptAt`
+> в `outbox_messages` и `NotifyVia`/`TelegramChatId` в `profiles`. БД — прод, поэтому миграцию накатывает
+> пользователь (`dotnet ef database update`), с `pg_dump` перед сменой схемы. Планировщик Quartz на старте
+> инициализирует стор, поэтому прод не поднимется без применённой миграции (как и с `AddCatalogHygiene`).
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
@@ -610,9 +685,11 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 - **Аватар (`POST /api/me/avatar`) — минимальная реализация**: валидация типа по magic bytes + размер,
   серверный ключ, сохранение в MinIO; `AvatarUrl` хранит ключ объекта. Обработка (ресайз, снятие EXIF,
   WebP) и presigned-URL для отдачи — шаг 8; заменит текущую реализацию.
-- **Уведомления — только запись в Outbox, без доставки.** Reject-объявления кладёт `OutboxMessage.Notification`
-  в БД, но обработчика доставки уведомлений пока нет (существующий `ObjectDeletionOutboxProcessor` берёт только
-  `delete-object`) — это шаг 14. До него сообщения копятся необработанными; это ожидаемо.
+- **Telegram-доставка уведомлений — инфраструктура готова, привязка ЛС нет.** Транзакционный outbox доставляет
+  уведомления (фича 16); канал Telegram работает только при заполненном `Profile.TelegramChatId`, а флоу его
+  привязки (бот, `/start`, сохранение chat_id) — шаг 16. До него `NotifyVia=Telegram` без chat_id деградирует к
+  почте. Тип `listing-published` (пост в публичный Telegram-канал) реализован в обработчике, но продюсер появится
+  там же. Без `Telegram:BotToken` Telegram-клиент пишет в лог (`[DEV TELEGRAM] …`), как dev-фолбэк почты.
 - **Разбан не восстанавливает объявления.** Бан архивирует активные объявления, но `unban` их обратно в `Active`
   не переводит — владелец публикует заново. Осознанное решение: авто-восстановление рискует вернуть в каталог то,
   что и было причиной бана.

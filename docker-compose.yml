@@ -48,6 +48,9 @@ services:
       Smtp__From: ${SMTP_FROM:-no-reply@genesis-hq.com}
       Smtp__FromName: ${SMTP_FROM_NAME:-Genesis Market}
       Smtp__UseSsl: ${SMTP_USE_SSL:-true}
+      # Telegram-бот (уведомления/посты через outbox). Пусто -> dev-лог, доставка почтой.
+      Telegram__BotToken: ${TELEGRAM_BOT_TOKEN}
+      Telegram__BroadcastChatId: ${TELEGRAM_BROADCAST_CHAT_ID}
       # Что обязательно для публикации: None | Email | Phone | Both.
       Publishing__RequiredVerification: ${PUBLISHING_REQUIRED_VERIFICATION:-Email}
       # CORS — строка origin-ов через запятую.

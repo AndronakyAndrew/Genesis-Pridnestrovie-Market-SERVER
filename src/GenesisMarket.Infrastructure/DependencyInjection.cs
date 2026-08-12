@@ -41,10 +41,11 @@ public static class DependencyInjection
 
         services.AddScoped<IObjectStorage, MinioObjectStorage>();
 
-        // Обработка изображений (без состояния) и фоновые сервисы хранилища.
+        // Обработка изображений (без состояния) и инициализация бакета.
+        // Доставка сообщений outbox (в т.ч. удаление объектов) — через диспетчер
+        // Quartz (AddScheduling) + обработчики слоя Api (AddOutbox), не отдельным BackgroundService.
         services.AddSingleton<Imaging.IImageProcessor, Imaging.ImageSharpImageProcessor>();
         services.AddHostedService<MinioBucketInitializer>();
-        services.AddHostedService<ObjectDeletionOutboxProcessor>();
 
         // ---- Пароли (собственная аутентификация) ----
         services.Configure<BcryptOptions>(configuration.GetSection(BcryptOptions.Section));
