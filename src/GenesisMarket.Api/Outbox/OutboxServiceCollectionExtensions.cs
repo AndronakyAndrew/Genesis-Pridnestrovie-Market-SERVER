@@ -1,3 +1,4 @@
+using GenesisMarket.Api.Outbox.Telegram;
 using GenesisMarket.Infrastructure.Outbox;
 
 namespace GenesisMarket.Api.Outbox;
@@ -23,11 +24,22 @@ public static class OutboxServiceCollectionExtensions
         services.AddSingleton<INotificationChannel, EmailNotificationChannel>();
         services.AddSingleton<INotificationChannel, TelegramNotificationChannel>();
 
+        // Лимитер частоты (20/мин на канал) — процессный singleton, общий для всех отправок.
+        services.AddSingleton<ITelegramRateLimiter, SlidingWindowTelegramRateLimiter>();
+
         // Без токена бота реальную сеть не трогаем — пишем в лог (как LogEmailSender для почты).
         if (string.IsNullOrWhiteSpace(configuration["Telegram:BotToken"]))
+        {
             services.AddSingleton<ITelegramClient, LogTelegramClient>();
+        }
         else
-            services.AddHttpClient<ITelegramClient, HttpTelegramClient>();
+        {
+            services.AddHttpClient<ITelegramClient, HttpTelegramClient>(http =>
+            {
+                http.BaseAddress = new Uri("https://api.telegram.org/");
+                http.Timeout = TimeSpan.FromSeconds(30);
+            });
+        }
 
         // Обработчики типов сообщений. Scoped — читают БД.
         services.AddScoped<IOutboxHandler, ListingApprovedHandler>();
@@ -35,6 +47,7 @@ public static class OutboxServiceCollectionExtensions
         services.AddScoped<IOutboxHandler, ListingExpiringSoonHandler>();
         services.AddScoped<IOutboxHandler, NewReviewHandler>();
         services.AddScoped<IOutboxHandler, ListingPublishedHandler>();
+        services.AddScoped<IOutboxHandler, ListingChannelUpdateHandler>();
         services.AddScoped<IOutboxHandler, SavedSearchMatchHandler>();
         services.AddScoped<IOutboxHandler, DeleteImagesHandler>();
         services.AddScoped<IOutboxHandler, DeleteObjectHandler>();

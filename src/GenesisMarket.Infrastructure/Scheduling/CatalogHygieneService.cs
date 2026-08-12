@@ -66,7 +66,18 @@ public sealed class CatalogHygieneService(
                 break;
 
             foreach (var listing in batch)
+            {
                 listing.Archive(now);
+
+                // Опубликованный в канал пост помечаем «Снято с публикации» (в той же транзакции).
+                // mark совпадает с константой ChannelMark.Archived на стороне Api-обработчика.
+                if (listing.TelegramMessageId is not null)
+                    db.OutboxMessages.Add(new OutboxMessage
+                    {
+                        Type = OutboxMessage.ListingChannelUpdate,
+                        Payload = JsonSerializer.Serialize(new { listingId = listing.Id, mark = "archived" })
+                    });
+            }
 
             await db.SaveChangesAsync(ct);
             total += batch.Count;

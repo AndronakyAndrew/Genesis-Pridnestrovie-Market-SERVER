@@ -726,6 +726,70 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 > БД — прод, поэтому миграцию накатывает пользователь (`dotnet ef database update`). Новый Quartz-джоб
 > регистрируется в сторе на старте — прод не поднимется без применённой миграции (как и с `AddCatalogHygiene`).
 
+### 18. Публикация объявлений в Telegram-канал (дешёвый канал роста)
+
+**Что сделано:**
+- **Пост при переходе в Active.** Любой переход объявления в `Active` (создание сразу активным, `POST
+  /listings/{id}/publish`, одобрение модератором, возврат из продажи/архива) ставит в Outbox сообщение
+  `listing-published` **в той же транзакции**, что и смена статуса. Доставку выполняет обработчик
+  `ListingPublishedHandler` (шаг 16), отдельно от HTTP-запроса, с ретраями.
+- **Формат поста (plain text).** Заголовок, цена в рублях ПМР, город и категория (русские подписи из
+  `CatalogLabels`), абсолютная ссылка на карточку (`Telegram:WebBaseUrl` + `/listing/{slug}`). **`parse_mode`
+  не используется вовсе** — заголовок/описание пишет пользователь, надёжно экранировать разметку под MarkdownV2
+  (18 спецсимволов) не стоит труда; проще отправлять без разметки.
+- **Фото или текст.** Есть изображение → `sendPhoto` первого по порядку (presigned-URL из MinIO, TTL 1 ч);
+  нет фото → `sendMessage`. Если Telegram не смог обработать картинку (формат/размер/URL) — анонс **не теряем**,
+  публикуем текстом (`TelegramApiException` → фолбэк на `sendMessage`).
+- **Маршрутизация «категория → канал».** Словарь `Telegram:CategoryChannels` (`category → chatId`) с откатом
+  на общий `Telegram:BroadcastChatId`. `message_id` **и chatId** поста сохраняются в `Listing`
+  (`TelegramMessageId`, `TelegramChatId`, миграция `AddListingTelegramPost`) — чтобы позже отредактировать
+  именно тот пост в том канале.
+- **Пометки «Продано»/«Снято».** `mark-sold` и снятие/архивация (в т.ч. **авто-архивация** гигиеной каталога)
+  ставят `listing-channel-update` → `editMessageCaption` (у поста-фото) или `editMessageText` (у текстового)
+  с шапкой «✅ ПРОДАНО» / «⛔ Снято с публикации». Возврат в продажу/из архива — обратная правка на «чистую»
+  подпись. **Если пост удалён вручную — не падаем**: Telegram-ошибки «message to edit not found / can't be
+  edited» трактуются как «править нечего» (обработчик завершается успешно).
+- **Идемпотентность.** `listing-published` при уже существующем `TelegramMessageId` не постит повторно, а правит
+  подпись на чистую (сценарий повторной активации Sold/Archived → Active).
+- **Лимит частоты — проактивно.** `SlidingWindowTelegramRateLimiter` (singleton) держит ≤ **20 сообщений в
+  минуту на канал** скользящим окном **до** отправки, а не реагируя на 429. При всплеске публикаций ждёт
+  освобождения слота до `MaxRateLimitWaitMs`, дальше — откладывает отправку (сообщение вернётся в очередь
+  Outbox), чтобы не держать транзакцию диспетчера.
+- **Ретраи через Polly.** 429 → задержка из `parameters.retry_after` тела ответа (с откатом на заголовок
+  `Retry-After`); сеть/5xx → экспонента `2/4/8/16 c`. Постоянные 4xx (`TelegramApiException`) не ретраятся —
+  их разбирает обработчик. Исчерпание Polly передаёт сбой наверх — там уже персистентные ретраи Outbox.
+- Тесты (Testcontainers): пост в канал категории с сохранением `message_id`; `sendPhoto` при наличии фото;
+  откат на общий канал для категории без своего; правка «Продано»; no-op при отсутствии поста; правка вместо
+  повторного поста при реактивации; полный путь `approve → пост`; модульные тесты лимитера (потолок и
+  независимость по каналам).
+
+**Почему именно так:**
+- **Токен и id каналов — только env.** Секреты не в конфиге репозитория; `Telegram:BotToken` пуст ⇒
+  `LogTelegramClient` пишет намерение в лог (dev-фолбэк, как у почты), реальная сеть не трогается.
+- **chatId поста в БД, а не только message_id** — при маршрутизации по категориям пост живёт в конкретном
+  канале; чтобы его отредактировать позже, нужно знать и канал.
+- **Лимит на стороне обработчика, а не через 429** — упираться в блокировку API и надеяться на ретраи дороже и
+  медленнее, чем заранее разложить отправку по окну; Polly остаётся страховкой на редкий 429.
+- **Фолбэк фото → текст** — картинка в WebP/по URL может не пройти обработку Telegram; терять анонс (главный
+  смысл фичи — рост) из-за этого нельзя, текстовый пост лучше отсутствия.
+
+**Конфигурация:** секция `Telegram` (`BotToken`, `BroadcastChatId`, `WebBaseUrl`, `CategoryChannels` —
+словарь `category→chatId`, `MaxMessagesPerMinutePerChat`=20, `MaxRateLimitWaitMs`=5000; секреты — только env).
+
+**Ключевые файлы:** `Domain/Entities/Listing.cs` (`TelegramChatId/MessageId`, `AttachChannelPost`),
+`Domain/Entities/OutboxMessage.cs` (`ListingPublished`, `ListingChannelUpdate`),
+`Api/Outbox/Telegram/*` (`TelegramOptions`, `ITelegramClient`, `HttpTelegramClient`, `LogTelegramClient`,
+`TelegramRateLimiter`, `TelegramExceptions`, `TelegramPostFormatter`), `Api/Listings/CatalogLabels.cs`,
+`Api/Outbox/{OutboxHandlers,OutboxContracts,NotificationChannels,OutboxServiceCollectionExtensions}.cs`,
+продюсеры `Api/Controllers/{ListingsController,ModerationController}.cs` и
+`Infrastructure/Scheduling/CatalogHygieneService.cs`,
+`Infrastructure/Persistence/Migrations/*_AddListingTelegramPost.cs`,
+тесты `tests/GenesisMarket.Tests/{TelegramPublishTests,CapturingTelegramClient}.cs`.
+
+> **Прод-миграция:** `AddListingTelegramPost` добавляет `TelegramChatId`/`TelegramMessageId` в `listings`
+> (аддитивно, nullable, без изменения данных). БД — прод, миграцию накатывает пользователь
+> (`dotnet ef database update`), с `pg_dump` перед сменой схемы.
+
 ---
 
 ## Известные ограничения
@@ -747,11 +811,12 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 - **Аватар (`POST /api/me/avatar`) — минимальная реализация**: валидация типа по magic bytes + размер,
   серверный ключ, сохранение в MinIO; `AvatarUrl` хранит ключ объекта. Обработка (ресайз, снятие EXIF,
   WebP) и presigned-URL для отдачи — шаг 8; заменит текущую реализацию.
-- **Telegram-доставка уведомлений — инфраструктура готова, привязка ЛС нет.** Транзакционный outbox доставляет
-  уведомления (фича 16); канал Telegram работает только при заполненном `Profile.TelegramChatId`, а флоу его
-  привязки (бот, `/start`, сохранение chat_id) — шаг 16. До него `NotifyVia=Telegram` без chat_id деградирует к
-  почте. Тип `listing-published` (пост в публичный Telegram-канал) реализован в обработчике, но продюсер появится
-  там же. Без `Telegram:BotToken` Telegram-клиент пишет в лог (`[DEV TELEGRAM] …`), как dev-фолбэк почты.
+- **Telegram-доставка личных уведомлений — привязка ЛС нет.** Транзакционный outbox доставляет уведомления
+  (фича 16); **личный** канал Telegram работает только при заполненном `Profile.TelegramChatId`, а флоу его
+  привязки (бот, `/start`, сохранение chat_id) ещё не построен. До него `NotifyVia=Telegram` без chat_id
+  деградирует к почте. **Публикация объявлений в каналы (фича 18) от этого не зависит** — она шлёт в каналы по
+  их chatId из конфигурации. Без `Telegram:BotToken` Telegram-клиент пишет в лог (`[DEV TELEGRAM] …`), как
+  dev-фолбэк почты.
 - **Разбан не восстанавливает объявления.** Бан архивирует активные объявления, но `unban` их обратно в `Active`
   не переводит — владелец публикует заново. Осознанное решение: авто-восстановление рискует вернуть в каталог то,
   что и было причиной бана.

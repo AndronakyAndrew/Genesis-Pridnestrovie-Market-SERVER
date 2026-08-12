@@ -23,6 +23,9 @@
 
     <!-- Health checks UI-контракт (для JSON-ответа /health/*) -->
     <PackageReference Include="AspNetCore.HealthChecks.UI.Client" Version="9.0.0" />
+
+    <!-- Ретраи обращений к Telegram Bot API (429 с учётом retry_after, транзиентные сбои) -->
+    <PackageReference Include="Polly" Version="7.2.4" />
   </ItemGroup>
 
   <ItemGroup>

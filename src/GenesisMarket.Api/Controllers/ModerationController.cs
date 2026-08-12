@@ -154,6 +154,13 @@ public class ModerationController(
             Payload = JsonSerializer.Serialize(new { listingId = id })
         });
 
+        // Объявление стало Active — анонсируем его в публичный Telegram-канал (та же транзакция).
+        db.OutboxMessages.Add(new OutboxMessage
+        {
+            Type = OutboxMessage.ListingPublished,
+            Payload = JsonSerializer.Serialize(new { listingId = id })
+        });
+
         audit.Record(ModerationLog.ActionApproveListing, ModerationLog.TargetListing, id);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
