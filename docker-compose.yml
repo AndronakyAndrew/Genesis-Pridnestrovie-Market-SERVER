@@ -54,6 +54,10 @@ services:
       # Публичный адрес фронтенда для ссылок в постах канала.
       Telegram__WebBaseUrl: ${TELEGRAM_WEB_BASE_URL}
       # Маршрутизация «категория -> канал» задаётся переменными Telegram__CategoryChannels__<category>.
+      # SEO: публичный адрес сайта для канонических ссылок, sitemap, og-тегов и JSON-LD.
+      # Пусто -> SEO-эндпоинты отдают 503 (индексировать нечего). Обычно = адресу фронтенда.
+      Seo__WebBaseUrl: ${SEO_WEB_BASE_URL}
+      Seo__SiteName: ${SEO_SITE_NAME:-Genesis Market}
       # Что обязательно для публикации: None | Email | Phone | Both.
       Publishing__RequiredVerification: ${PUBLISHING_REQUIRED_VERIFICATION:-Email}
       # CORS — строка origin-ов через запятую.

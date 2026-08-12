@@ -792,6 +792,60 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 19. Подготовка к индексации: мета, sitemap, robots, посадочные (органический трафик)
+
+**Что сделано:**
+- **`GET /api/listings/{id}/meta`** — готовые данные для `<head>` карточки: `title`, `description`,
+  `canonicalUrl` (`/obyavlenie/{slug}`), og-теги (`ogTitle`, `ogDescription`, `ogImage`) и **JSON-LD
+  `schema.org/Product`** с `offers` (`price`, `priceCurrency`, `availability`, `itemCondition`, `seller`).
+  `ogImage` — presigned-ссылка на первое фото с **длинным TTL** (`Seo:OgImageTtlDays`, по умолчанию 7 дней):
+  og-картинку кэшируют соцсети/поисковики, короткий TTL давал бы «битые» превью в выдаче.
+- **Валюта — `RUP`.** У рубля ПМР нет кода ISO-4217. В JSON-LD `priceCurrency` = **`RUP`** (не `RUB`/`MDL` —
+  это другие валюты), а человеку валюта поясняется **текстом** в `description` («Цена указана в рублях ПМР (RUP)»).
+  Для договорной цены (`Negotiable`) поле `price` в offers **опускается** (пустую цену schema.org не любит).
+- **HTTP-коды под судьбу URL в индексе.** Удалённое (soft-delete) → **410 Gone** (поисковик убирает URL из
+  индекса); снятое с публикации (`Archived`/`Sold`) → **200** с `isArchived: true` и `noIndex: true`
+  (фронт ставит `<meta name=robots content=noindex>`, но URL остаётся); черновик/премодерация/отклонённое
+  (публичного URL не было) и несуществующее → **404**. Разница 410↔404 намеренная: 410 говорит убрать URL, 404 — нет.
+- **`canonicalUrl` в DTO объявления.** `GET /api/listings/{id}` (и `by-slug`, «мои», и т.д.) всегда несут
+  `canonicalUrl` — единый канонический адрес для `<link rel=canonical>` и шеринга.
+- **`GET /sitemap.xml`** — главная, все категории, все города, все `Active` объявления. Пока URL ≤ порога
+  (`Seo:SitemapSplitThreshold`=45 000) — один `<urlset>`; больше — **sitemap-index** с разбивкой по
+  `Seo:SitemapPageSize`=40 000 (`/sitemap-static.xml` + `/sitemap-listings-{n}.xml`). Генерация **потоковая**
+  (`IAsyncEnumerable` из EF прямо в тело ответа через `XmlWriter`) — весь список в память не материализуется.
+  Число активных объявлений кэшируется на час; ответы отдаются с `Cache-Control: public, max-age=3600`.
+- **`GET /robots.txt`** — закрывает служебные API (`/api/moderation/`, `/api/me/`, `/api/auth/`) и указывает
+  `Sitemap:`. Каталог и карточки остаются открыты.
+- **`GET /api/seo/landing/{category}/{city}`** — данные для статических посадочных «Купить квартиру в
+  Тирасполе»: счётчик активных объявлений, диапазон цен (`priceFrom`/`priceTo` по объявлениям с ценой) и топ
+  подкатегорий (по числу объявлений). Неизвестная пара категория/город → 404.
+- Тесты (Testcontainers): мета Active (canonical/og/JSON-LD/RUP/InStock), договорная цена без `price`,
+  архив/продано (200 + noindex + Discontinued/SoldOut), 410 для удалённого, 404 для черновика/несуществующего,
+  `canonicalUrl` в DTO, robots, sitemap (urlset + loc объявления + Cache-Control), посадочная и её 404.
+
+**Почему именно так:**
+- **Мета собирает сервер, а не фронт** — SSR/краулер получает готовые title/description/JSON-LD, логика
+  формирования (валюта, availability, обрезка описания) не дублируется и не расходится с бэкендом.
+- **Потоковый sitemap** — объявлений могут быть сотни тысяч; `ToListAsync` на весь каталог держал бы память и
+  задерживал первый байт. XML пишется по мере чтения курсора БД.
+- **410 vs 200-noindex** — разное намерение: удалённое надо стереть из индекса (410), снятое с публикации может
+  вернуться (200 + noindex сохраняет URL «на паузе»).
+- **`Seo:WebBaseUrl` пуст ⇒ 503.** Без публичного адреса индексировать нечего и абсолютные ссылки не построить;
+  `canonicalUrl` в DTO объявления в этом случае `null` (dev), эндпоинты мета/sitemap/посадочных — 503.
+
+**Конфигурация:** секция `Seo` (`WebBaseUrl` — только env, обычно = адресу фронтенда; `SiteName`,
+`OgImageTtlDays`=7, `SitemapSplitThreshold`=45000, `SitemapPageSize`=40000, `SitemapCacheSeconds`=3600).
+
+**Ключевые файлы:** `Api/Seo/*` (`SeoOptions`, `SeoUrls`, `ListingMetaBuilder`, `SeoServiceCollectionExtensions`),
+`Api/Controllers/{SeoController,SitemapController}.cs`, `Api/Contracts/SeoDtos.cs`,
+`Api/Contracts/ListingDtos.cs` (`CanonicalUrl`), `Api/Controllers/ListingsController.cs` (проброс canonical),
+тесты `tests/GenesisMarket.Tests/SeoTests.cs`.
+
+> **Прод:** миграций нет (только чтение). Перед запуском задать `SEO_WEB_BASE_URL` (env) — иначе SEO-эндпоинты
+> отдают 503, а `canonicalUrl` в DTO объявлений приходит `null`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
@@ -821,3 +875,13 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
   не переводит — владелец публикует заново. Осознанное решение: авто-восстановление рискует вернуть в каталог то,
   что и было причиной бана.
 - **Rate-limit жалоб — in-memory** (на инстанс), как и остальные лимиты. При нескольких инстансах API нужен общий стор (Redis).
+- **SEO-пути фронтенда — договорённость, не автоматика.** Бэкенд отдаёт канонические ссылки под конкретную
+  маршрутизацию фронта: карточка `/obyavlenie/{slug}`, категория `/{category}`, город `/city/{city}`, посадочная
+  `/{category}/{city}` (значения — как в БД: `realestate`, `tiraspol`). Фронт обязан обслуживать эти URL; при
+  смене схемы путей — синхронно править `Api/Seo/SeoUrls.cs`. Пост Telegram-канала пока ссылается на **старый**
+  путь `/listing/{slug}` (`TelegramPostFormatter`) — свести к `/obyavlenie/{slug}` отдельным шагом.
+- **`Seo:WebBaseUrl` дублирует `Telegram:WebBaseUrl`.** Обычно это один и тот же адрес фронтенда, но заданы
+  двумя переменными (`SEO_WEB_BASE_URL`, `TELEGRAM_WEB_BASE_URL`). Позже разумно свести к общей секции `Site`.
+- **Sitemap объявлений — offset-пагинация** (`Skip/Take` по `Id`). Для сотен тысяч глубокие страницы дают рост
+  стоимости `OFFSET`; ответы кэшируются на час и запрашиваются краулером редко, так что приемлемо. При кратном
+  росте каталога перейти на keyset по `Id`.

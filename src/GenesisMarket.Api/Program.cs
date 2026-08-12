@@ -5,6 +5,7 @@ using GenesisMarket.Api.Middleware;
 using GenesisMarket.Api.Moderation;
 using GenesisMarket.Api.Outbox;
 using GenesisMarket.Api.SavedSearches;
+using GenesisMarket.Api.Seo;
 using GenesisMarket.Api.Trust;
 using GenesisMarket.Infrastructure;
 using HealthChecks.UI.Client;
@@ -61,6 +62,9 @@ try
 
     // ---- Сохранённые поиски: рассылка новых совпадений (Quartz-джоб + сервис) ----
     builder.Services.AddSavedSearchesFeature();
+
+    // ---- SEO: мета карточек, sitemap, robots, посадочные (органический трафик) ----
+    builder.Services.AddSeoFeature(builder.Configuration);
 
     // ---- ProblemDetails + глобальный обработчик исключений ----
     builder.Services.AddProblemDetails();

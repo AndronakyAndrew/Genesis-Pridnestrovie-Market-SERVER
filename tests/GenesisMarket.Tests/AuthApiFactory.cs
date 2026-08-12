@@ -51,6 +51,9 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         Environment.SetEnvironmentVariable("Telegram__CategoryChannels__home", "test-home");
         Environment.SetEnvironmentVariable("Telegram__WebBaseUrl", "https://market.test");
 
+        // Публичный адрес сайта для SEO (canonical/sitemap/og/JSON-LD) — иначе эндпоинты отдают 503.
+        Environment.SetEnvironmentVariable("Seo__WebBaseUrl", "https://market.test");
+
         // Первое обращение к Services собирает хост (с уже выставленной строкой).
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -305,6 +308,16 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return await db.Listings.IgnoreQueryFilters()
             .Where(l => l.Id == listingId).Select(l => l.FavoritesCount).FirstAsync();
+    }
+
+    /// <summary>Мягко удаляет объявление (проставляет DeletedAt) — для проверки 410 Gone в SEO-мета.</summary>
+    public async Task SoftDeleteListingAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Listings.IgnoreQueryFilters()
+            .Where(l => l.Id == listingId)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.DeletedAt, DateTimeOffset.UtcNow));
     }
 
     /// <summary>Меняет статус объявления напрямую (для проверки isUnavailable в избранном).</summary>
