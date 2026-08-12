@@ -120,3 +120,35 @@ public enum ReportStatus
     Resolved,
     Rejected
 }
+
+/// <summary>
+/// Статус сообщения транзакционного outbox. В БД хранится строкой.
+/// Pending → (Processing) → Done; ветка Failed — исчерпаны попытки, сообщение
+/// оставлено для разбора и повторно не выбирается.
+/// </summary>
+public enum OutboxStatus
+{
+    /// <summary>Ждёт отправки (в т.ч. между ретраями — по <c>NextAttemptAt</c>).</summary>
+    Pending,
+
+    /// <summary>Взято диспетчером в обработку (транзиентно, внутри одного тика).</summary>
+    Processing,
+
+    /// <summary>Успешно доставлено.</summary>
+    Done,
+
+    /// <summary>Исчерпаны попытки. Терминальный статус; строка сохраняется для разбора.</summary>
+    Failed
+}
+
+/// <summary>
+/// Канал доставки уведомлений пользователю. В БД (настройка профиля) хранится строкой.
+/// </summary>
+public enum NotificationChannel
+{
+    /// <summary>Электронная почта (SMTP). Канал по умолчанию — адрес есть у каждого аккаунта.</summary>
+    Email,
+
+    /// <summary>Личные сообщения Telegram. Требует привязанного <c>TelegramChatId</c>.</summary>
+    Telegram
+}

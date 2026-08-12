@@ -3,6 +3,7 @@ using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Middleware;
 using GenesisMarket.Api.Moderation;
+using GenesisMarket.Api.Outbox;
 using GenesisMarket.Api.Trust;
 using GenesisMarket.Infrastructure;
 using HealthChecks.UI.Client;
@@ -53,6 +54,9 @@ try
 
     // ---- Инструменты модератора: очередь, действия, аудит-журнал ----
     builder.Services.AddModerationFeature();
+
+    // ---- Транзакционный outbox: доставка уведомлений (email/Telegram) и удаление объектов ----
+    builder.Services.AddOutbox(builder.Configuration);
 
     // ---- ProblemDetails + глобальный обработчик исключений ----
     builder.Services.AddProblemDetails();

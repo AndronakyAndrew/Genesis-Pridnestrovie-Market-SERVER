@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using GenesisMarket.Domain.Entities;
+using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -125,13 +126,20 @@ public class ListingImagesTests(AuthApiFactory factory) : IClassFixture<AuthApiF
 
         Assert.False(await db.ListingImages.AnyAsync(i => i.Id == imageId));
 
-        // Удаление объектов ушло в outbox, а не выполнено синхронно в обработчике.
+        // Удаление объектов ушло в outbox, а не выполнено синхронно в обработчике:
+        // одно сообщение DeleteImages с ключами оригинала и превью.
         var pending = await db.OutboxMessages.AsNoTracking()
-            .Where(m => m.ProcessedAt == null && m.Type == OutboxMessage.DeleteObject)
+            .Where(m => m.Status == OutboxStatus.Pending && m.Type == OutboxMessage.DeleteImages)
             .Select(m => m.Payload)
             .ToListAsync();
-        Assert.Contains(keys.ObjectKey, pending);
-        Assert.Contains(keys.ThumbKey, pending);
+        Assert.Contains(pending, p => p.Contains(keys.ObjectKey) && p.Contains(keys.ThumbKey));
+
+        // А диспетчер, отработав, реально удаляет объекты из хранилища и закрывает сообщение.
+        Assert.True(factory.Storage.Exists(keys.ObjectKey));
+        var result = await factory.RunOutboxAsync();
+        Assert.True(result.Delivered >= 1);
+        Assert.False(factory.Storage.Exists(keys.ObjectKey));
+        Assert.False(factory.Storage.Exists(keys.ThumbKey));
     }
 
     // ---- helpers ----

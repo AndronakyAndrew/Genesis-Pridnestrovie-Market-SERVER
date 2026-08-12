@@ -147,6 +147,13 @@ public class ModerationController(
                 .SetProperty(l => l.PublishedAt, l => l.PublishedAt ?? now)
                 .SetProperty(l => l.UpdatedAt, now), ct);
 
+        // Уведомление автора об одобрении — через outbox в той же транзакции.
+        db.OutboxMessages.Add(new OutboxMessage
+        {
+            Type = OutboxMessage.ListingApproved,
+            Payload = JsonSerializer.Serialize(new { listingId = id })
+        });
+
         audit.Record(ModerationLog.ActionApproveListing, ModerationLog.TargetListing, id);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -184,18 +191,16 @@ public class ModerationController(
                 .SetProperty(l => l.ModerationPriority, 0)
                 .SetProperty(l => l.UpdatedAt, now), ct);
 
-        // Уведомление автора — через outbox (доставит обработчик шага 14).
+        // Уведомление автора — через outbox (в той же транзакции). Только идентификаторы
+        // и причина: текст письма/сообщения соберёт обработчик по типу.
         db.OutboxMessages.Add(new OutboxMessage
         {
-            Type = OutboxMessage.Notification,
+            Type = OutboxMessage.ListingRejected,
             Payload = JsonSerializer.Serialize(new
             {
-                userId = listing.OwnerId,
-                kind = "listing_rejected",
                 listingId = id,
                 reason = request.Reason.ToString(),
-                comment,
-                text = RejectNotificationText(request.Reason, comment)
+                comment
             })
         });
 
@@ -438,23 +443,6 @@ public class ModerationController(
             ModerationQueueKind.Report, r.Id, 0, r.CreatedAt, r.Status.ToString(),
             ReportTargetType: r.TargetType, ReportTargetId: r.TargetId, Reason: r.Reason));
     }
-
-    private static string RejectNotificationText(ReportReason reason, string? comment)
-    {
-        var text = $"Ваше объявление отклонено модератором. Причина: {ReasonText(reason)}.";
-        return comment is null ? text : $"{text} Комментарий: {comment}";
-    }
-
-    private static string ReasonText(ReportReason reason) => reason switch
-    {
-        ReportReason.Spam => "спам",
-        ReportReason.Fraud => "признаки мошенничества",
-        ReportReason.Prohibited => "запрещённый товар или услуга",
-        ReportReason.WrongCategory => "несоответствие категории",
-        ReportReason.Duplicate => "дубликат объявления",
-        ReportReason.PriceViolation => "нарушение в указании цены",
-        _ => "нарушение правил площадки"
-    };
 
     /// <summary>Единая строка очереди для слияния объявлений и жалоб.</summary>
     private sealed record QueueRow(
