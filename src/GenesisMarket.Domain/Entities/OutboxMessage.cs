@@ -29,4 +29,11 @@ public class OutboxMessage
 
     /// <summary>Тип «удалить объект из хранилища»; <see cref="Payload"/> — ключ объекта.</summary>
     public const string DeleteObject = "delete-object";
+
+    /// <summary>
+    /// Тип «уведомить пользователя»; <see cref="Payload"/> — JSON с полями события
+    /// (адресат, вид уведомления, текст). Доставку выполняет обработчик уведомлений
+    /// (шаг 14); модерация лишь кладёт сообщение в outbox в той же транзакции.
+    /// </summary>
+    public const string Notification = "notification";
 }

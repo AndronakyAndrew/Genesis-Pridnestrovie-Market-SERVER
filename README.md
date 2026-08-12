@@ -492,6 +492,56 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 14. Инструменты модератора (очередь, действия, аудит-журнал)
+
+Рабочая поверхность модератора. Все ручки под `[Authorize(Policy = "Moderator")]` (роль
+`Moderator`/`Admin` **только из claim JWT** — никаких хардкод-списков email/админов в коде).
+Обычный пользователь → `403`, аноним → `401` на любой `/api/moderation/*`.
+
+- **`GET /api/moderation/queue`** — единый поток: объявления `PendingReview` **и** открытые жалобы
+  (`Status=New`). Сортировка: **сначала автофлаги** (`ModerationPriority DESC`), затем по дате
+  (старые раньше — FIFO). **Курсорная пагинация** (`ModerationCursor`: `priority|ticks|id`, keyset над
+  двумя источниками — по `limit+1` из каждого, слияние в памяти). Фильтры: `type` (`listing`|`report`),
+  `reason` (сужает до жалоб), `priority` (мин. приоритет — исключает жалобы).
+- **`GET /api/moderation/listings/{id}`** — полная карточка, включая скрытые поля (владелец, приоритет,
+  статус даже у снятого/удалённого — `IgnoreQueryFilters`) и открытые жалобы по объявлению.
+- **`POST /api/moderation/listings/{id}/approve`** — `PendingReview → Active`, сброс приоритета.
+- **`POST /api/moderation/listings/{id}/reject`** `{ reason, comment }` — `→ Rejected`; **уведомление автора
+  с текстом причины через Outbox** (`OutboxMessage.Notification`, доставит обработчик шага 14) — в той же транзакции.
+- **`POST /api/moderation/reports/{id}/resolve`** `{ status, resolution }` — закрытие жалобы (`Resolved`/`Rejected`).
+- **`POST /api/moderation/users/{id}/ban`** `{ reason, until? }` — **в одной транзакции**: `IsBanned`,
+  `BannedUntil`, **ротация `SecurityStamp`** (иначе выданный access-токен жил бы ещё до 15 мин), все активные
+  объявления `→ Archived`, **все refresh-токены отозваны**, запись в журнал. После коммита — `Invalidate`
+  кэша снимка (бан действует немедленно). Нельзя забанить себя (`400`) и администратора (`403`).
+- **`POST /api/moderation/users/{id}/unban`** — снятие бана (+ сброс кэша снимка).
+- **`GET /api/moderation/users/{id}`** — **email и телефон**. Самая чувствительная ручка: **каждый вызов**
+  (даже просмотр) пишется в `moderation_logs`. Покрыта отдельным тестом на доступ и на запись в журнал.
+- **`GET /api/moderation/stats`** — счётчики очереди и активности за сегодня/неделю.
+
+- **`moderation_logs` — таблица ТОЛЬКО на добавление** (`ModerationLog`, `IModerationAudit`): ни `UPDATE`, ни
+  `DELETE` в коде. Actor берётся из текущего пользователя, запись добавляется в тот же `DbContext` и коммитится
+  **в одной транзакции** с действием. Пишется каждое действие модератора **и** просмотр контактов пользователя.
+- Тесты (Testcontainers): обычный пользователь → `403` на всех ручках; аноним → `401`; очередь (автофлаги
+  раньше, фильтр по причине); approve/reject (+outbox +лог); resolve жалобы; **бан** (архивация объявлений,
+  невидимость в каталоге, `401` на создание объявления и на refresh); unban; контакты (PII + лог на КАЖДЫЙ вызов).
+
+**Почему именно так:**
+- **Ротация `SecurityStamp` в бане обязательна** — access-токен живёт до 15 мин; без смены штампа забаненный
+  ещё продолжал бы работать. `SecurityStampValidator` кэширует снимок (TTL), поэтому после коммита — `Invalidate`.
+- **Единая очередь из двух таблиц без отдельной таблицы очереди** — объявления и жалобы приводятся к общей
+  строке `QueueRow`, keyset применяется к каждому источнику, слияние и курсор — по кортежу `(priority, createdAt, id)`.
+- **Уведомление через Outbox, а не прямая отправка** — обработчик уведомлений (шаг 14) ещё не построен; reject
+  лишь кладёт сообщение в той же транзакции, что и смена статуса (не теряется, не блокирует HTTP).
+- **Роль только из claim** — соответствует инварианту авторизации (политики `Moderator`/`Admin` из шага 5).
+
+**Ключевые файлы:** `Api/Controllers/ModerationController.cs`, `Api/Contracts/ModerationDtos.cs`,
+`Api/Moderation/{ModerationAudit,ModerationCursor,ModerationServiceCollectionExtensions}.cs`,
+`Domain/Entities/{ModerationLog,OutboxMessage}.cs`,
+`Infrastructure/Persistence/Configurations/ModerationLogConfiguration.cs`,
+`Infrastructure/Persistence/Migrations/*_AddModerationLog.cs`, тесты `tests/GenesisMarket.Tests/ModerationTests.cs`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
@@ -511,5 +561,10 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 - **Аватар (`POST /api/me/avatar`) — минимальная реализация**: валидация типа по magic bytes + размер,
   серверный ключ, сохранение в MinIO; `AvatarUrl` хранит ключ объекта. Обработка (ресайз, снятие EXIF,
   WebP) и presigned-URL для отдачи — шаг 8; заменит текущую реализацию.
-- **Модерация жалоб — только приём и автоматика.** Эндпоинтов разбора (список очереди, `Resolve`/`Reject`, смена `Status`) пока нет: поля `Status`/`ResolvedBy*`/`Resolution` и `ModerationPriority` заполнены под будущий UI модератора. Скрытие отзывов (`/hide`) уже есть.
+- **Уведомления — только запись в Outbox, без доставки.** Reject-объявления кладёт `OutboxMessage.Notification`
+  в БД, но обработчика доставки уведомлений пока нет (существующий `ObjectDeletionOutboxProcessor` берёт только
+  `delete-object`) — это шаг 14. До него сообщения копятся необработанными; это ожидаемо.
+- **Разбан не восстанавливает объявления.** Бан архивирует активные объявления, но `unban` их обратно в `Active`
+  не переводит — владелец публикует заново. Осознанное решение: авто-восстановление рискует вернуть в каталог то,
+  что и было причиной бана.
 - **Rate-limit жалоб — in-memory** (на инстанс), как и остальные лимиты. При нескольких инстансах API нужен общий стор (Redis).

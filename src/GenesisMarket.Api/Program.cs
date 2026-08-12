@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Middleware;
+using GenesisMarket.Api.Moderation;
 using GenesisMarket.Api.Trust;
 using GenesisMarket.Infrastructure;
 using HealthChecks.UI.Client;
@@ -49,6 +50,9 @@ try
 
     // ---- Слой доверия: отзывы (репутация) и жалобы (модерация) ----
     builder.Services.AddTrustFeature(builder.Configuration);
+
+    // ---- Инструменты модератора: очередь, действия, аудит-журнал ----
+    builder.Services.AddModerationFeature();
 
     // ---- ProblemDetails + глобальный обработчик исключений ----
     builder.Services.AddProblemDetails();

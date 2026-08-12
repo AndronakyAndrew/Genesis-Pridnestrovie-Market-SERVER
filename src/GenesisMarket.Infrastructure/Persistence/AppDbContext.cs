@@ -24,6 +24,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ContactReveal> ContactReveals => Set<ContactReveal>();
     public DbSet<Review> Reviews => Set<Review>();
     public DbSet<Report> Reports => Set<Report>();
+    public DbSet<ModerationLog> ModerationLogs => Set<ModerationLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
