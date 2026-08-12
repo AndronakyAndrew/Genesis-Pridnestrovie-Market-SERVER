@@ -21,6 +21,9 @@ public sealed record NewReviewPayload(Guid ReviewId);
 /// <summary>Payload <see cref="Domain.Entities.OutboxMessage.ListingPublished"/>.</summary>
 public sealed record ListingPublishedPayload(Guid ListingId);
 
+/// <summary>Payload <see cref="Domain.Entities.OutboxMessage.SavedSearchMatch"/>.</summary>
+public sealed record SavedSearchMatchPayload(Guid SavedSearchId, IReadOnlyList<Guid> ListingIds);
+
 /// <summary>
 /// Ошибка доставки, которую бессмысленно повторять (некорректный payload, удалённый
 /// адресат, отсутствующий ресурс, канал не сконфигурирован). Диспетчер сразу переводит

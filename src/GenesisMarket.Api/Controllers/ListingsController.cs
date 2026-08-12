@@ -41,8 +41,6 @@ public class ListingsController(
 
     private const int DefaultLimit = 20;
     private const int MaxLimit = 50;
-    private const int MaxCities = 7;                       // столько городов в ПМР
-    private const int MaxQueryLength = 100;               // предел длины поискового q
     private static readonly TimeSpan CountCacheTtl = TimeSpan.FromSeconds(60);
 
     /// <summary>
@@ -58,7 +56,7 @@ public class ListingsController(
         if (ValidateFilters(query) is { } bad)
             return bad;
 
-        var q = NormalizeQuery(query.Q);
+        var q = CatalogQueryBuilder.NormalizeText(query.Q);
 
         if (CatalogQueryBuilder.ParseSort(query.Sort) is not { } sort)
             return Problem(title: "Неизвестная сортировка", statusCode: StatusCodes.Status400BadRequest);
@@ -210,17 +208,6 @@ public class ListingsController(
                 rows[limit - 1].Id)
             : null;
         return new CatalogPageResponse(items, nextCursor, hasMore);
-    }
-
-    /// <summary>Trim + нижний регистр + обрезка до 100 символов. Пусто ⇒ null (поиска нет).</summary>
-    private static string? NormalizeQuery(string? q)
-    {
-        if (string.IsNullOrWhiteSpace(q))
-            return null;
-        var trimmed = q.Trim();
-        if (trimmed.Length > MaxQueryLength)
-            trimmed = trimmed[..MaxQueryLength];
-        return trimmed.ToLowerInvariant();
     }
 
     /// <summary>
@@ -610,13 +597,8 @@ public class ListingsController(
     /// <summary>Общие проверки фильтров каталога (для /listings и /listings/count). null — ок.</summary>
     private ObjectResult? ValidateFilters(CatalogQuery query)
     {
-        if (query.Cities is { Count: > MaxCities })
-            return Problem(title: $"Слишком много городов в фильтре (максимум {MaxCities})",
-                statusCode: StatusCodes.Status400BadRequest);
-
-        if (query.PriceFrom is { } from && query.PriceTo is { } to && from > to)
-            return Problem(title: "priceFrom не может быть больше priceTo",
-                statusCode: StatusCodes.Status400BadRequest);
+        if (CatalogQueryBuilder.ValidateFilters(query.Cities, query.PriceFrom, query.PriceTo) is { } error)
+            return Problem(title: error, statusCode: StatusCodes.Status400BadRequest);
 
         return null;
     }

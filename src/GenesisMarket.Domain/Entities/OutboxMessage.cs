@@ -68,6 +68,12 @@ public class OutboxMessage
     /// <summary>Объявление опубликовано → пост в Telegram-канал (шаг 16). Payload: <c>{ listingId }</c>.</summary>
     public const string ListingPublished = "listing-published";
 
+    /// <summary>
+    /// Найдены новые объявления по сохранённому поиску → уведомление автору поиска.
+    /// Payload: <c>{ savedSearchId, listingIds: [...] }</c> (до 10 объявлений одним письмом).
+    /// </summary>
+    public const string SavedSearchMatch = "saved-search-match";
+
     /// <summary>Удалить объекты из хранилища (MinIO). Payload: JSON-массив ключей.</summary>
     public const string DeleteImages = "delete-images";
 

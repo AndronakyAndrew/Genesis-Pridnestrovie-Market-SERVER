@@ -664,6 +664,68 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 > пользователь (`dotnet ef database update`), с `pg_dump` перед сменой схемы. Планировщик Quartz на старте
 > инициализирует стор, поэтому прод не поднимется без применённой миграции (как и с `AddCatalogHygiene`).
 
+### 17. Сохранённые поиски (возврат пользователей)
+
+**Что сделано:**
+- **`SavedSearch` (миграция `AddSavedSearches`).** Пользователь сохраняет набор фильтров каталога, а фоновый
+  джоб находит по ним новые объявления и уведомляет автора. Поля: `UserId`, `Name`, `QueryJson` (**jsonb**),
+  `LastNotifiedListingId?` (курсор), `LastRunAt`, `IsActive`, `NotifyChannel` (`Email|Telegram|None`, строкой),
+  `NotifiedAt?`, `CreatedAt`. `QueryJson` хранит ровно те же параметры, что принимает `GET /api/listings`
+  (`q, category, subcategory, cities[], priceFrom, priceTo, condition, priceType`) — без `sort/cursor/limit`
+  (это параметры выдачи, а не критерии).
+- **CRUD `POST/GET/PATCH/DELETE /api/saved-searches`** (все `[Authorize]`, владелец проверяется на сервере).
+  Лимит **10 активных поисков** на пользователя. При сохранении/смене критериев/реактивации курсор
+  **привязывается к самому свежему совпадению сейчас** (`SavedSearchQueryPlanner.AnchorAsync`) — подписчик
+  получает только будущие объявления, а не рассылку по всему каталогу.
+- **Единый билдер запроса.** Прогон и живой каталог отбирают объявления **одним и тем же**
+  `CatalogQueryBuilder` (фильтры + FTS). Кросс-полевые проверки (`≤7 городов`, `priceFrom ≤ priceTo`) и
+  нормализация `q` вынесены в `CatalogQueryBuilder` и переиспользуются контроллером каталога и сохранёнными
+  поисками. **Критерии из jsonb не доверяются**: при сохранении и **при каждом прогоне** они заново
+  десериализуются и валидируются; некорректный поиск джоб деактивирует (`IsActive=false`), не рассылая.
+- **`SavedSearchNotificationJob` (Quartz, раз в 15 минут, `[DisallowConcurrentExecution]`, persistent store).**
+  Батчами по 200 активных поисков (keyset по `Id`). Для каждого — тот же запрос каталога с дополнительным
+  условием **по курсору `(PublishedAt, Id) > последнего уведомлённого`**, а не по времени: объявления с
+  одинаковым `PublishedAt` не теряются и не дублируются между прогонами. Найдено больше нуля → **одно**
+  Outbox-сообщение `saved-search-match` со списком (**до 10** объявлений), курсор и `NotifiedAt` двигаются вперёд.
+- **Не чаще одного уведомления на поиск в час**, даже если джоб отработал чаще: поиск с `NotifiedAt` свежее часа
+  джоб пропускает целиком (курсор не трогает — новые объявления не теряются, уедут следующим уведомлением).
+- **Доставка — через тот же Outbox** (шаг 16): обработчик `SavedSearchMatchHandler` собирает письмо из БД по id
+  и шлёт каналом **самого поиска** (`UserNotifier.NotifyViaAsync` — Telegram без `TelegramChatId` деградирует к
+  почте). `None` — не рассылать.
+- Тесты (Testcontainers): **два прогона подряд без новых объявлений дают ровно одно уведомление** (ключевой
+  инвариант ТЗ); курсорная идемпотентность даже при открытом часовом гейте; отсрочка на час без потери; привязка
+  курсора (объявления «до сохранения» не рассылаются); недоверие к jsonb (порча деактивирует); доставка
+  диспетчером; CRUD, лимит 10, `>7` городов → 400, аноним → 401.
+
+**Почему именно так:**
+- **Курсор по `(PublishedAt, Id)`, а не по времени** — при равных `PublishedAt` временной порог либо пропустил бы
+  объявление, либо прислал бы дубль; пара с тай-брейком по `Id` даёт строгий детерминированный порядок.
+- **Привязка курсора при сохранении** — иначе первый же прогон нового поиска, совпавшего с сотнями существующих
+  объявлений, завалил бы подписчика; уведомляем только о том, что появилось **после** сохранения.
+- **Валидация из jsonb при каждом прогоне** — критерии в хранилище могли устареть/испортиться; каталог и джоб
+  должны применять один и тот же набор правил, поэтому валидатор общий.
+- **Сервис в Api, интерфейс/джоб в Infrastructure** — прогон использует `CatalogQueryBuilder` (Api); Quartz-джоб
+  вызывает `ISavedSearchNotificationService` (интерфейс в Infrastructure, реализация в Api), как
+  `OutboxDispatchJob → IOutboxDispatcher` и `CatalogHygieneJob → ICatalogHygieneService`.
+
+**Конфигурация:** секция `SavedSearch` (`NotificationCron`=`0 0/15 * * * ?`, `BatchSize`=200,
+`MaxListingsPerNotification`=10, `MinNotificationIntervalMinutes`=60, `MaxActivePerUser`=10). Джоб отключается
+вместе с планировщиком (`Scheduling:Enabled=false`, как в тестах — там `ISavedSearchNotificationService`
+прогоняется напрямую).
+
+**Ключевые файлы:** `Domain/Entities/SavedSearch.cs`, `Domain/Enums/Enums.cs` (`SavedSearchNotifyChannel`),
+`Infrastructure/Persistence/Configurations/SavedSearchConfiguration.cs`,
+`Infrastructure/Scheduling/{SavedSearchOptions,ISavedSearchNotificationService,SavedSearchNotificationJob}.cs`,
+`Api/SavedSearches/*` (`SavedSearchNotificationService`, `SavedSearchQueryPlanner`, `SavedSearchJson`,
+`SavedSearchServiceCollectionExtensions`), `Api/Controllers/SavedSearchesController.cs`,
+`Api/Contracts/SavedSearchDtos.cs`, `Api/Outbox/{OutboxHandlers,OutboxContracts,UserNotifier}.cs`
+(`SavedSearchMatchHandler`), `Api/Listings/CatalogQueryBuilder.cs` (общие хелперы),
+`Infrastructure/Persistence/Migrations/*_AddSavedSearches.cs`, тесты `tests/GenesisMarket.Tests/SavedSearchTests.cs`.
+
+> **Прод-миграция:** `AddSavedSearches` добавляет таблицу `saved_searches` (аддитивно, без изменения данных).
+> БД — прод, поэтому миграцию накатывает пользователь (`dotnet ef database update`). Новый Quartz-джоб
+> регистрируется в сторе на старте — прод не поднимется без применённой миграции (как и с `AddCatalogHygiene`).
+
 ---
 
 ## Известные ограничения

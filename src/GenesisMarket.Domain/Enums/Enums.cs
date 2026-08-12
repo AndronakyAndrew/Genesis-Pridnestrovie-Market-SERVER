@@ -152,3 +152,20 @@ public enum NotificationChannel
     /// <summary>Личные сообщения Telegram. Требует привязанного <c>TelegramChatId</c>.</summary>
     Telegram
 }
+
+/// <summary>
+/// Канал уведомлений сохранённого поиска. В БД хранится строкой. В отличие от
+/// <see cref="NotificationChannel"/> допускает <see cref="None"/> — поиск сохранён,
+/// но рассылка по нему выключена (джоб такие поиски пропускает целиком).
+/// </summary>
+public enum SavedSearchNotifyChannel
+{
+    /// <summary>Слать письмом на адрес аккаунта.</summary>
+    Email,
+
+    /// <summary>Слать в Telegram (при отсутствии <c>TelegramChatId</c> деградирует к почте).</summary>
+    Telegram,
+
+    /// <summary>Не уведомлять. Поиск активен для ручного просмотра, но джоб его не рассылает.</summary>
+    None
+}

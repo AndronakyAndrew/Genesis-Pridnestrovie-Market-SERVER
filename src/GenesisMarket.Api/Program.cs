@@ -4,6 +4,7 @@ using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Middleware;
 using GenesisMarket.Api.Moderation;
 using GenesisMarket.Api.Outbox;
+using GenesisMarket.Api.SavedSearches;
 using GenesisMarket.Api.Trust;
 using GenesisMarket.Infrastructure;
 using HealthChecks.UI.Client;
@@ -57,6 +58,9 @@ try
 
     // ---- Транзакционный outbox: доставка уведомлений (email/Telegram) и удаление объектов ----
     builder.Services.AddOutbox(builder.Configuration);
+
+    // ---- Сохранённые поиски: рассылка новых совпадений (Quartz-джоб + сервис) ----
+    builder.Services.AddSavedSearchesFeature();
 
     // ---- ProblemDetails + глобальный обработчик исключений ----
     builder.Services.AddProblemDetails();

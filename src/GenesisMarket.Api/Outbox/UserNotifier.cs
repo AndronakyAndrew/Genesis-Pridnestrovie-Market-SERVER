@@ -12,7 +12,14 @@ namespace GenesisMarket.Api.Outbox;
 /// </summary>
 public interface IUserNotifier
 {
+    /// <summary>Доставить уведомление каналом, выбранным пользователем в профиле (<c>NotifyVia</c>).</summary>
     Task NotifyAsync(Guid userId, string subject, string body, CancellationToken ct);
+
+    /// <summary>
+    /// Доставить уведомление явно заданным каналом (например, каналом сохранённого поиска,
+    /// который может отличаться от профильного). Telegram без привязанного chatId деградирует к почте.
+    /// </summary>
+    Task NotifyViaAsync(Guid userId, NotificationChannel preferred, string subject, string body, CancellationToken ct);
 }
 
 public sealed class UserNotifier(
@@ -20,7 +27,16 @@ public sealed class UserNotifier(
     IEnumerable<INotificationChannel> channels,
     ILogger<UserNotifier> logger) : IUserNotifier
 {
-    public async Task NotifyAsync(Guid userId, string subject, string body, CancellationToken ct)
+    public Task NotifyAsync(Guid userId, string subject, string body, CancellationToken ct) =>
+        SendAsync(userId, preferred: null, subject, body, ct);
+
+    public Task NotifyViaAsync(
+        Guid userId, NotificationChannel preferred, string subject, string body, CancellationToken ct) =>
+        SendAsync(userId, preferred, subject, body, ct);
+
+    /// <param name="preferred">null ⇒ канал берётся из профиля (<c>NotifyVia</c>).</param>
+    private async Task SendAsync(
+        Guid userId, NotificationChannel? preferred, string subject, string body, CancellationToken ct)
     {
         var recipient = await db.Users.AsNoTracking()
             .Where(u => u.Id == userId && !u.IsDeleted)
@@ -36,8 +52,10 @@ public sealed class UserNotifier(
             // Удалённый/несуществующий адресат — доставлять некому и незачем повторять.
             throw new OutboxPermanentException("Адресат уведомления не найден или удалён.");
 
+        var desired = preferred ?? recipient.NotifyVia;
+
         var (kind, address) =
-            recipient.NotifyVia == NotificationChannel.Telegram && recipient.TelegramChatId is { } chatId
+            desired == NotificationChannel.Telegram && recipient.TelegramChatId is { } chatId
                 ? (NotificationChannel.Telegram, chatId.ToString())
                 : (NotificationChannel.Email, recipient.Email);
 
