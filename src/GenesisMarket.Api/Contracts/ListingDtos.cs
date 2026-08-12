@@ -24,7 +24,12 @@ public record ListingResponse(
     /// <summary>Денормализованный счётчик добавлений в избранное.</summary>
     int FavoritesCount = 0,
     /// <summary>Объявление в избранном у текущего пользователя (false для анонима).</summary>
-    bool IsFavorite = false);
+    bool IsFavorite = false,
+    /// <summary>
+    /// Сколько дней до автоархивации (от coalesce(BumpedAt, PublishedAt) + срок из конфигурации).
+    /// Заполняется только для Active-объявлений; для остальных статусов — null.
+    /// </summary>
+    int? DaysUntilArchive = null);
 
 /// <summary>
 /// Создание объявления. Валидируется FluentValidation (см. CreateListingRequestValidator).

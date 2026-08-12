@@ -22,5 +22,8 @@ internal static class TestBootstrap
         Environment.SetEnvironmentVariable("Jwt__SecurityStampCacheSeconds", "0");
         Environment.SetEnvironmentVariable(
             "Security__IpHashKey", "test-only-genesis-ip-hash-key-0123456789");
+        // Планировщик Quartz в тестах не поднимаем: джоб гигиены прогоняем напрямую
+        // через ICatalogHygieneService. Так тесты детерминированы и без фоновых потоков.
+        Environment.SetEnvironmentVariable("Scheduling__Enabled", "false");
     }
 }

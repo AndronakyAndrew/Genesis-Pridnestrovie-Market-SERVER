@@ -542,6 +542,55 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 ---
 
+### 15. Гигиена каталога (автоархивация, поднятие, продажа, восстановление)
+
+**Что сделано:**
+- **Все переходы жизненного цикла — только доменными методами `Listing`** (`Publish`, `Bump`, `Archive`,
+  `MarkArchiveWarned`, `MarkSold`, `ReactivateFromSold`, `RestoreFromArchive`); контроллер больше не пишет
+  `listing.Status = …` напрямую. Новые метки: `BumpedAt`, `ArchivedAt`, `SoldAt`, `ArchiveWarningAt`.
+- **Автоархивация (Quartz, раз в сутки).** `Active` с `coalesce(BumpedAt, PublishedAt, CreatedAt)` старше
+  `ArchiveAfterDays` (30) → `Archived`. За `WarnBeforeDays` (3) дня до этого автору уходит уведомление
+  через Outbox со ссылкой «продлить» (поднятие). Срок — в конфигурации (`CatalogHygiene`).
+- **`POST /api/listings/{id}/bump`** — обновляет `BumpedAt` (объявление всплывает в каталоге). Бесплатно,
+  не чаще раза в `BumpCooldownDays` (7). Лимит проверяется **под блокировкой строки** (`SELECT … FOR UPDATE`
+  в транзакции) — два параллельных запроса не поднимут дважды; превышение лимита → `429` с `Retry-After`.
+- **Сортировка каталога по умолчанию — `coalesce(BumpedAt, PublishedAt, CreatedAt) DESC`** (токен `bumped`;
+  `sort=new` остаётся отдельной опцией по `CreatedAt`). Частичный индекс по выражению под keyset-пагинацию.
+- **`POST /api/listings/{id}/mark-sold`** — `Active → Sold`. Объявление остаётся по прямой ссылке (там отзывы
+  и история), но уходит из каталога и получает `noindex` на фронте (выводится из `status ≠ Active`). Обратный
+  переход `Sold → Active` (**`/reactivate`**) разрешён в течение `SoldReactivationDays` (7) дней.
+- **`POST /api/listings/{id}/restore`** — `Archived → Active`, если с архивации прошло ≤ `RestoreWithinDays`
+  (90). Если автор получал `reject` за последние `RejectLookbackDays` (30) дней (по `moderation_logs`) —
+  восстановление проходит **премодерацию заново** (`→ PendingReview`).
+- **`daysUntilArchive`** в `ListingResponse` — сколько дней до автоархивации (только для `Active`).
+- **Джоб:** `[DisallowConcurrentExecution]`, **persistent job store в PostgreSQL** (таблицы `qrtz_*` заведены
+  этой же миграцией), **идемпотентность** — повторный прогон на тех же данных ничего не меняет (архивные уже
+  не `Active`, предупреждённые помечены `ArchiveWarningAt`). Логика вынесена в `ICatalogHygieneService`
+  (батчами) — джоб лишь вызывает её; в тестах сервис прогоняется напрямую (планировщик выключен
+  `Scheduling:Enabled=false`).
+
+**Почему именно так:**
+- **`coalesce(BumpedAt, PublishedAt, CreatedAt)` вместо «сырого» `BumpedAt DESC`** — у не поднимавшихся и у
+  одобренных модератором объявлений `BumpedAt = NULL`; откат на `PublishedAt`/`CreatedAt` делает и сортировку,
+  и отсчёт срока корректными без правки чужих веток (одобрение объявления не трогаем).
+- **Блокировка строки на bump, а не оптимистичный чек** — лимит «раз в 7 дней» должен держаться при гонке;
+  `FOR UPDATE` сериализует конкурентные запросы по одному объявлению.
+- **Флаг `ArchiveWarningAt` вместо «посчитать заново каждый прогон»** — гарантирует ровно одно предупреждение
+  и идемпотентность; поднятие/восстановление его сбрасывают, чтобы продлённое объявление позже предупредили снова.
+- **Переходы в доменной модели** — единая точка правды и инвариантов (нельзя поднять неактивное, вернуть
+  непроданное и т.д.); окна/премодерация (нужны запросы к БД) остаются в контроллере, но статус меняет только домен.
+- **Quartz-схема через EF-миграцию** — таблицы планировщика версионируются в репозитории (правило «схема — только
+  миграцией»), а не создаются ручным SQL на проде.
+
+**Ключевые файлы:** `Domain/Entities/Listing.cs` (методы переходов),
+`Infrastructure/Scheduling/{CatalogHygieneOptions,CatalogHygieneService,CatalogHygieneJob,SchedulingServiceCollectionExtensions}.cs`,
+`Api/Controllers/ListingsController.cs` (bump/mark-sold/reactivate/restore), `Api/Listings/CatalogQueryBuilder.cs`
+(сортировка по умолчанию), `Api/Contracts/ListingDtos.cs` (`daysUntilArchive`),
+`Infrastructure/Persistence/Migrations/*_AddCatalogHygiene.cs` (колонки + индекс + `qrtz_*`),
+тесты `tests/GenesisMarket.Tests/CatalogHygieneTests.cs`.
+
+---
+
 ## Известные ограничения
 
 - **Сид `subcategories` — провизорный.** Источник правды `pmr_market_prompt.md` (раздел CATEGORIES)
@@ -549,8 +598,8 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 - **`FirstImageUrl` в карточке каталога — это `ThumbKey` (ключ объекта), а не presigned URL.** Загрузка и
   обработка фото уже есть (фича 10), но проекция каталога пока отдаёт ключ; подписывать ссылки в списковой
   выдаче (батчем) — отдельный шаг, чтобы не генерировать presigned на каждую карточку синхронно.
-- **`IsBumped` в карточке каталога всегда `false`.** Продвижение (bump) — шаг 7; отдельной колонки в схему
-  умышленно не добавляли, чтобы не угадывать будущую модель промо. Когда появится — здесь будет реальное условие.
+- **`IsBumped` в карточке каталога** = объявление хотя бы раз поднимали после публикации (`BumpedAt > PublishedAt`).
+  Продвижение бесплатное (`POST /listings/{id}/bump`, фича 15); платного промо в MVP нет.
 - **SMS — заглушка `DevSmsSender`** (код в лог `[DEV SMS] …`). Подтверждение телефона доступно,
   но на проде не гейтит публикацию (гейт = почта). Реальная отправка — вторая реализация `ISmsSender`
   (SMS-провайдер или Telegram/Viber-бот).
