@@ -1,107 +1,113 @@
-# Genesis Market — Server (Backend)
+# Genesis Market — фронтенд
 
-Каркас серверного приложения маркетплейса объявлений Genesis Market.
-Первый проект экосистемы ООО «Genesis Industries Corp».
-
-Claude Code читает этот файл автоматически. Не удалять.
+## Продукт
+Доска объявлений C2C для Приднестровья. Бэкенд: ASP.NET Core Web API,
+спецификация в `pmr_market_prompt.md`. Сделки офлайн: платежей и доставки нет.
 
 ## Стек
+Next.js 16 (App Router) + React 19 + TypeScript, Tailwind CSS 4.
+Данные — TanStack Query. Формы — React Hook Form + Zod.
+Тесты — Vitest + Testing Library + Playwright.
+Server Components по умолчанию; `"use client"` — только там, где нужны
+хуки/события.
 
-- **Runtime**: ASP.NET Core, .NET 10 LTS
-- **БД**: PostgreSQL 17, EF Core 10 + Npgsql
-- **Хранилище файлов**: MinIO (S3-совместимое)
-- **Логи**: Serilog → структурированный JSON в stdout
-- **Деплой**: Docker Compose (api, postgres, minio, adminer)
+## Незыблемые правила
+- Ни одного хардкоженного цвета, отступа, радиуса, размера шрифта
+  в компонентах. Только токены из `globals.css` / конфига Tailwind.
+- Города, категории и подкатегории приходят с сервера
+  (`GET /api/capabilities`). В клиенте не дублируются никогда.
+- Доступность функций определяется флагами из `/api/capabilities`.
+  Отключённые показывают «Функция будет доступна в следующем обновлении
+  сервера» через общий компонент `<FeatureGate>`, не хардкодом.
+- Токены доступа не хранятся в localStorage. Access token — в памяти,
+  refresh — в httpOnly cookie либо в защищённом хранилище по решению шага F1.
+- Никакой бизнес-логики в компонентах: правила живут в хуках и сервисах.
+- Все тексты интерфейса — русский, вынесены в `src/i18n/ru.ts`,
+  в компонентах не хардкодятся.
+- Валюта: `15 000 руб.` — рубль ПМР, неразрывный пробел в разрядах.
+  Цены с сервера приходят в копейках (bigint), форматируются одной
+  общей функцией.
+- Даты: `28 июня 2026`; до 48 часов — относительные («2 часа назад»).
+  Часовой пояс отображения Europe/Chisinau, с сервера приходит UTC.
+- Mobile-first. Мобильный layout — отдельное решение, не сжатый десктоп.
+- Каждый интерактивный элемент имеет состояния: default, hover,
+  focus-visible, active, disabled, loading.
+- Каждый экран имеет состояния: загрузка (skeleton, не спиннер),
+  пусто, ошибка, нет прав.
+- Никаких `any` в типах. Типы API генерируются из OpenAPI, руками не пишутся.
 
-> В исходном ТЗ финальный образ был указан как `aspnet:9.0-alpine`.
-> Это несовместимо с .NET 10, поэтому используется `10.0-alpine`.
+## Токены
+Источник истины — официальный бренд-гайд Genesis
+(`Genesis Industries Corp (Assets)/Genesis Brand.html`),
+значения зафиксированы в `src/app/globals.css` (`:root`).
 
-## Структура решения
+Тёмная тема: фон `#0A1315`, поверхность `#0F1B1E`,
+вложенные блоки `#16262A`, акцент `#14E8C4` (Genesis Teal — кнопки,
+ссылки, иконки, цены), светлый teal `#5FF0D8` (hover/градиент),
+текст `#FFFFFF`, приглушённый `#9AA9AC`, граница `#223231`.
+Радиусы: карточки 8px, кнопки 6px.
 
-Четыре проекта, зависимости направлены внутрь (Api → Infrastructure → Domain):
+Шрифты: `Manrope` (заголовки/текст, `--font-sans`) +
+`IBM Plex Mono` (моно-подписи, `--font-mono`).
 
+Акцентная роль единая: `--primary` и `--accent` — один и тот же teal;
+структуру двух токенов сохраняем, чтобы развести их позже при нужде.
+
+Логотип — компонент `src/components/Logo.tsx` (знак «G» + вордмарк,
+«Market» акцентом, опциональная моно-подпись).
+
+## Структура
 ```
-SERVER/
-  GenesisMarket.sln
-  Directory.Build.props        — общие свойства (net10.0, nullable, warnings-as-errors)
-  Dockerfile                   — многоступенчатая сборка API
-  docker-compose.yml           — api + postgres + minio + adminer
-  .env.example                 — все переменные окружения (значения пустые)
-
-  src/
-    GenesisMarket.Domain/          — сущности, enum-ы, доменные правила. БЕЗ зависимостей.
-      Common/BaseEntity.cs
-      Entities/                    — User, Listing, ...
-      Enums/Enums.cs
-
-    GenesisMarket.Infrastructure/  — DbContext, миграции, репозитории, внешние сервисы
-      Persistence/                 — AppDbContext, конфигурации, design-time factory
-      Storage/                     — MinIO: клиент, IObjectStorage, health check
-      DependencyInjection.cs       — AddInfrastructure(): БД, MinIO, health checks
-
-    GenesisMarket.Api/             — контроллеры, middleware, DI, конфигурация
-      Program.cs                   — вся сборка приложения
-      Controllers/                 — ApiControllerBase + контроллеры фич
-      Contracts/                   — DTO (record) запросов/ответов
-      Middleware/                  — GlobalExceptionHandler, RequestIdEnricher
-      appsettings*.json
-
-  tests/
-    GenesisMarket.Tests/           — интеграционные тесты (WebApplicationFactory, Testcontainers)
+src/
+  app/            — App Router (страницы, layout, globals.css с токенами)
+  components/     — переиспользуемые компоненты (Logo, FeatureGate и др.)
+  hooks/          — бизнес-правила и доступ к данным
+  lib/api/        — клиент API (единственная точка обращения к backend)
+  i18n/ru.ts      — все тексты интерфейса
 ```
 
-## Соглашения об именовании
+## API / backend
+Backend — ASP.NET Core (проект-сиблинг `SERVER/`). Адрес в
+`NEXT_PUBLIC_API_BASE_URL` (`.env.local`), сейчас туннель ngrok.
 
-- **Проекты / namespace**: `GenesisMarket.<Layer>` (`GenesisMarket.Api`, `.Domain`, ...).
-- **Сущности**: единственное число, PascalCase (`Listing`, `User`, `Order`).
-- **Таблицы БД**: множественное число, snake_case (`listings`, `users`) — задаётся в `IEntityTypeConfiguration`.
-- **DTO**: суффикс по назначению — `...Request` (вход), `...Response` (выход). Тип — `record`.
-- **Контроллеры**: множественное число + `Controller` (`ListingsController`), наследуют `ApiControllerBase`.
-- **Enum в БД**: хранятся строками (`.HasConversion<string>()`), не числами.
-- **Даты**: только `DateTime.UtcNow`, столбцы `timestamptz`.
-- **Ключи**: `Guid` (UUIDv7 через `Guid.CreateVersion7()`).
-- **Конфигурация**: секции `Postgres`, `Minio`, `Cors`, `Serilog`; env-override через `Секция__Ключ`.
+Все запросы — через `src/lib/api` (`import { api } from "@/lib/api"`);
+`fetch` в компонентах не вызывать. Слой:
+- `types.ts` — типы, повторяют C#-DTO из `SERVER/.../Contracts`.
+- `http.ts` — `apiFetch`, `ApiError` (разбирает ProblemDetails),
+  `tokenStore` (access-токен только в памяти).
+- `endpoints.ts` — функции всех ручек, сгруппированы по фичам.
 
-## Три обязательных правила
+Контракт с сервером (проверено на живом API):
+- Свойства JSON — **camelCase**; **enum'ы — PascalCase**
+  (`"Tiraspol"`, `"Fixed"`, `"Active"`). Биндинг enum на входе
+  регистронезависим, но в ответах — PascalCase.
+- Ошибки — `application/problem+json`, `title` на русском → `ApiError.title`.
+- Access + refresh токены приходят в теле `AuthResponse` (сервер cookie
+  не ставит). Access — в память (`tokenStore`), refresh — по решению F1;
+  в localStorage не класть.
+- Для ngrok-free все запросы шлют заголовок `ngrok-skip-browser-warning`.
+- Auth — свой JWT (`Authorization: Bearer`), не cookie ⇒ на сервере
+  origin фронта должен быть в `Cors:AllowedOrigins` (иначе CORS-блок).
 
-1. **Сущности EF никогда не используются как параметр или тип возврата контроллера.**
-   Наружу и внутрь — только DTO из `Contracts/`. Маппинг руками в статическом методе.
+## Правила, добавленные после найденных проблем
+<!-- Каждый найденный баг → строка сюда, чтобы он не повторился -->
+- **Нет `GET /api/capabilities`.** Справочники с сервера получить негде:
+  города/категории — фиксированные enum'ы, эндпоинта подкатегорий тоже нет.
+  Правило «справочники приходят с сервера» пока не выполнимо — города/
+  категории берём из типов, подкатегории (int FK) нужны с сервера, но их
+  ручки нет. Не выдумывать значения; при появлении эндпоинта — подключить.
+- **Цена — `decimal`, не «копейки/bigint».** `ListingResponse.price` —
+  decimal рублей (JSON number); фильтр `priceFrom/priceTo` — целые (`long`).
+  Форматтер цены должен исходить из рублей-decimal, а не копеек.
+- **Типы API написаны руками** (Swagger закрыт вне Development, 401).
+  Правило «генерировать из OpenAPI» отложено до доступа к `/swagger`.
 
-2. **Каждый эндпоинт, принимающий id ресурса, проверяет владельца на сервере.**
-   Явно в экшене: `if (entity.OwnerId != CurrentUserId()) return Forbid();`
-   Не полагаться на скрытие кнопок на фронте.
+<!-- BEGIN:nextjs-agent-rules -->
 
-3. **Любое изменение схемы — только миграцией EF Core, не SQL руками.**
-   `dotnet ef migrations add <Имя> -p src/GenesisMarket.Infrastructure -s src/GenesisMarket.Api`
-   Миграции коммитятся в репозиторий.
+# This is NOT the Next.js you know
 
-## Инфраструктурные решения (уже в каркасе)
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
 
-- **Serilog**: JSON (`RenderedCompactJsonFormatter`) в консоль, обогащение `RequestId`
-  (middleware кладёт `TraceIdentifier` в `LogContext` и в заголовок `X-Request-Id`).
-  Уровень — из конфигурации (`Serilog:MinimumLevel:Default`, env `Serilog__MinimumLevel__Default`).
-- **Health checks**: `/health/live` (liveness, без зависимостей),
-  `/health/ready` (readiness: Postgres + MinIO по тегу `ready`).
-- **Swagger**: только в Development. В Production не регистрируется вовсе.
-- **Обработка ошибок**: `IExceptionHandler` → `ProblemDetails` (RFC 7807).
-  В Production в ответе только `traceId`; стектрейсы, тексты SQL и имена констрейнтов
-  не раскрываются. Детали — в логах по `traceId`.
-- **CORS**: origin-ы из конфигурации (`Cors:AllowedOrigins`, строка через запятую).
-  `AllowAnyOrigin` не используется.
-- **Секреты**: только через переменные окружения / `.env`. `.env` в `.gitignore`.
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
-## Команды
-
-```bash
-# сборка и тесты
-dotnet build
-dotnet test
-
-# миграции
-dotnet ef migrations add <Имя> -p src/GenesisMarket.Infrastructure -s src/GenesisMarket.Api
-dotnet ef database update       -p src/GenesisMarket.Infrastructure -s src/GenesisMarket.Api
-
-# локальный запуск всей инфраструктуры
-cp .env.example .env            # заполнить значения
-docker compose up --build
-```
+<!-- END:nextjs-agent-rules -->
