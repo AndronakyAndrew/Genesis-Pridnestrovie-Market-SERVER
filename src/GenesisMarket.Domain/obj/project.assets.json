@@ -8,19 +8,19 @@
     "net10.0": []
   },
   "packageFolders": {
-    "C:\\Users\\andro\\.nuget\\packages\\": {}
+    "/root/.nuget/packages/": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\andro\\OneDrive\\Desktop\\Local Market Genesis\\SERVER\\Genesis-Pridnestrovie-Market-SERVER\\src\\GenesisMarket.Domain\\GenesisMarket.Domain.csproj",
+      "projectUniqueName": "/src/src/GenesisMarket.Domain/GenesisMarket.Domain.csproj",
       "projectName": "GenesisMarket.Domain",
-      "projectPath": "C:\\Users\\andro\\OneDrive\\Desktop\\Local Market Genesis\\SERVER\\Genesis-Pridnestrovie-Market-SERVER\\src\\GenesisMarket.Domain\\GenesisMarket.Domain.csproj",
-      "packagesPath": "C:\\Users\\andro\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\andro\\OneDrive\\Desktop\\Local Market Genesis\\SERVER\\Genesis-Pridnestrovie-Market-SERVER\\src\\GenesisMarket.Domain\\obj\\",
+      "projectPath": "/src/src/GenesisMarket.Domain/GenesisMarket.Domain.csproj",
+      "packagesPath": "/root/.nuget/packages/",
+      "outputPath": "/src/src/GenesisMarket.Domain/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "C:\\Users\\andro\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "/root/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net10.0"
@@ -74,7 +74,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.400/PortableRuntimeIdentifierGraph.json",
+        "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/10.0.400/PortableRuntimeIdentifierGraph.json",
         "packagesToPrune": {
           "Microsoft.CSharp": "(,4.7.32767]",
           "Microsoft.VisualBasic": "(,10.4.32767]",

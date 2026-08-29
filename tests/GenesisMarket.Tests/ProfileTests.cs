@@ -126,6 +126,34 @@ public class ProfileTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
         Assert.False(me.GetProperty("phoneVerified").GetBoolean()); // сброшено сменой номера
     }
 
+    [Fact]
+    public async Task Avatar_endpoints_return_a_public_api_url_not_an_internal_storage_key()
+    {
+        var email = Unique("avatar");
+        var userId = await factory.SeedUserAsync(email, Password);
+        var client = await AuthedClient(email);
+
+        using var form = new MultipartFormDataContent();
+        form.Add(new ByteArrayContent([0xFF, 0xD8, 0xFF]), "file", "avatar.jpg");
+        var upload = await client.PostAsync("/api/me/avatar", form);
+        Assert.Equal(HttpStatusCode.OK, upload.StatusCode);
+
+        var uploadedUrl = (await upload.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("avatarUrl").GetString();
+        Assert.Contains($"/api/users/{userId}/avatar?v=", uploadedUrl);
+
+        var me = await client.GetFromJsonAsync<JsonElement>("/api/me");
+        Assert.Contains($"/api/users/{userId}/avatar?v=", me.GetProperty("avatarUrl").GetString());
+
+        var publicProfile = await factory.CreateClient()
+            .GetFromJsonAsync<JsonElement>($"/api/users/{userId}/public");
+        Assert.Contains($"/api/users/{userId}/avatar?v=", publicProfile.GetProperty("avatarUrl").GetString());
+
+        var avatar = await factory.CreateClient().GetAsync($"/api/users/{userId}/avatar");
+        Assert.Equal(HttpStatusCode.OK, avatar.StatusCode);
+        Assert.Equal("image/jpeg", avatar.Content.Headers.ContentType?.MediaType);
+    }
+
     // ---- helpers ----
 
     private static string Unique(string prefix) => $"{prefix}-{Guid.NewGuid():N}@test.io";

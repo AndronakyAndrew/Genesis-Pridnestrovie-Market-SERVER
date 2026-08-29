@@ -15,7 +15,8 @@ public enum City
     Dubossary,
     Slobodzea,
     Grigoriopol,
-    Dnestrovsk
+    Dnestrovsk,
+    Kamenka
 }
 
 /// <summary>Категории каталога. Native enum-тип <c>category</c>.</summary>

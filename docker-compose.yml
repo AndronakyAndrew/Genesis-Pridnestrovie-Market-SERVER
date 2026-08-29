@@ -68,6 +68,12 @@ services:
       Network__KnownNetworks: ${TRUSTED_PROXY_NETWORKS:-172.16.0.0/12}
       Network__KnownProxies: ${TRUSTED_PROXY_IPS}
       Network__ForwardLimit: ${TRUSTED_PROXY_FORWARD_LIMIT:-1}
+      # Защита от ботов: все публичные запросы ограничиваются по реальному IP,
+      # полученному от доверенного прокси/ngrok. Меняются без пересборки образа.
+      RateLimit__GlobalPerMinute: ${RATE_LIMIT_GLOBAL_PER_MINUTE:-120}
+      RateLimit__SearchPerMinute: ${RATE_LIMIT_SEARCH_PER_MINUTE:-60}
+      RateLimit__SensitiveAnonPerHour: ${RATE_LIMIT_SENSITIVE_ANON_PER_HOUR:-3}
+      RateLimit__CreateListingPerHour: ${RATE_LIMIT_CREATE_LISTING_PER_HOUR:-10}
       # OpenTelemetry: адрес OTLP-коллектора. Пусто -> экспорт выключен (инструментация вхолостую).
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
     ports:

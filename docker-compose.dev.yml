@@ -1,0 +1,128 @@
+# Изолированное development-окружение Genesis Market.
+# Запуск: docker compose -f docker-compose.dev.yml up --build
+
+name: genesis-market-dev
+
+services:
+  api:
+    container_name: genesis-api-dev
+    image: mcr.microsoft.com/dotnet/sdk:10.0-alpine
+    restart: unless-stopped
+    working_dir: /src
+    command: dotnet watch run --project src/GenesisMarket.Api/GenesisMarket.Api.csproj --no-launch-profile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      ENV: development
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      Serilog__MinimumLevel__Default: ${LOG_LEVEL:-Information}
+      Postgres__Host: postgres
+      Postgres__Port: "5432"
+      Postgres__Database: ${POSTGRES_DB:-genesis_market_dev}
+      Postgres__User: ${POSTGRES_USER:-genesis_dev}
+      Postgres__Password: ${POSTGRES_PASSWORD:-genesis_dev_password}
+      Minio__Endpoint: minio:9000
+      Minio__AccessKey: ${MINIO_ROOT_USER:-genesis_dev}
+      Minio__SecretKey: ${MINIO_ROOT_PASSWORD:-genesis_dev_password}
+      Minio__Bucket: ${MINIO_BUCKET:-genesis-dev}
+      Minio__UseSsl: ${MINIO_USE_SSL:-false}
+      Jwt__Key: ${JWT_SECRET:-development-only-change-me-development-only-change-me}
+      Jwt__Issuer: ${JWT_ISSUER:-genesis-market-dev}
+      Jwt__Audience: ${JWT_AUDIENCE:-genesis-market-dev}
+      Security__IpHashKey: ${IPHASH_KEY:-development-only-change-me}
+      Smtp__Host: ${SMTP_HOST:-}
+      Smtp__Port: ${SMTP_PORT:-587}
+      Smtp__User: ${SMTP_USER:-}
+      Smtp__Password: ${SMTP_PASSWORD:-}
+      Smtp__From: ${SMTP_FROM:-no-reply@genesis-hq.com}
+      Smtp__FromName: ${SMTP_FROM_NAME:-Genesis Market Dev}
+      Smtp__UseSsl: ${SMTP_USE_SSL:-true}
+      Telegram__BotToken: ${TELEGRAM_BOT_TOKEN:-}
+      Telegram__BroadcastChatId: ${TELEGRAM_BROADCAST_CHAT_ID:-}
+      Telegram__WebBaseUrl: ${TELEGRAM_WEB_BASE_URL:-http://localhost:3000}
+      Seo__WebBaseUrl: ${SEO_WEB_BASE_URL:-http://localhost:3000}
+      Seo__SiteName: ${SEO_SITE_NAME:-Genesis Market Dev}
+      Publishing__RequiredVerification: ${PUBLISHING_REQUIRED_VERIFICATION:-Email}
+      Cors__AllowedOrigins: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      Network__KnownNetworks: ${TRUSTED_PROXY_NETWORKS:-172.16.0.0/12}
+      Network__KnownProxies: ${TRUSTED_PROXY_IPS:-}
+      Network__ForwardLimit: ${TRUSTED_PROXY_FORWARD_LIMIT:-1}
+      RateLimit__GlobalPerMinute: ${RATE_LIMIT_GLOBAL_PER_MINUTE:-120}
+      RateLimit__SearchPerMinute: ${RATE_LIMIT_SEARCH_PER_MINUTE:-60}
+      RateLimit__SensitiveAnonPerHour: ${RATE_LIMIT_SENSITIVE_ANON_PER_HOUR:-3}
+      RateLimit__CreateListingPerHour: ${RATE_LIMIT_CREATE_LISTING_PER_HOUR:-10}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    volumes:
+      - .:/src
+      - genesis-dev-nuget:/root/.nuget/packages
+    ports:
+      - "8091:8080"
+    networks:
+      - genesis-dev
+
+  postgres:
+    container_name: genesis-postgres-dev
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-genesis_market_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-genesis_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-genesis_dev_password}
+    volumes:
+      - genesis-dev-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5435:5432"
+    networks:
+      - genesis-dev
+
+  minio:
+    container_name: genesis-minio-dev
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-genesis_dev}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-genesis_dev_password}
+    volumes:
+      - genesis-dev-minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "9002:9000"
+      - "9003:9001"
+    networks:
+      - genesis-dev
+
+  adminer:
+    container_name: genesis-adminer-dev
+    image: adminer:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8082:8080"
+    networks:
+      - genesis-dev
+
+volumes:
+  genesis-dev-postgres:
+  genesis-dev-minio:
+  genesis-dev-nuget:
+
+networks:
+  genesis-dev:
+    name: genesis-dev
+    driver: bridge

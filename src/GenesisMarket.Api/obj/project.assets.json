@@ -4953,19 +4953,19 @@
     ]
   },
   "packageFolders": {
-    "C:\\Users\\andro\\.nuget\\packages\\": {}
+    "/root/.nuget/packages/": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\andro\\OneDrive\\Desktop\\Local Market Genesis\\SERVER\\Genesis-Pridnestrovie-Market-SERVER\\src\\GenesisMarket.Api\\GenesisMarket.Api.csproj",
+      "projectUniqueName": "/src/src/GenesisMarket.Api/GenesisMarket.Api.csproj",
       "projectName": "GenesisMarket.Api",
-      "projectPath": "C:\\Users\\andro\\OneDrive\\Desktop\\Local Market Genesis\\SERVER\\Genesis-Pridnestrovie-Market-SERVER\\src\\GenesisMarket.Api\\GenesisMarket.Api.csproj",
-      "packagesPath": "C:\\Users\\andro\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\andro\\OneDrive\\Desktop\\Local Market Genesis\\SERVER\\Genesis-Pridnestrovie-Market-SERVER\\src\\GenesisMarket.Api\\obj\\",
+      "projectPath": "/src/src/GenesisMarket.Api/GenesisMarket.Api.csproj",
+      "packagesPath": "/root/.nuget/packages/",
+      "outputPath": "/src/src/GenesisMarket.Api/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "C:\\Users\\andro\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "/root/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net10.0"
@@ -4978,11 +4978,11 @@
           "framework": "net10.0",
           "targetAlias": "net10.0",
           "projectReferences": {
-            "C:\\Users\\andro\\OneDrive\\Desktop\\Local Market Genesis\\SERVER\\Genesis-Pridnestrovie-Market-SERVER\\src\\GenesisMarket.Domain\\GenesisMarket.Domain.csproj": {
-              "projectPath": "C:\\Users\\andro\\OneDrive\\Desktop\\Local Market Genesis\\SERVER\\Genesis-Pridnestrovie-Market-SERVER\\src\\GenesisMarket.Domain\\GenesisMarket.Domain.csproj"
+            "/src/src/GenesisMarket.Domain/GenesisMarket.Domain.csproj": {
+              "projectPath": "/src/src/GenesisMarket.Domain/GenesisMarket.Domain.csproj"
             },
-            "C:\\Users\\andro\\OneDrive\\Desktop\\Local Market Genesis\\SERVER\\Genesis-Pridnestrovie-Market-SERVER\\src\\GenesisMarket.Infrastructure\\GenesisMarket.Infrastructure.csproj": {
-              "projectPath": "C:\\Users\\andro\\OneDrive\\Desktop\\Local Market Genesis\\SERVER\\Genesis-Pridnestrovie-Market-SERVER\\src\\GenesisMarket.Infrastructure\\GenesisMarket.Infrastructure.csproj"
+            "/src/src/GenesisMarket.Infrastructure/GenesisMarket.Infrastructure.csproj": {
+              "projectPath": "/src/src/GenesisMarket.Infrastructure/GenesisMarket.Infrastructure.csproj"
             }
           }
         }
@@ -5091,7 +5091,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.400/PortableRuntimeIdentifierGraph.json",
+        "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/10.0.400/PortableRuntimeIdentifierGraph.json",
         "packagesToPrune": {
           "Microsoft.AspNetCore": "(,10.0.32767]",
           "Microsoft.AspNetCore.Antiforgery": "(,10.0.32767]",

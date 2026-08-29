@@ -1,6 +1,7 @@
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
+using GenesisMarket.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,7 @@ namespace GenesisMarket.Api.Controllers;
 /// регистрации, ни Role, ни IsBanned наружу не отдаём.
 /// </summary>
 [Route("api/users")]
-public class UsersController(AppDbContext db) : ApiControllerBase
+public class UsersController(AppDbContext db, IObjectStorage storage) : ApiControllerBase
 {
     [AllowAnonymous]
     [HttpGet("{id:guid}/public")]
@@ -35,7 +36,7 @@ public class UsersController(AppDbContext db) : ApiControllerBase
         return Ok(new PublicProfileResponse(
             user.Profile.DisplayName,
             user.Profile.City,
-            user.Profile.AvatarUrl,
+            user.Profile.AvatarUrl is null ? null : BuildAvatarUrl(user.Id, user.Profile.UpdatedAt),
             registeredAt,
             activeListings,
             // Денормализованный агрегат отзывов (поддерживается триггером reviews_rating_sync).
@@ -43,4 +44,43 @@ public class UsersController(AppDbContext db) : ApiControllerBase
             ReviewsCount: user.ReviewsCount,
             user.PhoneVerified));
     }
+
+    /// <summary>
+    /// Публичная выдача аватара через API. MinIO находится в приватной Docker-сети,
+    /// поэтому его внутренний адрес нельзя отдавать браузеру напрямую.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("{id:guid}/avatar")]
+    public async Task<IActionResult> GetAvatar(Guid id, CancellationToken ct)
+    {
+        var avatar = await db.Profiles.AsNoTracking()
+            .Where(p => p.UserId == id && !p.User!.IsDeleted && p.AvatarUrl != null)
+            .Select(p => new { Key = p.AvatarUrl!, p.UpdatedAt })
+            .FirstOrDefaultAsync(ct);
+
+        if (avatar is null)
+            return Problem(title: "Аватар не найден", statusCode: StatusCodes.Status404NotFound);
+
+        try
+        {
+            var stream = await storage.GetAsync(avatar.Key, ct);
+            Response.Headers.CacheControl = "public, max-age=3600";
+            return File(stream, ContentTypeFor(avatar.Key), enableRangeProcessing: true);
+        }
+        catch (FileNotFoundException)
+        {
+            return Problem(title: "Аватар не найден", statusCode: StatusCodes.Status404NotFound);
+        }
+    }
+
+    private string BuildAvatarUrl(Guid userId, DateTimeOffset? updatedAt) =>
+        $"{Request.Scheme}://{Request.Host}/api/users/{userId}/avatar?v={updatedAt?.UtcTicks ?? 0}";
+
+    private static string ContentTypeFor(string key) => Path.GetExtension(key).ToLowerInvariant() switch
+    {
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".png" => "image/png",
+        ".webp" => "image/webp",
+        _ => "application/octet-stream"
+    };
 }

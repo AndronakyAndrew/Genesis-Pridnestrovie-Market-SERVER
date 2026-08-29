@@ -98,12 +98,12 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
 
         var author = await db.Profiles.AsNoTracking()
             .Where(p => p.UserId == userId)
-            .Select(p => new { p.DisplayName, p.AvatarUrl })
+            .Select(p => new { p.DisplayName, p.AvatarUrl, p.UpdatedAt })
             .FirstAsync(ct);
 
         var response = new ReviewResponse(
             review.Id, review.ListingId, review.AuthorId,
-            author.DisplayName, author.AvatarUrl,
+            author.DisplayName, BuildAvatarUrl(userId, author.AvatarUrl, author.UpdatedAt),
             review.Rating, review.Text, review.CreatedAt, review.UpdatedAt,
             IsEditable: true);
 
@@ -143,7 +143,7 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
             .Select(r => new ReviewRow(
                 r.Id, r.ListingId, r.AuthorId,
                 r.Author!.Profile!.DisplayName,
-                r.Author.Profile.AvatarUrl,
+                r.Author.Profile.AvatarUrl, r.Author.Profile.UpdatedAt,
                 r.Rating, r.Text, r.CreatedAt, r.UpdatedAt))
             .ToListAsync(ct);
 
@@ -151,10 +151,15 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
         var page = rows.Take(take).ToList();
         var now = DateTimeOffset.UtcNow;
 
-        var items = page.Select(r => new ReviewResponse(
-            r.Id, r.ListingId, r.AuthorId, r.AuthorName, r.AuthorAvatarUrl,
-            r.Rating, r.Text, r.CreatedAt, r.UpdatedAt,
-            IsEditable: viewer == r.AuthorId && now - r.CreatedAt <= EditWindow)).ToList();
+        var items = new List<ReviewResponse>(page.Count);
+        foreach (var row in page)
+        {
+            items.Add(new ReviewResponse(
+                row.Id, row.ListingId, row.AuthorId, row.AuthorName,
+                BuildAvatarUrl(row.AuthorId, row.AuthorAvatarUrl, row.AuthorAvatarUpdatedAt),
+                row.Rating, row.Text, row.CreatedAt, row.UpdatedAt,
+                IsEditable: viewer == row.AuthorId && now - row.CreatedAt <= EditWindow));
+        }
 
         var nextCursor = hasMore
             ? CatalogCursor.Encode(CursorToken,
@@ -200,12 +205,12 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
 
         var author = await db.Profiles.AsNoTracking()
             .Where(p => p.UserId == userId)
-            .Select(p => new { p.DisplayName, p.AvatarUrl })
+            .Select(p => new { p.DisplayName, p.AvatarUrl, p.UpdatedAt })
             .FirstAsync(ct);
 
         return Ok(new ReviewResponse(
             review.Id, review.ListingId, review.AuthorId,
-            author.DisplayName, author.AvatarUrl,
+            author.DisplayName, BuildAvatarUrl(userId, author.AvatarUrl, author.UpdatedAt),
             review.Rating, review.Text, review.CreatedAt, review.UpdatedAt,
             IsEditable: true));
     }
@@ -244,8 +249,14 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
         Guid AuthorId,
         string AuthorName,
         string? AuthorAvatarUrl,
+        DateTimeOffset? AuthorAvatarUpdatedAt,
         int Rating,
         string Text,
         DateTimeOffset CreatedAt,
         DateTimeOffset? UpdatedAt);
+
+    private string? BuildAvatarUrl(Guid userId, string? avatarKey, DateTimeOffset? updatedAt) =>
+        avatarKey is null
+            ? null
+            : $"{Request.Scheme}://{Request.Host}/api/users/{userId}/avatar?v={updatedAt?.UtcTicks ?? 0}";
 }

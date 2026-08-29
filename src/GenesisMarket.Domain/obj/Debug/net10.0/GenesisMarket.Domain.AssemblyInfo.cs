@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("GenesisMarket.Domain")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+dc67681ec0ea070565865814406defae54ddc61a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f0321520c4d6007ebf8b4132ac11b2e34811236a")]
 [assembly: System.Reflection.AssemblyProductAttribute("GenesisMarket.Domain")]
 [assembly: System.Reflection.AssemblyTitleAttribute("GenesisMarket.Domain")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

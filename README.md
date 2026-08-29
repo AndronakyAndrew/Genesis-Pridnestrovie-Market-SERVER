@@ -850,7 +850,7 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 **Что сделано:**
 - **Единая политика rate-limit на встроенном `RateLimiter`** (`Api/Security/RateLimitingSetup.cs`): глобально
-  300/мин на IP; политики `sensitive-anon` (register 3/час на IP), `search` (60/мин на IP), `create-listing`
+  120/мин на IP (переопределяется `RATE_LIMIT_GLOBAL_PER_MINUTE`); политики `sensitive-anon` (register 3/час на IP), `search` (60/мин на IP), `create-listing`
   (10/час на пользователя), `contact` (аноним 10/час на IP, авторизованный 30/час), `report` (аноним 5/час на IP,
   авторизованный 20/час). Превышение — 429 с `Retry-After` и телом ProblemDetails, факт пишется в журнал
   безопасности. Применение — атрибутами `[EnableRateLimiting]` на экшенах. Health-эндпоинты исключены.

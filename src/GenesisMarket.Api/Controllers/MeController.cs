@@ -32,7 +32,7 @@ public class MeController(
         var user = await LoadAsync(ct);
         return user is null
             ? Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound)
-            : Ok(MapMe(user));
+            : Ok(await MapMeAsync(user, ct));
     }
 
     [HttpPatch]
@@ -71,7 +71,7 @@ public class MeController(
         user.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
 
-        return Ok(MapMe(user));
+        return Ok(await MapMeAsync(user, ct));
     }
 
     /// <summary>
@@ -113,7 +113,7 @@ public class MeController(
         profile.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
 
-        return Ok(new AvatarResponse(key));
+        return Ok(new AvatarResponse(BuildAvatarUrl(userId, profile.UpdatedAt)));
     }
 
     [HttpDelete]
@@ -170,14 +170,17 @@ public class MeController(
         return db.Users.Include(u => u.Profile).FirstOrDefaultAsync(u => u.Id == userId, ct);
     }
 
-    private static MeResponse MapMe(User u) => new(
+    private async Task<MeResponse> MapMeAsync(User u, CancellationToken ct) => new(
         u.Id, u.Email, u.Role, u.PhoneE164, u.PhoneVerified, u.EmailVerified,
         u.IsBanned, u.BannedUntil, u.IsDeleted,
         u.Profile?.DisplayName ?? "", u.Profile?.City ?? default,
-        u.Profile?.AvatarUrl, u.Profile?.TelegramUsername,
+        u.Profile?.AvatarUrl is null ? null : BuildAvatarUrl(u.Id, u.Profile.UpdatedAt), u.Profile?.TelegramUsername,
         u.Profile?.ViberEnabled ?? false, u.Profile?.WhatsappEnabled ?? false,
         u.Profile?.ShowPhoneInListing ?? true,
         u.CreatedAt, u.UpdatedAt);
+
+    private string BuildAvatarUrl(Guid userId, DateTimeOffset? updatedAt) =>
+        $"{Request.Scheme}://{Request.Host}/api/users/{userId}/avatar?v={updatedAt?.UtcTicks ?? 0}";
 
     private static (string Ext, string ContentType)? DetectImage(byte[] b)
     {

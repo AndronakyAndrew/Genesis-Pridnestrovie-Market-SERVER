@@ -12,7 +12,8 @@ namespace GenesisMarket.Api.Controllers;
 
 /// <summary>
 /// Изображения объявления: загрузка (multipart), удаление, изменение порядка, список.
-/// Наружу — только DTO с presigned-ссылками. Проверки (владелец, лимиты, формат)
+/// В DTO — публичные URL API (<c>/api/images/...</c>), не presigned-ссылки на MinIO:
+/// бакет в приватной сети, браузер его не достаёт. Проверки (владелец, лимиты, формат)
 /// выполняются на сервере до любой обработки файла.
 /// </summary>
 [Route("api/listings/{listingId:guid}/images")]
@@ -27,8 +28,6 @@ public class ListingImagesController(
     private const long MaxImageBytes = 10L * 1024 * 1024;
     // Тот же лимит на уровне запроса/multipart + небольшой запас на обёртку формы.
     private const long MaxRequestBytes = MaxImageBytes + 1024 * 1024;
-
-    private static readonly TimeSpan PresignTtl = TimeSpan.FromHours(1);
 
     /// <summary>Список изображений объявления по порядку. Публично (для карточки объявления).</summary>
     [AllowAnonymous]
@@ -45,7 +44,7 @@ public class ListingImagesController(
             .OrderBy(i => i.SortOrder)
             .ToListAsync(ct);
 
-        return Ok(await MapAllAsync(images, ct));
+        return Ok(images.ConvertAll(Map));
     }
 
     /// <summary>
@@ -125,8 +124,7 @@ public class ListingImagesController(
         db.ListingImages.Add(image);
         await db.SaveChangesAsync(ct);
 
-        var dto = await MapAsync(image, ct);
-        return CreatedAtAction(nameof(GetImages), new { listingId }, dto);
+        return CreatedAtAction(nameof(GetImages), new { listingId }, Map(image));
     }
 
     /// <summary>Удаление изображения. Объекты хранилища удаляются асинхронно через outbox.</summary>
@@ -195,23 +193,14 @@ public class ListingImagesController(
         await db.SaveChangesAsync(ct);
 
         var ordered = images.OrderBy(i => i.SortOrder).ToList();
-        return Ok(await MapAllAsync(ordered, ct));
+        return Ok(ordered.ConvertAll(Map));
     }
 
     // ---- helpers ----
 
-    private async Task<ListingImageResponse> MapAsync(ListingImage i, CancellationToken ct)
-    {
-        var url = await storage.GetPresignedUrlAsync(i.ObjectKey, PresignTtl, ct);
-        var thumb = await storage.GetPresignedUrlAsync(i.ThumbKey, PresignTtl, ct);
-        return new ListingImageResponse(i.Id, i.SortOrder, i.Width, i.Height, url, thumb);
-    }
+    private ListingImageResponse Map(ListingImage i) =>
+        new(i.Id, i.SortOrder, i.Width, i.Height, BuildImageUrl(i.ObjectKey), BuildImageUrl(i.ThumbKey));
 
-    private async Task<List<ListingImageResponse>> MapAllAsync(List<ListingImage> images, CancellationToken ct)
-    {
-        var result = new List<ListingImageResponse>(images.Count);
-        foreach (var i in images)
-            result.Add(await MapAsync(i, ct));
-        return result;
-    }
+    private string BuildImageUrl(string objectKey) =>
+        $"{Request.Scheme}://{Request.Host}/api/images/{objectKey}";
 }

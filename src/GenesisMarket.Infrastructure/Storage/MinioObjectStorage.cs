@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Minio;
 using Minio.DataModel.Args;
+using Minio.Exceptions;
 
 namespace GenesisMarket.Infrastructure.Storage;
 
@@ -35,7 +36,15 @@ public class MinioObjectStorage(IMinioClient client, IOptions<MinioOptions> opti
             .WithObject(objectName)
             .WithCallbackStream(s => s.CopyTo(ms));
 
-        await client.GetObjectAsync(args, ct);
+        try
+        {
+            await client.GetObjectAsync(args, ct);
+        }
+        catch (ObjectNotFoundException ex)
+        {
+            throw new FileNotFoundException(objectName, ex);
+        }
+
         ms.Position = 0;
         return ms;
     }

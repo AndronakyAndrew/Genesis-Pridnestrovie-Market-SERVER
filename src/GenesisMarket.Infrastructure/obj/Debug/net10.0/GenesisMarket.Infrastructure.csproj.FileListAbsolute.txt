@@ -1,64 +1,128 @@
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\Microsoft.Build.Locator.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.exe
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.exe.config
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\Microsoft.IO.Redist.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\Newtonsoft.Json.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\System.Buffers.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\System.Collections.Immutable.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\System.CommandLine.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\System.Memory.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\System.Numerics.Vectors.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\System.Runtime.CompilerServices.Unsafe.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\System.Threading.Tasks.Extensions.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\cs\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\de\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\es\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\fr\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\it\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\ja\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\ko\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\pl\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\pt-BR\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\ru\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\tr\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\zh-Hans\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-net472\zh-Hant\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\Microsoft.Build.Locator.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.deps.json
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.dll.config
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.runtimeconfig.json
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\Newtonsoft.Json.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\System.Collections.Immutable.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\System.CommandLine.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\cs\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\de\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\es\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\fr\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\it\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\ja\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\ko\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\pl\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\pt-BR\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\ru\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\tr\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\zh-Hans\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\BuildHost-netcore\zh-Hant\System.CommandLine.resources.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\GenesisMarket.Infrastructure.deps.json
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\GenesisMarket.Infrastructure.runtimeconfig.json
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\GenesisMarket.Infrastructure.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\GenesisMarket.Infrastructure.pdb
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\GenesisMarket.Domain.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\bin\Debug\net10.0\GenesisMarket.Domain.pdb
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\GenesisMarket.Infrastructure.csproj.AssemblyReference.cache
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\GenesisMarket.Infrastructure.GeneratedMSBuildEditorConfig.editorconfig
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\GenesisMarket.Infrastructure.AssemblyInfoInputs.cache
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\GenesisMarket.Infrastructure.AssemblyInfo.cs
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\GenesisMarket.Infrastructure.csproj.CoreCompileInputs.cache
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\GenesisMarket.Infrastructure.sourcelink.json
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\GenesisM.CAE0F818.Up2Date
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\GenesisMarket.Infrastructure.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\refint\GenesisMarket.Infrastructure.dll
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\GenesisMarket.Infrastructure.pdb
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\GenesisMarket.Infrastructure.genruntimeconfig.cache
-C:\Users\andro\OneDrive\Desktop\Local Market Genesis\SERVER\Genesis-Pridnestrovie-Market-SERVER\src\GenesisMarket.Infrastructure\obj\Debug\net10.0\ref\GenesisMarket.Infrastructure.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/Microsoft.Build.Locator.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.exe
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.exe.config
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/Microsoft.IO.Redist.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/Newtonsoft.Json.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Buffers.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Collections.Immutable.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.CommandLine.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Memory.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Numerics.Vectors.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Runtime.CompilerServices.Unsafe.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Threading.Tasks.Extensions.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/cs/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/de/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/es/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/fr/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/it/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/ja/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/ko/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/pl/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/pt-BR/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/ru/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/tr/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/zh-Hans/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/zh-Hant/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Microsoft.Build.Locator.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.deps.json
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.dll.config
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.runtimeconfig.json
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Newtonsoft.Json.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/System.Collections.Immutable.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/System.CommandLine.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/cs/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/de/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/es/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/fr/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/it/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/ja/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/ko/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/pl/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/pt-BR/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/ru/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/tr/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/zh-Hans/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/zh-Hant/System.CommandLine.resources.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Infrastructure.deps.json
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Infrastructure.runtimeconfig.json
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Infrastructure.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Infrastructure.pdb
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Domain.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Domain.pdb
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.csproj.AssemblyReference.cache
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.GeneratedMSBuildEditorConfig.editorconfig
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.AssemblyInfoInputs.cache
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.AssemblyInfo.cs
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.csproj.CoreCompileInputs.cache
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.sourcelink.json
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisM.CAE0F818.Up2Date
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/refint/GenesisMarket.Infrastructure.dll
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.pdb
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.genruntimeconfig.cache
+C:/Users/andro/OneDrive/Desktop/Local Market Genesis/SERVER/Genesis-Pridnestrovie-Market-SERVER/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/ref/GenesisMarket.Infrastructure.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/Microsoft.Build.Locator.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.exe
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.exe.config
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/Microsoft.IO.Redist.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/Newtonsoft.Json.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Buffers.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Collections.Immutable.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.CommandLine.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Memory.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Numerics.Vectors.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Runtime.CompilerServices.Unsafe.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/System.Threading.Tasks.Extensions.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/cs/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/de/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/es/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/fr/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/it/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/ja/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/ko/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/pl/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/pt-BR/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/ru/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/tr/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/zh-Hans/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-net472/zh-Hant/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Microsoft.Build.Locator.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.deps.json
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.dll.config
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.runtimeconfig.json
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/Newtonsoft.Json.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/System.Collections.Immutable.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/System.CommandLine.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/cs/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/de/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/es/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/fr/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/it/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/ja/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/ko/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/pl/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/pt-BR/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/ru/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/tr/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/zh-Hans/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/BuildHost-netcore/zh-Hant/System.CommandLine.resources.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Infrastructure.deps.json
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Infrastructure.runtimeconfig.json
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Infrastructure.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Infrastructure.pdb
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Domain.dll
+/src/src/GenesisMarket.Infrastructure/bin/Debug/net10.0/GenesisMarket.Domain.pdb
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.csproj.AssemblyReference.cache
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.GeneratedMSBuildEditorConfig.editorconfig
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.AssemblyInfoInputs.cache
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.AssemblyInfo.cs
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.csproj.CoreCompileInputs.cache
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.sourcelink.json
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisM.CAE0F818.Up2Date
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.dll
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/refint/GenesisMarket.Infrastructure.dll
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.pdb
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/GenesisMarket.Infrastructure.genruntimeconfig.cache
+/src/src/GenesisMarket.Infrastructure/obj/Debug/net10.0/ref/GenesisMarket.Infrastructure.dll

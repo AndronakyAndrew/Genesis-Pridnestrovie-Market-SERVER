@@ -24,7 +24,7 @@ dotnet test             # весь набор зелёный
 - [ ] Логин: единый ответ на неверный email/пароль (анти-перечисление), проверка dummy-хеша по времени. — `AuthController.Login`
 - [ ] Refresh-токены: ротация, обнаружение повторного использования → отзыв всей цепочки. — `Auth/RefreshTokenService.cs`, `AuthTests`
 - [ ] Смена пароля/бан: немедленная инвалидация выданных access-токенов через SecurityStamp. — `Auth/SecurityStampValidator.cs`
-- [ ] Rate-limit входа: 5/15 мин на (IP, email) в экшене; register 3/час, глобально 300/мин. — `Auth/AuthRateLimiter.cs`, `Security/RateLimitingSetup.cs`
+- [ ] Rate-limit входа: 5/15 мин на (IP, email) в экшене; register 3/час, глобально 120/мин (настраивается через env). — `Auth/AuthRateLimiter.cs`, `Security/RateLimitingSetup.cs`
 - [ ] Модель запроса логина не логируется целиком; секреты маскируются. — `Security/MaskingDestructuringPolicy.cs`, `SecurityMaskingTests`
 
 ## Проход 3 — Авторизация и контроль доступа

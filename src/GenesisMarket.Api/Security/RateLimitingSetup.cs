@@ -37,7 +37,7 @@ public sealed class RateLimitOptions
     public const string Section = "RateLimit";
 
     /// <summary>Глобальный потолок на IP, запросов в минуту.</summary>
-    public int GlobalPerMinute { get; set; } = 300;
+    public int GlobalPerMinute { get; set; } = 120;
 
     /// <summary>Поиск по каталогу, запросов в минуту на IP.</summary>
     public int SearchPerMinute { get; set; } = 60;
