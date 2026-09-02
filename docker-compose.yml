@@ -1,8 +1,20 @@
 # ============================================================
-#  Genesis Market — локальная / VPS-инфраструктура.
+#  Genesis Market — локальная / VPS-инфраструктура (ПРОД).
 #  Все секреты и ключи берутся из .env (см. .env.example).
 #  В самом файле — ни одного значения секрета.
+#
+#  Для разработки используй docker-compose.dev.yml / `make dev-up` —
+#  ОТДЕЛЬНЫЙ, полностью изолированный стек (см. README-dev.md).
 # ============================================================
+
+# Guard от случайного «голого» `docker compose up` в этой папке: без -f
+# Compose по умолчанию берёт именно этот (прод) файл, а команду «up --build»
+# слишком легко набрать не думая. I_CONFIRM_PROD_LAUNCH никогда не должен
+# лежать в .env (файл подхватывается автоматически) — задавай его только
+# прямо в команде, каждый раз заново:
+#   I_CONFIRM_PROD_LAUNCH=yes docker compose up -d --build      (bash)
+#   $env:I_CONFIRM_PROD_LAUNCH='yes'; docker compose up -d --build   (PowerShell)
+x-guard: "${I_CONFIRM_PROD_LAUNCH:?ЭТО ПРОД. Для dev используй docker compose -f docker-compose.dev.yml up --build (или make dev-up). Если осознанно поднимаешь прод — добавь I_CONFIRM_PROD_LAUNCH=yes перед командой, каждый раз заново, не в .env.}"
 
 services:
   api:
