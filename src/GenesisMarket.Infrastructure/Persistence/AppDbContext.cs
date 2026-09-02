@@ -26,6 +26,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Report> Reports => Set<Report>();
     public DbSet<ModerationLog> ModerationLogs => Set<ModerationLog>();
     public DbSet<SavedSearch> SavedSearches => Set<SavedSearch>();
+    public DbSet<FeedbackMessage> FeedbackMessages => Set<FeedbackMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

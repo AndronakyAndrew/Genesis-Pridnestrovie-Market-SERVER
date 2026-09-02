@@ -1,4 +1,5 @@
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Feedback;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Auth;
@@ -88,6 +89,12 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             services.AddSingleton<CapturingTelegramClient>();
             services.AddSingleton<GenesisMarket.Api.Outbox.Telegram.ITelegramClient>(
                 sp => sp.GetRequiredService<CapturingTelegramClient>());
+
+            // Resend-клиент подменяем перехватывающим — проверяем письма/устойчивость без сети.
+            services.RemoveAll<IResendEmailService>();
+            services.AddSingleton<CapturingResendEmailService>();
+            services.AddSingleton<IResendEmailService>(
+                sp => sp.GetRequiredService<CapturingResendEmailService>());
         });
     }
 
@@ -96,6 +103,9 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
 
     /// <summary>Перехваченные вызовы Telegram (посты/правки) для проверок публикации в канал.</summary>
     public CapturingTelegramClient Telegram => Services.GetRequiredService<CapturingTelegramClient>();
+
+    /// <summary>Перехваченные вызовы Resend для проверок письма-уведомления/подтверждения.</summary>
+    public CapturingResendEmailService Resend => Services.GetRequiredService<CapturingResendEmailService>();
 
     private static void RemoveHostedService<T>(IServiceCollection services)
     {
@@ -426,6 +436,14 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         var needle = id.ToString();
         return await db.OutboxMessages
             .CountAsync(m => m.Type == type && m.Payload.Contains(needle));
+    }
+
+    /// <summary>Существует ли ещё запись обращения формы обратной связи (для проверки устойчивости к сбою Resend).</summary>
+    public async Task<bool> FeedbackExistsAsync(Guid id)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.FeedbackMessages.AnyAsync(f => f.Id == id);
     }
 
     /// <summary>Прогоняет один тик диспетчера outbox напрямую (планировщик в тестах выключен).</summary>

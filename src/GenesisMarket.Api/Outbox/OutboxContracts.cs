@@ -30,6 +30,9 @@ public sealed record ListingChannelUpdatePayload(Guid ListingId, string Mark);
 /// <summary>Payload <see cref="Domain.Entities.OutboxMessage.SavedSearchMatch"/>.</summary>
 public sealed record SavedSearchMatchPayload(Guid SavedSearchId, IReadOnlyList<Guid> ListingIds);
 
+/// <summary>Payload <see cref="Domain.Entities.OutboxMessage.FeedbackReceived"/>.</summary>
+public sealed record FeedbackReceivedPayload(Guid FeedbackId);
+
 /// <summary>
 /// Ошибка доставки, которую бессмысленно повторять (некорректный payload, удалённый
 /// адресат, отсутствующий ресурс, канал не сконфигурирован). Диспетчер сразу переводит

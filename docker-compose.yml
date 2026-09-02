@@ -60,6 +60,11 @@ services:
       Smtp__From: ${SMTP_FROM:-no-reply@genesis-hq.com}
       Smtp__FromName: ${SMTP_FROM_NAME:-Genesis Market}
       Smtp__UseSsl: ${SMTP_USE_SSL:-true}
+      # Resend (уведомления о новых обращениях формы обратной связи). Пусто -> dev-лог.
+      # Домен отправителя должен быть подтверждён в панели Resend (DNS: SPF/DKIM/DMARC).
+      Resend__ApiKey: ${RESEND_API_KEY}
+      Resend__FromEmail: ${RESEND_FROM_EMAIL}
+      Resend__NotificationEmail: ${FEEDBACK_NOTIFICATION_EMAIL:-feedback@genesis-market.com}
       # Telegram-бот (уведомления/посты через outbox). Пусто -> dev-лог, доставка почтой.
       Telegram__BotToken: ${TELEGRAM_BOT_TOKEN}
       Telegram__BroadcastChatId: ${TELEGRAM_BROADCAST_CHAT_ID}
@@ -86,6 +91,8 @@ services:
       RateLimit__SearchPerMinute: ${RATE_LIMIT_SEARCH_PER_MINUTE:-60}
       RateLimit__SensitiveAnonPerHour: ${RATE_LIMIT_SENSITIVE_ANON_PER_HOUR:-3}
       RateLimit__CreateListingPerHour: ${RATE_LIMIT_CREATE_LISTING_PER_HOUR:-10}
+      RateLimit__FeedbackAnonPerHour: ${RATE_LIMIT_FEEDBACK_ANON_PER_HOUR:-5}
+      RateLimit__FeedbackUserPerHour: ${RATE_LIMIT_FEEDBACK_USER_PER_HOUR:-20}
       # OpenTelemetry: адрес OTLP-коллектора. Пусто -> экспорт выключен (инструментация вхолостую).
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
     ports:

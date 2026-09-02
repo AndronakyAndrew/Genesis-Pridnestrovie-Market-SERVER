@@ -23,6 +23,9 @@ public static class RateLimitPolicies
     /// <summary>Приём жалоб: аноним — на IP, авторизованный — на пользователя.</summary>
     public const string Report = "report";
 
+    /// <summary>Форма обратной связи: аноним — на IP, авторизованный — на пользователя.</summary>
+    public const string Feedback = "feedback";
+
     /// <summary>Поиск по каталогу: на IP.</summary>
     public const string Search = "search";
 }
@@ -47,6 +50,12 @@ public sealed class RateLimitOptions
 
     /// <summary>Создание объявлений, запросов в час на пользователя.</summary>
     public int CreateListingPerHour { get; set; } = 10;
+
+    /// <summary>Форма обратной связи, запросов в час на IP (аноним).</summary>
+    public int FeedbackAnonPerHour { get; set; } = 5;
+
+    /// <summary>Форма обратной связи, запросов в час на пользователя (авторизован).</summary>
+    public int FeedbackUserPerHour { get; set; } = 20;
 }
 
 public static class RateLimitingSetup
@@ -95,6 +104,11 @@ public static class RateLimitingSetup
             options.AddPolicy(RateLimitPolicies.Report, ctx => UserId(ctx) is { } uid
                 ? FixedByKey($"report:u:{uid}", trust.UserReportsPerHour, TimeSpan.FromHours(1))
                 : FixedByKey($"report:ip:{Ip(ctx)}", trust.IpReportsPerHour, TimeSpan.FromHours(1)));
+
+            // Обратная связь: авторизованный — на пользователя (20), аноним — на IP (5).
+            options.AddPolicy(RateLimitPolicies.Feedback, ctx => UserId(ctx) is { } fuid
+                ? FixedByKey($"feedback:u:{fuid}", rl.FeedbackUserPerHour, TimeSpan.FromHours(1))
+                : FixedByKey($"feedback:ip:{Ip(ctx)}", rl.FeedbackAnonPerHour, TimeSpan.FromHours(1)));
 
             options.OnRejected = async (context, ct) =>
             {

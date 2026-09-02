@@ -892,6 +892,60 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 **Ключевые файлы:** `Api/Program.cs` (пайплайн и регистрации), `Api/Security/*`, `Api/Observability/*`,
 `Api/Configuration/*`, `Dockerfile`, `docker-compose.yml`, `scripts/*`, `docs/security-checklist.md`.
 
+### 21. Форма обратной связи: приём + письма-уведомления через Resend
+
+**Что сделано:**
+- **`POST /api/feedback`** (`Api/Controllers/FeedbackController.cs`) — приём анонимных обращений
+  (`FeedbackType`, имя опционально, контакт, сообщение). Сохраняет `FeedbackMessage` и ставит сообщение
+  `OutboxMessage.FeedbackReceived` в транзакционный outbox **в той же `SaveChangesAsync`** — без успешного
+  коммита обращения не будет и «хвоста» уведомления. Rate-limit — новая политика `feedback` (аноним 5/час на
+  IP, авторизованный 20/час на пользователя), по образцу `report`.
+- **Доставка письма — через уже существующий транзакционный outbox (фича 16), не синхронно в контроллере.**
+  `FeedbackReceivedHandler` (`Api/Outbox/OutboxHandlers.cs`) достаёт обращение по id и вызывает
+  `IResendEmailService`: письмо-уведомление на служебный адрес всегда, письмо-подтверждение отправителю —
+  только если `Contact` похож на email (простая regex-проверка формата; телефоны и пустые контакты
+  подтверждения не получают). Сбой Resend — исключение из обработчика, диспетчер сам ретраит по общему
+  расписанию (10с, 1м, 5м, 30м, 2ч) — `POST /api/feedback` от Resend вообще не зависит и не может упасть
+  из-за его недоступности.
+- **`ResendEmailService`** (`Api/Feedback/ResendEmailService.cs`) — типизированный `HttpClient`
+  (`AddHttpClient<IResendEmailService, ResendEmailService>`) поверх `POST https://api.resend.com/emails`.
+  Один быстрый ретрай на сетевую ошибку/таймаут (бюджет ~5с на попытку+ретрай, как у `HttpTelegramClient`) —
+  поверх него подстраховывает ретрай самого outbox. Без `Resend:ApiKey` — `LogResendEmailService` пишет
+  письмо в лог (`[DEV RESEND] …`), как `LogEmailSender`/`LogTelegramClient` для SMTP/Telegram.
+- **Санитизация письма.** Name/Contact/Message экранируются (`HtmlEncoder`) перед вставкой в HTML-тело —
+  тег вроде `<script>` в сообщении отправителя попадает в письмо как текст, а не как разметка. Перенос строк
+  сообщения — литеральный `<br>`, добавляемый **после** экранирования.
+- **Логи без содержимого письма на Information** — только факт отправки (id обращения, тип, успех/неудача);
+  адрес получателя и текст — на Debug (только адрес, без тела письма даже там).
+- **Тесты**: `ResendEmailServiceTests.cs` — юнит-тесты сервиса поверх фейкового `HttpMessageHandler`
+  (экранирование HTML, заголовок `Authorization: Bearer`, состав запроса), без обращения к сети.
+  `FeedbackTests.cs` — через `CapturingResendEmailService` (двойник в DI, как `CapturingTelegramClient`):
+  доставка уведомления+подтверждения для email-контакта, отсутствие подтверждения для телефона, и главное —
+  симуляция сбоя Resend (`factory.Resend.FailNotificationWith`) показывает, что `POST /api/feedback` всё
+  равно отвечает 201 и запись в БД сохраняется.
+
+**Почему именно так:**
+- **Не отдельная очередь/`BackgroundService`, а существующий outbox** — та же гарантия «не блокирует ответ,
+  переживает сбой, ретраит по расписанию», что уже есть у email/Telegram-уведомлений (фича 16), и та же
+  инфраструктура тестирования (`factory.RunOutboxAsync()`), без нового способа ждать фоновую работу в тестах.
+- **`IResendEmailService` отдельно от `IEmailSender` (SMTP, фича 6).** Это разные каналы с разными
+  адресатами и назначением (SMTP — письма подтверждения аккаунта пользователю; Resend — уведомление службе
+  поддержки о новом обращении). Общий `INotificationChannel`/`IEmailSender` не подошёл бы: переключение
+  канала email на Resend задело бы вообще все системные уведомления, а не только форму обратной связи.
+- **Ключ — только из env, как остальные секреты.** `Resend:ApiKey` добавлен в сканер секретов
+  (`OptionsValidationSetup.SecretKeys`) и в `scripts/check-image-secrets.sh` — приложение не поднимется и
+  образ не пройдёт проверку, если ключ вдруг окажется закоммиченным в `appsettings*.json`.
+
+**ВАЖНО при выводе в прод:** домен в `Resend:FromEmail` должен быть подтверждён в панели Resend
+(Domains → Add Domain, DNS-записи SPF/DKIM/DMARC) — без этого Resend отклонит отправку. Дефолтный
+`onboarding@resend.dev` годится только для разработки.
+
+**Ключевые файлы:** `Api/Controllers/FeedbackController.cs`, `Api/Contracts/FeedbackDtos.cs`,
+`Api/Feedback/*` (`ResendOptions`, `IResendEmailService`, `ResendEmailService`, `LogResendEmailService`,
+`FeedbackServiceCollectionExtensions`), `Api/Outbox/OutboxHandlers.cs` (`FeedbackReceivedHandler`),
+`Domain/Entities/FeedbackMessage.cs`, `Infrastructure/Persistence/Configurations/FeedbackMessageConfiguration.cs`,
+`tests/GenesisMarket.Tests/{FeedbackTests,ResendEmailServiceTests,CapturingResendEmailService}.cs`.
+
 ---
 
 ## Известные ограничения
@@ -935,3 +989,7 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 - **Sitemap объявлений — offset-пагинация** (`Skip/Take` по `Id`). Для сотен тысяч глубокие страницы дают рост
   стоимости `OFFSET`; ответы кэшируются на час и запрашиваются краулером редко, так что приемлемо. При кратном
   росте каталога перейти на keyset по `Id`.
+- **Resend требует подтверждённый домен отправителя.** Без верификации домена в панели Resend (DNS: SPF/DKIM/
+  DMARC) отправка писем формы обратной связи (фича 21) будет отклоняться в проде — задать `Resend:FromEmail`
+  только после верификации, иначе оставить `Resend:ApiKey` пустым (обращения продолжат сохраняться в БД,
+  письма будут писаться в лог).

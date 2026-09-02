@@ -170,3 +170,12 @@ public enum SavedSearchNotifyChannel
     /// <summary>Не уведомлять. Поиск активен для ручного просмотра, но джоб его не рассылает.</summary>
     None
 }
+
+/// <summary>Тип обращения формы обратной связи. В БД хранится строкой.</summary>
+public enum FeedbackType
+{
+    General,
+    Bug,
+    Complaint,
+    Partnership
+}

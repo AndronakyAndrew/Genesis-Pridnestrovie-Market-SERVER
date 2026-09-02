@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Configuration;
+using GenesisMarket.Api.Feedback;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Middleware;
 using GenesisMarket.Api.Moderation;
@@ -77,6 +78,9 @@ try
 
     // ---- Инструменты модератора: очередь, действия, аудит-журнал ----
     builder.Services.AddModerationFeature();
+
+    // ---- Форма обратной связи: письма через Resend (уведомление на служебный адрес) ----
+    builder.Services.AddFeedbackFeature(builder.Configuration);
 
     // ---- Транзакционный outbox: доставка уведомлений (email/Telegram) и удаление объектов ----
     builder.Services.AddOutbox(builder.Configuration);

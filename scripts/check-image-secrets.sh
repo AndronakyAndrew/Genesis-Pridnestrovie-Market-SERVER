@@ -25,7 +25,7 @@ FAIL=0
 echo "[*] Ищу секретоподобные строки в истории слоёв (docker history)..."
 # Шаблоны имён секретов + build-arg присвоений. В корректном образе совпадений нет.
 if docker history --no-trunc --format '{{.CreatedBy}}' "$IMAGE" \
-    | grep -Ei 'JWT_SECRET|IPHASH_KEY|POSTGRES_PASSWORD|MINIO_ROOT_PASSWORD|SMTP_PASSWORD|TELEGRAM_BOT_TOKEN|Jwt__Key|Security__IpHashKey|password=|secret=' ; then
+    | grep -Ei 'JWT_SECRET|IPHASH_KEY|POSTGRES_PASSWORD|MINIO_ROOT_PASSWORD|SMTP_PASSWORD|TELEGRAM_BOT_TOKEN|RESEND_API_KEY|Jwt__Key|Security__IpHashKey|Resend__ApiKey|password=|secret=' ; then
   echo "ОШИБКА: в истории слоёв найдены секретоподобные значения (см. выше)." >&2
   FAIL=1
 else
@@ -35,7 +35,7 @@ fi
 echo "[*] Проверяю, что в published appsettings секреты пустые..."
 # У секретных ключей в закоммиченном appsettings.json значения пустые (секреты — из env).
 LEAK="$(docker run --rm --entrypoint sh "$IMAGE" -c \
-  'grep -Eo "\"(Key|Password|SecretKey|BotToken|IpHashKey)\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" appsettings.json 2>/dev/null || true')"
+  'grep -Eo "\"(Key|Password|SecretKey|BotToken|IpHashKey|ApiKey)\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" appsettings.json 2>/dev/null || true')"
 if [[ -n "$LEAK" ]]; then
   echo "ОШИБКА: в appsettings.json образа есть непустые секреты:" >&2
   echo "$LEAK" >&2

@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using GenesisMarket.Api.Feedback;
 using GenesisMarket.Api.Outbox.Telegram;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
@@ -314,4 +316,35 @@ public sealed class DeleteObjectHandler(IObjectStorage storage) : IOutboxHandler
 
     public Task HandleAsync(OutboxMessage message, CancellationToken ct) =>
         storage.RemoveAsync(message.Payload, ct);
+}
+
+/// <summary>
+/// Новое обращение из формы обратной связи → письмо-уведомление на служебный адрес
+/// (<see cref="IResendEmailService.SendFeedbackNotificationAsync"/>) и, если контакт похож
+/// на email, короткое письмо-подтверждение отправителю. Сбой отправки — временный (ретрай
+/// диспетчера по общему расписанию); адресат/контент не зависят от состояния объявления,
+/// поэтому это единственный обработчик, которому не нужен <see cref="IUserNotifier"/>.
+/// </summary>
+public sealed partial class FeedbackReceivedHandler(AppDbContext db, IResendEmailService email) : IOutboxHandler
+{
+    public string Type => OutboxMessage.FeedbackReceived;
+
+    public async Task HandleAsync(OutboxMessage message, CancellationToken ct)
+    {
+        var p = OutboxPayload.Parse<FeedbackReceivedPayload>(message.Payload);
+        var feedback = await db.FeedbackMessages.AsNoTracking()
+            .FirstOrDefaultAsync(f => f.Id == p.FeedbackId, ct)
+            ?? throw new OutboxPermanentException("Обращение не найдено.");
+
+        await email.SendFeedbackNotificationAsync(feedback, ct);
+
+        if (LooksLikeEmail(feedback.Contact))
+            await email.SendFeedbackConfirmationAsync(feedback, ct);
+    }
+
+    // Простая проверка формата: телефоны (цифры, +, скобки, дефисы) её не проходят.
+    private static bool LooksLikeEmail(string contact) => EmailLikeRegex().IsMatch(contact.Trim());
+
+    [GeneratedRegex(@"^[^@\s]+@[^@\s]+\.[^@\s]+$", RegexOptions.CultureInvariant)]
+    private static partial Regex EmailLikeRegex();
 }

@@ -95,4 +95,10 @@ public class OutboxMessage
     /// Оставлен для in-flight сообщений, записанных до объединения в <see cref="DeleteImages"/>.
     /// </summary>
     public const string DeleteObject = "delete-object";
+
+    /// <summary>
+    /// Новое обращение из формы обратной связи → письмо-уведомление на служебный адрес
+    /// и (если контакт похож на email) письмо-подтверждение отправителю. Payload: <c>{ feedbackId }</c>.
+    /// </summary>
+    public const string FeedbackReceived = "feedback-received";
 }
