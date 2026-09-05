@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Xml.Linq;
 using GenesisMarket.Domain.Enums;
 using Xunit;
 
@@ -31,10 +33,10 @@ public class SeoTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
         Assert.False(meta.GetProperty("noIndex").GetBoolean());
         Assert.False(meta.GetProperty("isArchived").GetBoolean());
 
-        // canonical — по slug на /obyavlenie/, абсолютный от публичного адреса.
+        // canonical — по slug на /listing/, абсолютный от публичного адреса.
         var listing = await client.GetFromJsonAsync<JsonElement>($"/api/listings/{id}");
         var slug = listing.GetProperty("slug").GetString();
-        Assert.Equal($"https://market.test/obyavlenie/{slug}", meta.GetProperty("canonicalUrl").GetString());
+        Assert.Equal($"https://market.test/listing/{slug}", meta.GetProperty("canonicalUrl").GetString());
 
         // og:image — presigned-ссылка на первое фото (не null, раз фото засеяно).
         Assert.Equal(JsonValueKind.String, meta.GetProperty("ogImage").ValueKind);
@@ -137,11 +139,11 @@ public class SeoTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
         var listing = await client.GetFromJsonAsync<JsonElement>($"/api/listings/{id}");
         var slug = listing.GetProperty("slug").GetString();
 
-        Assert.Equal($"https://market.test/obyavlenie/{slug}", listing.GetProperty("canonicalUrl").GetString());
+        Assert.Equal($"https://market.test/listing/{slug}", listing.GetProperty("canonicalUrl").GetString());
     }
 
     [Fact]
-    public async Task Robots_closes_private_apis_and_points_to_sitemap()
+    public async Task Robots_closes_private_pages_and_apis_and_points_to_sitemap()
     {
         var client = factory.CreateClient();
         var response = await client.GetAsync("/robots.txt");
@@ -149,31 +151,150 @@ public class SeoTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
         Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
 
         var body = await response.Content.ReadAsStringAsync();
+
+        // Приватные страницы сайта: кабинет, вход, создание/редактирование, модерация.
+        Assert.Contains("Disallow: /create", body);
+        Assert.Contains("Disallow: /profile", body);
+        Assert.Contains("Disallow: /auth", body);
+        Assert.Contains("Disallow: /admin", body);
+        Assert.Contains("Disallow: /listing/new", body);
+        Assert.Contains("Disallow: /login", body);
+        Assert.Contains("Disallow: /moderation", body);
+
+        // Служебные API.
         Assert.Contains("Disallow: /api/moderation/", body);
         Assert.Contains("Disallow: /api/me/", body);
         Assert.Contains("Disallow: /api/auth/", body);
+
         Assert.Contains("Sitemap: https://market.test/sitemap.xml", body);
     }
 
     [Fact]
-    public async Task Sitemap_lists_static_urls_and_active_listings()
+    public async Task Sitemap_lists_static_pages_and_active_listing()
     {
         var owner = await factory.SeedUserAsync(Unique("seo-sitemap"), Password);
         var id = await factory.SeedListingAsync(owner, ListingStatus.Active, category: Category.Transport);
+        var slug = await factory.ListingSlugAsync(id);
 
+        var xml = await SitemapAsync();
+
+        Assert.Contains("<urlset", xml);
+        Assert.Contains("<loc>https://market.test/</loc>", xml);                   // главная
+        Assert.Contains("<loc>https://market.test/catalog</loc>", xml);            // каталог
+        Assert.Contains($"<loc>https://market.test/listing/{slug}</loc>", xml);    // карточка
+    }
+
+    [Fact]
+    public async Task Sitemap_omits_sold_and_archived_listings()
+    {
+        var owner = await factory.SeedUserAsync(Unique("seo-sitemap-status"), Password);
+        var active = await factory.SeedListingAsync(owner, ListingStatus.Active, category: Category.Electronics);
+        var sold = await factory.SeedListingAsync(owner, ListingStatus.Active, category: Category.Electronics);
+        await factory.SetStatusAsync(sold, ListingStatus.Sold);
+        var archived = await factory.SeedListingAsync(owner, ListingStatus.Archived, category: Category.Electronics);
+
+        var xml = await SitemapAsync();
+
+        Assert.Contains(await factory.ListingSlugAsync(active), xml);
+        Assert.DoesNotContain(await factory.ListingSlugAsync(sold), xml);
+        Assert.DoesNotContain(await factory.ListingSlugAsync(archived), xml);
+    }
+
+    [Fact]
+    public async Task Sitemap_does_not_list_private_pages()
+    {
+        var xml = await SitemapAsync();
+
+        string[] privatePaths =
+        [
+            "/create", "/profile", "/auth", "/admin",
+            "/listing/new", "/login", "/favorites", "/moderation", "/user/"
+        ];
+        foreach (var path in privatePaths)
+            Assert.DoesNotContain($"<loc>https://market.test{path}", xml);
+    }
+
+    [Fact]
+    public async Task Sitemap_is_valid_sitemap_protocol_document()
+    {
+        var owner = await factory.SeedUserAsync(Unique("seo-sitemap-xml"), Password);
+        await factory.SeedListingAsync(owner, ListingStatus.Active, category: Category.Fashion);
+
+        var doc = XDocument.Parse(await SitemapAsync());
+        XNamespace ns = "http://www.sitemaps.org/schemas/sitemap/0.9";
+
+        Assert.Equal(ns + "urlset", doc.Root!.Name);
+
+        var urls = doc.Root.Elements(ns + "url").ToList();
+        Assert.NotEmpty(urls);
+        foreach (var url in urls)
+        {
+            Assert.False(string.IsNullOrWhiteSpace((string?)url.Element(ns + "loc")));
+            Assert.Contains((string?)url.Element(ns + "changefreq"), new[] { "daily", "weekly", "monthly" });
+
+            var priority = decimal.Parse(
+                (string)url.Element(ns + "priority")!, CultureInfo.InvariantCulture);
+            Assert.InRange(priority, 0m, 1m);
+
+            // lastmod — ISO 8601 в UTC.
+            if (url.Element(ns + "lastmod") is { } lastMod)
+            {
+                Assert.EndsWith("Z", lastMod.Value);
+                var parsed = DateTimeOffset.Parse(
+                    lastMod.Value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+                Assert.Equal(TimeSpan.Zero, parsed.Offset);
+            }
+        }
+
+        // У объявления дата изменения есть — значит хотя бы один lastmod в карте присутствует.
+        Assert.Contains(urls, u => u.Element(ns + "lastmod") is not null);
+    }
+
+    [Fact]
+    public async Task Sitemap_response_is_xml_utf8_and_cacheable()
+    {
+        factory.SitemapCache.Invalidate();
         var client = factory.CreateClient();
-        var listing = await client.GetFromJsonAsync<JsonElement>($"/api/listings/{id}");
-        var slug = listing.GetProperty("slug").GetString();
-
         var response = await client.GetAsync("/sitemap.xml");
+
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("application/xml", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("utf-8", response.Content.Headers.ContentType?.CharSet);
         Assert.Contains("max-age=3600", response.Headers.CacheControl?.ToString() ?? "");
+    }
 
-        var xml = await response.Content.ReadAsStringAsync();
-        Assert.Contains("<urlset", xml);
-        Assert.Contains("https://market.test/", xml);            // главная
-        Assert.Contains($"https://market.test/obyavlenie/{slug}", xml);
+    [Fact]
+    public async Task Sitemap_within_ttl_is_served_from_cache_without_touching_db()
+    {
+        var owner = await factory.SeedUserAsync(Unique("seo-sitemap-cache"), Password);
+        var first = await factory.SeedListingAsync(owner, ListingStatus.Active, category: Category.Animals);
+
+        // Первый обход: карта собрана из БД и уложена в кэш на TTL.
+        Assert.Contains(await factory.ListingSlugAsync(first), await SitemapAsync());
+
+        // Новое объявление внутри TTL в карте не появляется — значит второй запрос
+        // отвечен из кэша и в БД не ходил.
+        var second = await factory.SeedListingAsync(owner, ListingStatus.Active, category: Category.Animals);
+        var cached = await SitemapAsync(invalidate: false);
+        Assert.DoesNotContain(await factory.ListingSlugAsync(second), cached);
+
+        // После сброса кэша (в жизни — по истечении TTL) объявление появляется.
+        Assert.Contains(await factory.ListingSlugAsync(second), await SitemapAsync());
+    }
+
+    /// <summary>
+    /// Карта сайта строкой. По умолчанию кэш сбрасывается: иначе тест видел бы ответ,
+    /// собранный соседним тестом до его сидов.
+    /// </summary>
+    private async Task<string> SitemapAsync(bool invalidate = true)
+    {
+        if (invalidate)
+            factory.SitemapCache.Invalidate();
+
+        var client = factory.CreateClient();
+        var response = await client.GetAsync("/sitemap.xml");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await response.Content.ReadAsStringAsync();
     }
 
     [Fact]

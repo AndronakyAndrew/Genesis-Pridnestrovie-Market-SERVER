@@ -94,6 +94,10 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
     /// <summary>Доступ к фейковому хранилищу для проверок в тестах загрузки фото.</summary>
     public FakeObjectStorage Storage => Services.GetRequiredService<FakeObjectStorage>();
 
+    /// <summary>Кэш карты сайта — тесты сбрасывают его, чтобы видеть свежесобранный sitemap.</summary>
+    public GenesisMarket.Api.Seo.SitemapCache SitemapCache =>
+        Services.GetRequiredService<GenesisMarket.Api.Seo.SitemapCache>();
+
     /// <summary>Перехваченные вызовы Telegram (посты/правки) для проверок публикации в канал.</summary>
     public CapturingTelegramClient Telegram => Services.GetRequiredService<CapturingTelegramClient>();
 
@@ -328,6 +332,17 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         await db.Listings
             .Where(l => l.Id == listingId)
             .ExecuteUpdateAsync(s => s.SetProperty(l => l.Status, status));
+    }
+
+    /// <summary>Slug объявления напрямую из БД — карточка может быть не публичной (sold/archived).</summary>
+    public async Task<string> ListingSlugAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.Listings.IgnoreQueryFilters().AsNoTracking()
+            .Where(l => l.Id == listingId)
+            .Select(l => l.Slug)
+            .FirstAsync();
     }
 
     /// <summary>

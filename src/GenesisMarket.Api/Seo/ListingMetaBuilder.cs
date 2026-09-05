@@ -44,7 +44,7 @@ public static class ListingMetaBuilder
         var priceLabel = FormatPrice(listing.PriceType, listing.Price);
         var cityLabel = CatalogLabels.City(listing.City);
 
-        // title: «Заголовок — 15 000 руб. — Тирасполь | Genesis Market».
+        // title: «Заголовок — 15 000 руб. — Тирасполь | Местная площадка Genesis».
         var title = $"{listing.Title} — {priceLabel} — {cityLabel} | {siteName}";
         var description = BuildDescription(listing.Description, listing.Title, cityLabel, priceLabel);
 

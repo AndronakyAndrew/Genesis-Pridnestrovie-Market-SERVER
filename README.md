@@ -796,7 +796,7 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 
 **Что сделано:**
 - **`GET /api/listings/{id}/meta`** — готовые данные для `<head>` карточки: `title`, `description`,
-  `canonicalUrl` (`/obyavlenie/{slug}`), og-теги (`ogTitle`, `ogDescription`, `ogImage`) и **JSON-LD
+  `canonicalUrl` (`/listing/{slug}`), og-теги (`ogTitle`, `ogDescription`, `ogImage`) и **JSON-LD
   `schema.org/Product`** с `offers` (`price`, `priceCurrency`, `availability`, `itemCondition`, `seller`).
   `ogImage` — presigned-ссылка на первое фото с **длинным TTL** (`Seo:OgImageTtlDays`, по умолчанию 7 дней):
   og-картинку кэшируют соцсети/поисковики, короткий TTL давал бы «битые» превью в выдаче.
@@ -809,34 +809,44 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
   (публичного URL не было) и несуществующее → **404**. Разница 410↔404 намеренная: 410 говорит убрать URL, 404 — нет.
 - **`canonicalUrl` в DTO объявления.** `GET /api/listings/{id}` (и `by-slug`, «мои», и т.д.) всегда несут
   `canonicalUrl` — единый канонический адрес для `<link rel=canonical>` и шеринга.
-- **`GET /sitemap.xml`** — главная, все категории, все города, все `Active` объявления. Пока URL ≤ порога
-  (`Seo:SitemapSplitThreshold`=45 000) — один `<urlset>`; больше — **sitemap-index** с разбивкой по
-  `Seo:SitemapPageSize`=40 000 (`/sitemap-static.xml` + `/sitemap-listings-{n}.xml`). Генерация **потоковая**
-  (`IAsyncEnumerable` из EF прямо в тело ответа через `XmlWriter`) — весь список в память не материализуется.
-  Число активных объявлений кэшируется на час; ответы отдаются с `Cache-Control: public, max-age=3600`.
-- **`GET /robots.txt`** — закрывает служебные API (`/api/moderation/`, `/api/me/`, `/api/auth/`) и указывает
-  `Sitemap:`. Каталог и карточки остаются открыты.
+- **`GET /sitemap.xml`** — главная, каталог, каталог с фильтром по каждой категории и каждому городу,
+  информационные страницы и все `Active` объявления (`/listing/{slug}`; `lastmod` — ISO 8601 в UTC,
+  `changefreq`/`priority` по типу страницы). Проданные, архивные, черновики и удалённые не попадают. Пока URL ≤
+  порога (`Seo:SitemapSplitThreshold`=45 000) — один `<urlset>`; больше — **sitemap-index** с разбивкой по
+  `Seo:SitemapPageSize`=40 000 (`/sitemap-static.xml` + `/sitemap-listings-{n}.xml`). Сборка списка URL —
+  `ISitemapUrlProvider`, разметка — `SitemapXml` (экранирование спецсимволов через `XmlWriter`), готовый ответ —
+  в `IMemoryCache` на `Seo:SitemapCacheTtlMinutes`=60 минут (`SitemapCache`); клиенту отдаётся
+  `Cache-Control: public, max-age=3600`.
+- **`GET /robots.txt`** — закрывает приватные страницы сайта (`/create`, `/profile`, `/auth`, `/admin`,
+  `/listing/new`, `/favorites`, `/login`, `/moderation`, `/verify-email`, `/user/`) и служебные API
+  (`/api/moderation/`, `/api/me/`, `/api/auth/`), указывает `Sitemap:`. Каталог и карточки открыты. Действует
+  на тот хост, с которого отдан (домен API) — на домене фронтенда нужен свой robots.txt с тем же списком.
 - **`GET /api/seo/landing/{category}/{city}`** — данные для статических посадочных «Купить квартиру в
   Тирасполе»: счётчик активных объявлений, диапазон цен (`priceFrom`/`priceTo` по объявлениям с ценой) и топ
   подкатегорий (по числу объявлений). Неизвестная пара категория/город → 404.
 - Тесты (Testcontainers): мета Active (canonical/og/JSON-LD/RUP/InStock), договорная цена без `price`,
   архив/продано (200 + noindex + Discontinued/SoldOut), 410 для удалённого, 404 для черновика/несуществующего,
-  `canonicalUrl` в DTO, robots, sitemap (urlset + loc объявления + Cache-Control), посадочная и её 404.
+  `canonicalUrl` в DTO, robots (приватные пути + `Sitemap:`), sitemap (активное объявление есть; sold/archived
+  и приватные страницы — нет; документ парсится и валиден по протоколу 0.9; `application/xml; charset=utf-8`;
+  повторный запрос внутри TTL отвечен из кэша), посадочная и её 404.
 
 **Почему именно так:**
 - **Мета собирает сервер, а не фронт** — SSR/краулер получает готовые title/description/JSON-LD, логика
   формирования (валюта, availability, обрезка описания) не дублируется и не расходится с бэкендом.
-- **Потоковый sitemap** — объявлений могут быть сотни тысяч; `ToListAsync` на весь каталог держал бы память и
-  задерживал первый байт. XML пишется по мере чтения курсора БД.
+- **Готовый XML в кэше вместо потоковой генерации** — краулер обходит карту целиком и регулярно, а меняется
+  она медленно: собранный документ лежит в `IMemoryCache` (`Seo:SitemapCacheTtlMinutes`=60), и внутри TTL обход
+  не даёт ни одного запроса к БД. Память сверху ограничена размером одного файла карты
+  (`SitemapPageSize`=40 000 URL) — всё, что больше, разбивается на файлы sitemap-index.
 - **410 vs 200-noindex** — разное намерение: удалённое надо стереть из индекса (410), снятое с публикации может
   вернуться (200 + noindex сохраняет URL «на паузе»).
 - **`Seo:WebBaseUrl` пуст ⇒ 503.** Без публичного адреса индексировать нечего и абсолютные ссылки не построить;
   `canonicalUrl` в DTO объявления в этом случае `null` (dev), эндпоинты мета/sitemap/посадочных — 503.
 
-**Конфигурация:** секция `Seo` (`WebBaseUrl` — только env, обычно = адресу фронтенда; `SiteName`,
-`OgImageTtlDays`=7, `SitemapSplitThreshold`=45000, `SitemapPageSize`=40000, `SitemapCacheSeconds`=3600).
+**Конфигурация:** секция `Seo` (`WebBaseUrl` — только env, обычно = адресу фронтенда, алиас `SITE_BASE_URL`;
+`SiteName`, `OgImageTtlDays`=7, `SitemapSplitThreshold`=45000, `SitemapPageSize`=40000,
+`SitemapCacheSeconds`=3600 — `max-age` для клиента, `SitemapCacheTtlMinutes`=60 — кэш готового XML в памяти).
 
-**Ключевые файлы:** `Api/Seo/*` (`SeoOptions`, `SeoUrls`, `ListingMetaBuilder`, `SeoServiceCollectionExtensions`),
+**Ключевые файлы:** `Api/Seo/*` (`SeoOptions`, `SeoUrls`, `ListingMetaBuilder`, `ISitemapUrlProvider`/`SitemapUrlProvider`, `SitemapXml`, `SitemapCache`, `SeoServiceCollectionExtensions`),
 `Api/Controllers/{SeoController,SitemapController}.cs`, `Api/Contracts/SeoDtos.cs`,
 `Api/Contracts/ListingDtos.cs` (`CanonicalUrl`), `Api/Controllers/ListingsController.cs` (проброс canonical),
 тесты `tests/GenesisMarket.Tests/SeoTests.cs`.
@@ -926,10 +936,10 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
   процесса. При нескольких инстансах API лимиты умножатся на число реплик — нужен общий стор (Redis) либо
   лимитирование на уровне Caddy.
 - **SEO-пути фронтенда — договорённость, не автоматика.** Бэкенд отдаёт канонические ссылки под конкретную
-  маршрутизацию фронта: карточка `/obyavlenie/{slug}`, категория `/{category}`, город `/city/{city}`, посадочная
-  `/{category}/{city}` (значения — как в БД: `realestate`, `tiraspol`). Фронт обязан обслуживать эти URL; при
-  смене схемы путей — синхронно править `Api/Seo/SeoUrls.cs`. Пост Telegram-канала пока ссылается на **старый**
-  путь `/listing/{slug}` (`TelegramPostFormatter`) — свести к `/obyavlenie/{slug}` отдельным шагом.
+  маршрутизацию фронта: карточка `/listing/{slug}`, каталог `/catalog`, витрины фильтров — query-параметрами
+  (`?category=Electronics`, `?cities=Tiraspol`; значения PascalCase — так их разбирает фронт). Фронт обязан
+  обслуживать эти URL; при смене схемы путей — синхронно править `Api/Seo/SeoUrls.cs` (единственное место).
+  Посадочная `/{category}/{city}` (`GET /api/seo/landing/…`) — страницы под неё на фронте ещё нет.
 - **`Seo:WebBaseUrl` дублирует `Telegram:WebBaseUrl`.** Обычно это один и тот же адрес фронтенда, но заданы
   двумя переменными (`SEO_WEB_BASE_URL`, `TELEGRAM_WEB_BASE_URL`). Позже разумно свести к общей секции `Site`.
 - **Sitemap объявлений — offset-пагинация** (`Skip/Take` по `Id`). Для сотен тысяч глубокие страницы дают рост
