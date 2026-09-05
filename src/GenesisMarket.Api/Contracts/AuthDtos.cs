@@ -50,3 +50,12 @@ public record AuthResponse(
     string RefreshToken,
     DateTimeOffset RefreshTokenExpiresAt,
     UserResponse User);
+
+/// <summary>Запрос ссылки восстановления пароля. Ответ всегда одинаков (анти-перечисление).</summary>
+public record ForgotPasswordRequest(
+    [Required, EmailAddress, MaxLength(256)] string Email);
+
+/// <summary>Смена пароля по одноразовому токену из письма.</summary>
+public record ResetPasswordRequest(
+    [Required, MaxLength(128)] string Token,
+    [Required] string NewPassword);

@@ -26,6 +26,7 @@ public class AuthController(
     IAuthRateLimiter rateLimiter,
     ISecurityAudit securityAudit,
     SecurityStampValidator securityStamp,
+    PasswordResetService passwordReset,
     IOptions<PhoneOptions> phoneOptions) : ApiControllerBase
 {
     // Один и тот же текст на неверный email и неверный пароль (анти-перечисление).
@@ -182,6 +183,50 @@ public class AuthController(
         securityStamp.Invalidate(userId);
         securityAudit.PasswordChanged(userId);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Запрос ссылки восстановления пароля. Ответ одинаков для существующего и
+    /// несуществующего адреса — иначе ручка становится оракулом на перечисление.
+    /// </summary>
+    [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.SensitiveAnon)]
+    [HttpPost("forgot-password")]
+    public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest request, CancellationToken ct)
+    {
+        await passwordReset.RequestAsync(request.Email, ClientIp(), ct);
+
+        return Ok(new MessageResponse(
+            "Если такой адрес зарегистрирован, мы отправили на него ссылку для смены пароля."));
+    }
+
+    /// <summary>
+    /// Смена пароля по одноразовой ссылке из письма. Успех завершает все сессии:
+    /// если пароль угнали, доступ у злоумышленника обрывается здесь же.
+    /// </summary>
+    // Отдельного лимита нет намеренно: подобрать 256-битный токен нельзя, а
+    // SensitiveAnon (3/час на IP) блокировал бы человека, дважды промахнувшегося
+    // мимо требований к паролю. Остаётся глобальный лимит на IP.
+    [AllowAnonymous]
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword(ResetPasswordRequest request, CancellationToken ct)
+    {
+        if (PasswordError(request.NewPassword) is { } pwdError)
+            return pwdError;
+
+        return await passwordReset.ResetAsync(request.Token, request.NewPassword, ct) switch
+        {
+            ResetStatus.Ok => NoContent(),
+            ResetStatus.Expired => Problem(
+                title: "Срок действия ссылки истёк. Запросите новую.",
+                statusCode: StatusCodes.Status410Gone),
+            ResetStatus.Used => Problem(
+                title: "Ссылка уже использована. Запросите новую.",
+                statusCode: StatusCodes.Status410Gone),
+            _ => Problem(
+                title: "Ссылка недействительна. Запросите новую.",
+                statusCode: StatusCodes.Status400BadRequest)
+        };
     }
 
     // ---- helpers ----

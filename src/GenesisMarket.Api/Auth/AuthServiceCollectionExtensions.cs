@@ -22,6 +22,7 @@ public static class AuthServiceCollectionExtensions
         services.Configure<SmtpOptions>(configuration.GetSection(SmtpOptions.Section));
         services.Configure<PublishingOptions>(configuration.GetSection(PublishingOptions.Section));
         services.Configure<PhoneOptions>(configuration.GetSection(PhoneOptions.Section));
+        services.Configure<PasswordResetOptions>(configuration.GetSection(PasswordResetOptions.Section));
 
         var jwt = configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
 
@@ -78,8 +79,10 @@ public static class AuthServiceCollectionExtensions
         }
 
         services.AddSingleton<VerificationEmailRenderer>();
+        services.AddSingleton<PasswordResetEmailRenderer>();
         services.AddSingleton<IVerificationSender, VerificationSender>();
         services.AddScoped<VerificationService>();
+        services.AddScoped<PasswordResetService>();
         services.AddSingleton<IPublishingPolicy, PublishingPolicy>();
 
         var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key));

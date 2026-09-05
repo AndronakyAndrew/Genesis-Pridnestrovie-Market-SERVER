@@ -71,6 +71,11 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             services.AddSingleton<IVerificationSender>(
                 sp => sp.GetRequiredService<CapturingVerificationSender>());
 
+            // SMTP подменяем перехватывающим — читаем ссылку восстановления пароля.
+            services.RemoveAll<IEmailSender>();
+            services.AddSingleton<CapturingEmailSender>();
+            services.AddSingleton<IEmailSender>(sp => sp.GetRequiredService<CapturingEmailSender>());
+
             // MinIO в тестах не поднимаем: подменяем хранилище in-memory реализацией.
             services.RemoveAll<IObjectStorage>();
             services.AddSingleton<FakeObjectStorage>();
@@ -117,6 +122,10 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         if (descriptor is not null)
             services.Remove(descriptor);
     }
+
+    /// <summary>Последнее письмо, «отправленное» на адрес (для ссылки восстановления).</summary>
+    public CapturedEmail? LastEmail(string toEmail) =>
+        Services.GetRequiredService<CapturingEmailSender>().Last(toEmail);
 
     /// <summary>Последний код, «отправленный» на указанную цель (email/телефон).</summary>
     public string? LastCode(string target) =>
