@@ -75,6 +75,8 @@ services:
       # Пусто -> SEO-эндпоинты отдают 503 (индексировать нечего). Обычно = адресу фронтенда.
       Seo__WebBaseUrl: ${SEO_WEB_BASE_URL}
       Seo__SiteName: ${SEO_SITE_NAME:-Genesis Market}
+      # Алиас на тот же адрес одной переменной (используется, если Seo__WebBaseUrl пуст).
+      SITE_BASE_URL: ${SITE_BASE_URL:-}
       # Что обязательно для публикации: None | Email | Phone | Both.
       Publishing__RequiredVerification: ${PUBLISHING_REQUIRED_VERIFICATION:-Email}
       # CORS — строка origin-ов через запятую.

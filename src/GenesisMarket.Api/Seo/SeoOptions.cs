@@ -11,7 +11,7 @@ public sealed class SeoOptions
 
     /// <summary>
     /// Базовый публичный адрес сайта (<c>Seo__WebBaseUrl</c>), например
-    /// <c>https://genesis-market.pmr</c>. Все ссылки в meta/sitemap/robots — абсолютные от него.
+    /// <c>https://gn-market.vercel.app</c>. Все ссылки в meta/sitemap/robots — абсолютные от него.
     /// </summary>
     public string WebBaseUrl { get; set; } = "";
 
@@ -35,6 +35,12 @@ public sealed class SeoOptions
 
     /// <summary>Время кэширования sitemap-ответов (Cache-Control max-age, секунды).</summary>
     public int SitemapCacheSeconds { get; set; } = 3600;
+
+    /// <summary>
+    /// Сколько минут готовый XML карты сайта живёт в памяти приложения: в этих пределах
+    /// обход краулера не порождает ни одного запроса к БД. 0 (или меньше) — кэш выключен.
+    /// </summary>
+    public int SitemapCacheTtlMinutes { get; set; } = 60;
 
     /// <summary>Базовый адрес без хвостового слэша. Пусто ⇒ null (SEO-эндпоинты недоступны).</summary>
     public string? NormalizedBaseUrl =>
