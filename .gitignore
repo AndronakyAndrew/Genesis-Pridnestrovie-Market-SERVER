@@ -40,3 +40,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# build output (.NET) — в git не место: дублирует appsettings и тянет секреты
+**/bin/
+**/obj/
+
+# резервные копии БД — в дампах персональные данные пользователей
+/backups/
+/db-backups/
