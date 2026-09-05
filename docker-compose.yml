@@ -190,9 +190,18 @@ services:
     container_name: genesis-minio
     # Тег закреплён по digest: у MinIO нет стабильных semver-тегов, а :latest
     # молча меняет версию при каждой пересборке. Обновление — осознанно:
-    #   docker pull minio/minio:latest && docker image inspect --format '{{index .RepoDigests 0}}' minio/minio:latest
+    #   docker pull minio/minio:RELEASE.<дата>-cpuv1
+    #   docker image inspect --format '{{index .RepoDigests 0}}' minio/minio:RELEASE.<дата>-cpuv1
     # и подставить новый digest сюда.
-    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    #
+    # Берём вариант -cpuv1 (базовый уровень x86-64): процессор прод-сервера не
+    # поддерживает cpuv2, обычная сборка на нём не запускается. Понижать версию
+    # при этом нельзя — формат тома MinIO движется только вперёд, и старый
+    # бинарник падает на нём с «decodeXLHeaders: Unknown xl header version 3».
+    # Ровно так прод и встал 2026-09-05: том писала свежая версия, а закреплён
+    # был cpuv1 от января 2024-го. Оба условия разом выполняет свежий cpuv1.
+    # RELEASE.2025-09-07T16-13-09Z-cpuv1
+    image: minio/minio@sha256:13582eff79c6605a2d315bdd0e70164142ea7e98fc8411e9e10d089502a6d883
     restart: unless-stopped
     logging: *default-logging
     security_opt:
