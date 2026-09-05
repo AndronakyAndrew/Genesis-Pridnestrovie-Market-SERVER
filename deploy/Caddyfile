@@ -1,0 +1,56 @@
+# ============================================================================
+#  Genesis Market — обратный прокси и TLS-терминатор.
+#
+#  Caddy сам получает и продлевает сертификат Let's Encrypt (ACME HTTP-01),
+#  сам редиректит HTTP -> HTTPS и не поддерживает TLS 1.0/1.1 в принципе:
+#  минимум — TLS 1.2. Отдельно отключать их не нужно и нечем.
+#
+#  Переменные (задаются в .env, см. .env.example):
+#    PUBLIC_DOMAIN — домен, на который выписывается сертификат
+#    ACME_EMAIL    — почта для уведомлений Let's Encrypt
+#
+#  Запуск:
+#    I_CONFIRM_PROD_LAUNCH=yes docker compose \
+#      -f docker-compose.yml -f docker-compose.proxy.yml up -d
+# ============================================================================
+{
+	email {$ACME_EMAIL}
+	# Свой заголовок Caddy тоже не афиширует.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+
+	# HSTS выставляет и приложение (за TLS), но прокси обязан продублировать:
+	# заголовок должен быть и на ответах, которые до приложения не дошли.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		-Server
+	}
+
+	# API слушает внутри docker-сети. Наружу порт 8080 не опубликован,
+	# поэтому обойти прокси (и вместе с ним TLS и подсчёт лимитов) нельзя.
+	reverse_proxy api:8080 {
+		# X-Forwarded-For / -Proto / -Host Caddy проставляет сам; приложение
+		# доверяет им только из сети docker-моста (Network__KnownNetworks).
+		header_up X-Real-IP {remote_host}
+
+		# Не держим соединение к приложению дольше, чем оно готово отвечать.
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 30s
+		}
+	}
+
+	# Health-эндпоинты не логируем: это шум от docker healthcheck и мониторинга.
+	@health path /health/live /health/ready
+	log_skip @health
+
+	log {
+		output stdout
+		format json
+	}
+}

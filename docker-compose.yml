@@ -5,6 +5,15 @@
 #
 #  Для разработки используй docker-compose.dev.yml / `make dev-up` —
 #  ОТДЕЛЬНЫЙ, полностью изолированный стек (см. README-dev.md).
+#
+#  Сетевой периметр: наружу не смотрит ни один порт. API слушает только
+#  127.0.0.1 — снаружи он доступен исключительно через обратный прокси
+#  (docker-compose.proxy.yml, TLS на 443) либо через туннель ngrok.
+#  PostgreSQL и MinIO портов на хосте не имеют вообще: доступ к ним —
+#  по внутренней docker-сети, а с рабочей машины — SSH-туннелем:
+#      ssh -L 5434:127.0.0.1:5432 user@host   # но см. ниже: порта на хосте нет,
+#  либо напрямую в контейнер:
+#      docker exec -it genesis-postgres psql -U "$POSTGRES_USER" "$POSTGRES_DB"
 # ============================================================
 
 # Guard от случайного «голого» `docker compose up` в этой папке: без -f
@@ -14,32 +23,53 @@
 # прямо в команде, каждый раз заново:
 #   I_CONFIRM_PROD_LAUNCH=yes docker compose up -d --build      (bash)
 #   $env:I_CONFIRM_PROD_LAUNCH='yes'; docker compose up -d --build   (PowerShell)
+#
+# Внимание: Compose интерполирует файл на ЛЮБОЙ команде, включая `exec`, `ps`
+# и `logs`. Поэтому обслуживающие скрипты (scripts/backup.sh) обращаются к
+# контейнерам напрямую через `docker exec` по container_name, а не через
+# `docker compose exec` — иначе guard ронял бы бэкап по расписанию.
 x-guard: "${I_CONFIRM_PROD_LAUNCH:?ЭТО ПРОД. Для dev используй docker compose -f docker-compose.dev.yml up --build (или make dev-up). Если осознанно поднимаешь прод — добавь I_CONFIRM_PROD_LAUNCH=yes перед командой, каждый раз заново, не в .env.}"
+
+# Ротация логов: без неё json-file растёт без ограничений и рано или поздно
+# забивает диск — сервер встаёт целиком. 10 МБ × 5 файлов на сервис.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 
 services:
   api:
+    container_name: genesis-api
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
     environment:
-      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
+      # Окружение задаётся ЯВНО и обязательно: пустая строка — это не Production,
+      # и приложение молча поднялось бы мимо всех production-проверок конфигурации
+      # (см. Configuration/OptionsValidationSetup.cs). Отсюда `:?` вместо `:-`.
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:?не задан. Укажи Production (или Development/Staging) в .env — пустое значение отключает проверки конфигурации.}
       # Порт, который Kestrel слушает ВНУТРИ контейнера. По умолчанию 8080
       # (внутренняя сеть, с занятым на хосте 8080 не конфликтует).
       ASPNETCORE_HTTP_PORTS: ${ASPNETCORE_HTTP_PORTS:-8080}
       # Уровень логов Serilog из .env.
       Serilog__MinimumLevel__Default: ${LOG_LEVEL}
-      # PostgreSQL.
+      # PostgreSQL. Приложению нужны только DML-права, поэтому оно ходит под
+      # отдельной ролью POSTGRES_APP_USER (создаётся scripts/create-app-role.sql).
+      # Пока роль не заведена — откат на POSTGRES_USER (суперпользователь образа),
+      # чтобы стек не падал; это временное состояние, см. docs/server-security-log.md №11.
       Postgres__Host: postgres
       Postgres__Port: "5432"
       Postgres__Database: ${POSTGRES_DB}
-      Postgres__User: ${POSTGRES_USER}
-      Postgres__Password: ${POSTGRES_PASSWORD}
+      Postgres__User: ${POSTGRES_APP_USER:-${POSTGRES_USER}}
+      Postgres__Password: ${POSTGRES_APP_PASSWORD:-${POSTGRES_PASSWORD}}
       # MinIO.
       Minio__Endpoint: minio:9000
       Minio__AccessKey: ${MINIO_ROOT_USER}
@@ -52,7 +82,8 @@ services:
       Jwt__Audience: ${JWT_AUDIENCE}
       # Ключ HMAC для хеширования IP (сырой IP в базе не хранится).
       Security__IpHashKey: ${IPHASH_KEY}
-      # SMTP для писем подтверждения (пусто -> отправка в лог, dev).
+      # SMTP для писем подтверждения. В Production пустой Smtp__Host — ошибка старта:
+      # иначе код подтверждения ушёл бы в лог вместо письма (см. Auth/EmailSender.cs).
       Smtp__Host: ${SMTP_HOST}
       Smtp__Port: ${SMTP_PORT:-587}
       Smtp__User: ${SMTP_USER}
@@ -60,12 +91,12 @@ services:
       Smtp__From: ${SMTP_FROM:-no-reply@genesis-hq.com}
       Smtp__FromName: ${SMTP_FROM_NAME:-Genesis Market}
       Smtp__UseSsl: ${SMTP_USE_SSL:-true}
-      # Resend (уведомления о новых обращениях формы обратной связи). Пусто -> dev-лог.
+      # Resend (уведомления о новых обращениях формы обратной связи).
       # Домен отправителя должен быть подтверждён в панели Resend (DNS: SPF/DKIM/DMARC).
       Resend__ApiKey: ${RESEND_API_KEY}
       Resend__FromEmail: ${RESEND_FROM_EMAIL}
       Resend__NotificationEmail: ${FEEDBACK_NOTIFICATION_EMAIL:-feedback@genesis-market.com}
-      # Telegram-бот (уведомления/посты через outbox). Пусто -> dev-лог, доставка почтой.
+      # Telegram-бот (уведомления/посты через outbox). Пусто -> публикация выключена.
       Telegram__BotToken: ${TELEGRAM_BOT_TOKEN}
       Telegram__BroadcastChatId: ${TELEGRAM_BROADCAST_CHAT_ID}
       # Публичный адрес фронтенда для ссылок в постах канала.
@@ -84,6 +115,8 @@ services:
       # Доверенные обратные прокси (Caddy как TLS-терминатор): без них RemoteIpAddress —
       # это адрес прокси, и rate-limit/журнал считали бы всех клиентов одним IP.
       # KnownNetworks — CIDR доверенных сетей (docker-мост), KnownProxies — конкретные IP.
+      # Сузь до сети своего прокси, если она известна: чем шире доверие, тем проще
+      # подделать X-Forwarded-For и обойти лимиты по IP.
       Network__KnownNetworks: ${TRUSTED_PROXY_NETWORKS:-172.16.0.0/12}
       Network__KnownProxies: ${TRUSTED_PROXY_IPS}
       Network__ForwardLimit: ${TRUSTED_PROXY_FORWARD_LIMIT:-1}
@@ -95,11 +128,18 @@ services:
       RateLimit__CreateListingPerHour: ${RATE_LIMIT_CREATE_LISTING_PER_HOUR:-10}
       RateLimit__FeedbackAnonPerHour: ${RATE_LIMIT_FEEDBACK_ANON_PER_HOUR:-5}
       RateLimit__FeedbackUserPerHour: ${RATE_LIMIT_FEEDBACK_USER_PER_HOUR:-20}
+      # Лимиты Kestrel: потолок тела запроса и заголовков, таймауты соединения.
+      Kestrel__Limits__MaxRequestBodySizeBytes: ${KESTREL_MAX_BODY_BYTES:-12582912}
+      Kestrel__Limits__MaxRequestHeadersTotalSizeBytes: ${KESTREL_MAX_HEADERS_BYTES:-32768}
+      Kestrel__Limits__KeepAliveTimeoutSeconds: ${KESTREL_KEEPALIVE_SECONDS:-120}
+      Kestrel__Limits__RequestHeadersTimeoutSeconds: ${KESTREL_HEADERS_TIMEOUT_SECONDS:-30}
       # OpenTelemetry: адрес OTLP-коллектора. Пусто -> экспорт выключен (инструментация вхолостую).
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
     ports:
-      # host:container. На хосте 8080 занят другим проектом → публикуем на 8090.
-      - "${API_HOST_PORT:-8090}:${ASPNETCORE_HTTP_PORTS:-8080}"
+      # ТОЛЬКО loopback. Наружу API отдаёт обратный прокси (443) или туннель ngrok,
+      # который тоже подключается к 127.0.0.1. Публикация на 0.0.0.0 означала бы,
+      # что прокси можно обойти, а вместе с ним — и TLS, и подсчёт лимитов по IP.
+      - "127.0.0.1:${API_HOST_PORT:-8090}:${ASPNETCORE_HTTP_PORTS:-8080}"
     # ---- Hardening контейнера ----
     read_only: true                       # ФС только для чтения; писать — только в tmpfs ниже.
     tmpfs:
@@ -115,8 +155,10 @@ services:
       - genesis
 
   postgres:
+    container_name: genesis-postgres
     image: postgres:17-alpine
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     environment:
@@ -125,23 +167,34 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - genesis-postgres:/var/lib/postgresql/data
+      # Скрипт создания ограниченной роли приложения — примонтирован только для
+      # чтения, вручную: `docker exec -i genesis-postgres psql ... -f /sql/create-app-role.sql`.
+      # В /docker-entrypoint-initdb.d НЕ кладём: там он выполнился бы лишь на
+      # пустом томе и молча пропустился бы на существующей базе.
+      - ./scripts/create-app-role.sql:/sql/create-app-role.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      # На хосте 5432 и 5433 заняты другими БД → публикуем на 5434
-      # (миграции EF и GUI-клиенты подключаются к localhost:5434).
-      # Контейнеры между собой ходят на внутренний postgres:5432.
-      # На проде хост-порт можно убрать — API общается с БД по внутренней сети.
-      - "${POSTGRES_HOST_PORT:-5434}:5432"
+    # Порт на хосте не публикуется: снаружи БД не нужна никому. Доступ —
+    # по внутренней сети (api -> postgres:5432), с рабочей машины —
+    # `docker exec -it genesis-postgres psql` либо SSH-туннель до докер-сети.
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
     networks:
       - genesis
 
   minio:
-    image: minio/minio:latest
+    container_name: genesis-minio
+    # Тег закреплён по digest: у MinIO нет стабильных semver-тегов, а :latest
+    # молча меняет версию при каждой пересборке. Обновление — осознанно:
+    #   docker pull minio/minio:latest && docker image inspect --format '{{index .RepoDigests 0}}' minio/minio:latest
+    # и подставить новый digest сюда.
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
+    logging: *default-logging
     security_opt:
       - no-new-privileges:true
     command: server /data --console-address ":9001"
@@ -156,21 +209,15 @@ services:
       timeout: 5s
       retries: 5
     # S3 API и консоль наружу не публикуем — только внутри сети.
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
     networks:
       - genesis
 
-  adminer:
-    image: adminer:latest
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    depends_on:
-      - postgres
-    ports:
-      # На хосте 8080 занят сервером другого проекта → публикуем на 8081.
-      - "${ADMINER_HOST_PORT:-8081}:8080"
-    networks:
-      - genesis
+  # Adminer в проде отсутствует намеренно: веб-клиент БД, открытый в интернет, —
+  # это готовый вход в базу. Он живёт только в docker-compose.dev.yml.
+  # Разовый доступ к прод-базе: `docker exec -it genesis-postgres psql -U ... -d ...`.
 
 volumes:
   genesis-postgres:

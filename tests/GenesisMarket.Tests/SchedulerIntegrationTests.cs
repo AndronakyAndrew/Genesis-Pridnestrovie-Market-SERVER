@@ -20,8 +20,7 @@ namespace GenesisMarket.Tests;
 /// </summary>
 public sealed class SchedulerIntegrationTests : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:17-alpine")
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
         .Build();
 
     private IHost _host = null!;

@@ -23,6 +23,14 @@ public static class OptionsValidationSetup
 
     private static readonly string[] DefaultDbPasswords = ["", "genesis", "postgres", "password"];
 
+    // Окружение обязано быть одним из известных. Пустая строка в ASPNETCORE_ENVIRONMENT —
+    // не «Production» и не «Development»: тогда молча отключились бы все проверки ниже
+    // (см. IsProduction). Поэтому неизвестное значение — ошибка старта, а не тихий режим.
+    private static readonly string[] KnownEnvironments =
+    [
+        Environments.Development, Environments.Staging, Environments.Production,
+    ];
+
     public static IServiceCollection AddGenesisOptionsValidation(
         this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
@@ -38,6 +46,13 @@ public static class OptionsValidationSetup
         public ValidateOptionsResult Validate(string? name, StartupChecks options)
         {
             var errors = new List<string>();
+
+            // Окружение задано явно и распознано. Без этого пустой ASPNETCORE_ENVIRONMENT
+            // дал бы приложению подняться мимо всех production-проверок ниже.
+            if (!KnownEnvironments.Contains(environment.EnvironmentName, StringComparer.OrdinalIgnoreCase))
+                errors.Add(
+                    $"ASPNETCORE_ENVIRONMENT = '{(string.IsNullOrWhiteSpace(environment.EnvironmentName) ? "<пусто>" : environment.EnvironmentName)}' — " +
+                    $"задайте одно из: {string.Join(", ", KnownEnvironments)}.");
 
             // «Секреты только из env» — во всех окружениях: в appsettings их быть не должно.
             errors.AddRange(ScanAppSettingsForSecrets());
@@ -77,13 +92,15 @@ public static class OptionsValidationSetup
         }
 
         // Проверяет, что у секретных ключей нет непустого значения в закоммиченных
-        // appsettings — они должны приходить из окружения. Базовый appsettings.json
-        // (используется в Production) проверяется всегда; локальный appsettings.Development.json
-        // с dev-кредами — исключение (не Production, файл только для локальной разработки).
+        // appsettings — они должны приходить из окружения. Проверяются и базовый
+        // appsettings.json, и файл текущего окружения, включая appsettings.Development.json:
+        // он тоже лежит в git, и попавший в него dev-пароль оказывается публичным.
+        // Локальные креды разработчика — в user-secrets (`dotnet user-secrets set`)
+        // или в .env.dev, см. README-dev.md.
         private IEnumerable<string> ScanAppSettingsForSecrets()
         {
             var files = new List<string> { "appsettings.json" };
-            if (!environment.IsDevelopment())
+            if (!string.IsNullOrWhiteSpace(environment.EnvironmentName))
                 files.Add($"appsettings.{environment.EnvironmentName}.json");
 
             foreach (var file in files)

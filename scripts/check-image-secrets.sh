@@ -33,15 +33,40 @@ else
 fi
 
 echo "[*] Проверяю, что в published appsettings секреты пустые..."
-# У секретных ключей в закоммиченном appsettings.json значения пустые (секреты — из env).
+# ВСЕ файлы appsettings*.json в образе, а не только базовый: appsettings.<Env>.json
+# лежит в репозитории, копируется `COPY . .` и по умолчанию едет в publish —
+# ровно так продовый пароль БД однажды и оказался в слое образа.
 LEAK="$(docker run --rm --entrypoint sh "$IMAGE" -c \
-  'grep -Eo "\"(Key|Password|SecretKey|BotToken|IpHashKey|ApiKey)\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" appsettings.json 2>/dev/null || true')"
+  'grep -Eo "\"(Key|Password|SecretKey|BotToken|IpHashKey|ApiKey)\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" appsettings*.json 2>/dev/null || true')"
 if [[ -n "$LEAK" ]]; then
-  echo "ОШИБКА: в appsettings.json образа есть непустые секреты:" >&2
+  echo "ОШИБКА: в appsettings*.json образа есть непустые секреты:" >&2
   echo "$LEAK" >&2
   FAIL=1
 else
-  echo "    OK: секретные ключи в appsettings.json пусты."
+  echo "    OK: секретные ключи в appsettings*.json пусты."
+fi
+
+echo "[*] Проверяю, что окруженческих appsettings в образе вообще нет..."
+# .dockerignore исключает **/appsettings.*.json — в образе должен остаться
+# только базовый appsettings.json. Появление appsettings.Development.json
+# означает, что правило потеряли.
+EXTRA="$(docker run --rm --entrypoint sh "$IMAGE" -c \
+  'ls appsettings.*.json 2>/dev/null || true')"
+if [[ -n "$EXTRA" ]]; then
+  echo "ОШИБКА: в образе лежат конфигурации окружений (должен быть только appsettings.json):" >&2
+  echo "$EXTRA" >&2
+  FAIL=1
+else
+  echo "    OK: в образе только базовый appsettings.json."
+fi
+
+echo "[*] Проверяю, что процесс не root..."
+IMAGE_UID="$(docker run --rm --entrypoint sh "$IMAGE" -c 'id -u')"
+if [[ "$IMAGE_UID" == "0" ]]; then
+  echo "ОШИБКА: контейнер запускается от root (uid 0) — нужна директива USER." >&2
+  FAIL=1
+else
+  echo "    OK: uid ${IMAGE_UID}, не root."
 fi
 
 if [[ "$FAIL" -eq 0 ]]; then

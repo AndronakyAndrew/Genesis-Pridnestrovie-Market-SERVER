@@ -14,7 +14,8 @@ public static class AuthServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddGenesisAuth(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHostEnvironment environment)
     {
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.Section));
         services.Configure<VerificationOptions>(configuration.GetSection(VerificationOptions.Section));
@@ -47,13 +48,34 @@ public static class AuthServiceCollectionExtensions
         services.AddScoped<SecurityStampValidator>();
 
         // ---- Подтверждение контактов (почта/телефон) ----
-        // SMS пока заглушка (лог); e-mail — реальный SMTP, если задан Smtp:Host,
-        // иначе dev-лог (код виден локально).
-        services.AddSingleton<ISmsSender, DevSmsSender>();
-        if (string.IsNullOrWhiteSpace(configuration["Smtp:Host"]))
-            services.AddSingleton<IEmailSender, LogEmailSender>();
+        // Выбор реализации зависит НЕ ТОЛЬКО от конфигурации, но и от окружения:
+        // лог-заглушки печатают код подтверждения, телефон и адрес открытым текстом,
+        // поэтому вне Development они недопустимы. Пустая конфигурация вне
+        // разработки — это ошибка развёртывания, а не повод тихо писать в лог.
+        var isDevelopment = environment.IsDevelopment();
+
+        // SMS-провайдера в проекте нет: в разработке код виден в логе, иначе канал
+        // честно отвечает «недоступен» (503), см. UnavailableSmsSender.
+        if (isDevelopment)
+            services.AddSingleton<ISmsSender, DevSmsSender>();
         else
+            services.AddSingleton<ISmsSender, UnavailableSmsSender>();
+
+        if (!string.IsNullOrWhiteSpace(configuration["Smtp:Host"]))
+        {
             services.AddSingleton<IEmailSender, SmtpEmailSender>();
+        }
+        else if (isDevelopment)
+        {
+            services.AddSingleton<IEmailSender, LogEmailSender>();
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                $"Smtp:Host не задан, а окружение — {environment.EnvironmentName}. " +
+                "Без SMTP код подтверждения писался бы в лог вместе с адресом получателя. " +
+                "Задайте SMTP_HOST (и SMTP_USER/SMTP_PASSWORD) в окружении.");
+        }
 
         services.AddSingleton<VerificationEmailRenderer>();
         services.AddSingleton<IVerificationSender, VerificationSender>();

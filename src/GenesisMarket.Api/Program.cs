@@ -12,7 +12,6 @@ using GenesisMarket.Api.Security;
 using GenesisMarket.Api.Seo;
 using GenesisMarket.Api.Trust;
 using GenesisMarket.Infrastructure;
-using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
 using Serilog.Formatting.Compact;
@@ -34,6 +33,22 @@ try
         // Маскирование секретов при деструктуризации ({@obj}): password/token/phone/email → ***.
         .Destructure.With(new MaskingDestructuringPolicy())
         .WriteTo.Console(new RenderedCompactJsonFormatter()));
+
+    // ---- Kestrel: потолки запроса и таймауты ----
+    // Без них работают дефолты (тело 30 МБ), а самый крупный легитимный запрос —
+    // загрузка фото на 10 МБ. Значения настраиваются из окружения (секция Kestrel:Limits),
+    // чтобы менять их без пересборки образа. AddServerHeader=false убирает «Server: Kestrel»:
+    // сообщать сканерам, чем именно отвечает сервер, незачем.
+    builder.WebHost.ConfigureKestrel(kestrel =>
+    {
+        var limits = builder.Configuration.GetSection("Kestrel:Limits");
+
+        kestrel.AddServerHeader = false;
+        kestrel.Limits.MaxRequestBodySize = limits.GetValue("MaxRequestBodySizeBytes", 12L * 1024 * 1024);
+        kestrel.Limits.MaxRequestHeadersTotalSize = limits.GetValue("MaxRequestHeadersTotalSizeBytes", 32 * 1024);
+        kestrel.Limits.KeepAliveTimeout = TimeSpan.FromSeconds(limits.GetValue("KeepAliveTimeoutSeconds", 120));
+        kestrel.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(limits.GetValue("RequestHeadersTimeoutSeconds", 30));
+    });
 
     // ---- CORS: origin-ы строго из конфигурации, без AllowAnyOrigin ----
     const string corsPolicy = "GenesisCors";
@@ -68,7 +83,7 @@ try
     builder.Services.AddInfrastructure(builder.Configuration);
 
     // ---- Собственная аутентификация: JWT + BCrypt (Identity не используем) ----
-    builder.Services.AddGenesisAuth(builder.Configuration);
+    builder.Services.AddGenesisAuth(builder.Configuration, builder.Environment);
 
     // ---- Жизненный цикл объявлений (пороги, премодерация, просмотры, валидаторы) ----
     builder.Services.AddListingsFeature(builder.Configuration);
@@ -80,7 +95,7 @@ try
     builder.Services.AddModerationFeature();
 
     // ---- Форма обратной связи: письма через Resend (уведомление на служебный адрес) ----
-    builder.Services.AddFeedbackFeature(builder.Configuration);
+    builder.Services.AddFeedbackFeature(builder.Configuration, builder.Environment);
 
     // ---- Транзакционный outbox: доставка уведомлений (email/Telegram) и удаление объектов ----
     builder.Services.AddOutbox(builder.Configuration);
@@ -144,10 +159,12 @@ try
     }).AllowAnonymous().DisableRateLimiting();
 
     // /health/ready — готовность: Postgres и MinIO (тег "ready").
+    // Тело — только сводный статус ("Healthy"/"Unhealthy"). Детальный ответ
+    // (имена проверок, тексты исключений) наружу не отдаём: эндпоинт анонимный,
+    // и это была бы бесплатная разведка стека и его состояния.
     app.MapHealthChecks("/health/ready", new HealthCheckOptions
     {
-        Predicate = check => check.Tags.Contains("ready"),
-        ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+        Predicate = check => check.Tags.Contains("ready")
     }).AllowAnonymous().DisableRateLimiting();
 
     app.Run();

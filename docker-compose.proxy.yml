@@ -1,0 +1,69 @@
+# ============================================================================
+#  Genesis Market — обратный прокси (Caddy) с автоматическим TLS.
+#  Накладывается ПОВЕРХ docker-compose.yml, отдельно не поднимается:
+#
+#    I_CONFIRM_PROD_LAUNCH=yes docker compose \
+#      -f docker-compose.yml -f docker-compose.proxy.yml up -d
+#
+#  Единственный сервис во всём стеке, который смотрит в интернет. API остаётся
+#  на 127.0.0.1 (см. docker-compose.yml), поэтому прокси нельзя обойти, а вместе
+#  с ним нельзя обойти ни TLS, ни подсчёт rate-limit по реальному IP.
+#
+#  Требуется в .env:
+#    PUBLIC_DOMAIN=market.example.com
+#    ACME_EMAIL=admin@example.com
+#  и A/AAAA-запись домена на этот сервер (иначе ACME-проверка не пройдёт).
+#
+#  После запуска сузь доверие к прокси: TRUSTED_PROXY_NETWORKS до подсети
+#  сети genesis (`docker network inspect ...-genesis`), а не весь 172.16.0.0/12.
+# ============================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  caddy:
+    container_name: genesis-caddy
+    # Тег закреплён по минорной версии: патчи безопасности прилетают, мажор — нет.
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - api
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?не задан. Домен, на который Caddy выпишет сертификат.}
+      ACME_EMAIL: ${ACME_EMAIL:?не задан. Почта для уведомлений Let's Encrypt.}
+    ports:
+      # Единственные порты стека, открытые наружу. 80 нужен не только для
+      # редиректа, но и для ACME HTTP-01 — без него сертификат не выпустится.
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"     # HTTP/3
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - genesis-caddy-data:/data      # сертификаты и ключи ACME — не потерять при пересоздании
+      - genesis-caddy-config:/config
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # Единственная нужная привилегия: слушать порты ниже 1024.
+      - NET_BIND_SERVICE
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - genesis
+
+volumes:
+  genesis-caddy-data:
+  genesis-caddy-config:

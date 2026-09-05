@@ -104,6 +104,36 @@ Backend — ASP.NET Core (проект-сиблинг `SERVER/`). Адрес в
 
 <!-- BEGIN:nextjs-agent-rules -->
 
+## Правила инфраструктуры и безопасности сервера
+
+Закреплено после прогона 2026-09-05 (`docs/server-security-log.md`).
+Каждая строка — следствие конкретной находки.
+
+- Секретов нет ни в одном `appsettings*.json`, включая `appsettings.Development.json`:
+  локальные креды — в user-secrets или `.env.dev`. Проверяется на старте и в CI.
+- Наружу (`0.0.0.0`) смотрит только обратный прокси. API — на `127.0.0.1`,
+  PostgreSQL и MinIO — без `ports` вообще.
+- Adminer и любой другой веб-клиент БД — только в `docker-compose.dev.yml`.
+- `bin/`, `obj/`, `backups/`, `db-backups/` в git не попадают.
+- `.dockerignore` исключает `**/appsettings.*.json`; в образе только базовый `appsettings.json`.
+- `ASPNETCORE_ENVIRONMENT` задаётся явно; неизвестное или пустое значение роняет старт.
+- Заглушки, пишущие в лог вместо отправки (SMS/SMTP/Resend), регистрируются
+  только в Development; вне его отсутствие конфигурации — ошибка старта.
+- Любое загруженное изображение проходит через `IImageProcessor` до записи
+  в хранилище: тип по magic bytes, снятие EXIF/IPTC/XMP, перекодирование.
+- Приложение ходит в БД под ролью с правами только на DML (`POSTGRES_APP_USER`).
+  DDL — отдельный шаг деплоя `scripts/migrate.sh` под владельцем схемы.
+- Миграции не накатываются при старте приложения.
+- Образы закреплены по версии или digest; `:latest` не используется.
+- У каждого сервиса в compose есть `logging` с ротацией и лимиты `mem_limit`/`cpus`/`pids_limit`.
+- Публичные эндпоинты не раскрывают состав стека: `/health/ready` отдаёт только сводный статус.
+- Заголовки безопасности и отсутствие `Server` проверяются `scripts/smoke-deploy.sh`
+  на реально поднятом стеке, а не по конфигурации.
+- Обслуживающие скрипты обращаются к контейнерам через `docker exec` по имени,
+  не через `docker compose exec` (guard прод-файла ломает cron).
+- Уязвимые пакеты и секреты в истории роняют CI, а не предупреждают.
+- Actions в workflow закреплены по SHA; `pull_request_target` не используется.
+
 # This is NOT the Next.js you know
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.

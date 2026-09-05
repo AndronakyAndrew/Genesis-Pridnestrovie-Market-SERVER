@@ -2,6 +2,7 @@ using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
+using GenesisMarket.Infrastructure.Imaging;
 using GenesisMarket.Infrastructure.Persistence;
 using GenesisMarket.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authorization;
@@ -22,7 +23,8 @@ public class MeController(
     IObjectStorage storage,
     IRefreshTokenService refreshTokens,
     SecurityStampValidator securityStamp,
-    IOptions<PhoneOptions> phoneOptions) : ApiControllerBase
+    IOptions<PhoneOptions> phoneOptions,
+    IImageProcessor imageProcessor) : ApiControllerBase
 {
     private const long MaxAvatarBytes = 5 * 1024 * 1024;
 
@@ -75,12 +77,15 @@ public class MeController(
     }
 
     /// <summary>
-    /// Загрузка аватара. Пока минимальная (валидация типа по содержимому + размер,
-    /// серверный ключ, сохранение в объектном хранилище). Полная обработка
-    /// (ресайз, снятие EXIF, WebP, presigned URL) — шаг 8; заменит эту реализацию.
+    /// Загрузка аватара. Проходит тот же конвейер, что и фото объявлений
+    /// (<see cref="IImageProcessor"/>): тип по magic bytes, защита от decompression bomb,
+    /// снятие EXIF/IPTC/XMP и перекодирование в WebP — всё ДО записи в хранилище.
+    /// Снятие EXIF здесь принципиально: в метаданных снимка лежат GPS-координаты,
+    /// а аватар отдаётся анонимно (<c>GET /api/users/{id}/avatar</c>).
     /// </summary>
     [HttpPost("avatar")]
     [RequestSizeLimit(MaxAvatarBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxAvatarBytes)]
     public async Task<ActionResult<AvatarResponse>> UploadAvatar(IFormFile file, CancellationToken ct)
     {
         if (file is null || file.Length == 0)
@@ -90,14 +95,22 @@ public class MeController(
 
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms, ct);
-        var bytes = ms.ToArray();
 
-        // Тип определяем ПО СОДЕРЖИМОМУ (magic bytes), не по расширению/Content-Type.
-        var detected = DetectImage(bytes);
-        if (detected is null)
+        ProcessedImage processed;
+        try
+        {
+            processed = await imageProcessor.ProcessAsync(ms, ct);
+        }
+        catch (UnsupportedImageFormatException)
+        {
             return Problem(title: "Поддерживаются только JPEG, PNG, WebP",
                 statusCode: StatusCodes.Status400BadRequest);
-        var (ext, contentType) = detected.Value;
+        }
+        catch (ImageTooLargeException)
+        {
+            return Problem(title: "Изображение слишком большое",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
 
         var userId = CurrentUserId()!.Value;
         var profile = await db.Profiles.FirstOrDefaultAsync(pr => pr.UserId == userId, ct);
@@ -105,9 +118,9 @@ public class MeController(
             return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
 
         // Имя файла из запроса не используется — ключ генерирует сервер.
-        var key = $"avatars/{userId}/{Guid.CreateVersion7()}.{ext}";
-        ms.Position = 0;
-        await storage.PutAsync(key, ms, ms.Length, contentType, ct);
+        var key = $"avatars/{userId}/{Guid.CreateVersion7()}.webp";
+        await using (var os = new MemoryStream(processed.Original))
+            await storage.PutAsync(key, os, os.Length, "image/webp", ct);
 
         profile.AvatarUrl = key;
         profile.UpdatedAt = DateTimeOffset.UtcNow;
@@ -182,15 +195,4 @@ public class MeController(
     private string BuildAvatarUrl(Guid userId, DateTimeOffset? updatedAt) =>
         $"{Request.Scheme}://{Request.Host}/api/users/{userId}/avatar?v={updatedAt?.UtcTicks ?? 0}";
 
-    private static (string Ext, string ContentType)? DetectImage(byte[] b)
-    {
-        if (b.Length >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF)
-            return ("jpg", "image/jpeg");
-        if (b.Length >= 8 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47)
-            return ("png", "image/png");
-        if (b.Length >= 12 && b[0] == (byte)'R' && b[1] == (byte)'I' && b[2] == (byte)'F' && b[3] == (byte)'F'
-            && b[8] == (byte)'W' && b[9] == (byte)'E' && b[10] == (byte)'B' && b[11] == (byte)'P')
-            return ("webp", "image/webp");
-        return null;
-    }
 }

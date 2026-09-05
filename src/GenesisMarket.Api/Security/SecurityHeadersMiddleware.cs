@@ -10,6 +10,12 @@ public sealed class SecurityHeadersMiddleware(RequestDelegate next)
     // Строгий CSP для JSON-API: ресурсы не грузятся, кадрирование запрещено.
     private const string ApiCsp = "default-src 'none'; frame-ancestors 'none'";
 
+    // Мощные возможности браузера, которые API не использует ни в одном ответе.
+    private const string PermissionsPolicy =
+        "accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), " +
+        "fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), " +
+        "midi=(), payment=(), usb=(), xr-spatial-tracking=()";
+
     // Swagger UI рендерит инлайновые скрипты/стили и data:-изображения.
     private const string SwaggerCsp =
         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
@@ -22,6 +28,9 @@ public sealed class SecurityHeadersMiddleware(RequestDelegate next)
         headers["X-Content-Type-Options"] = "nosniff";
         headers["X-Frame-Options"] = "DENY";
         headers["Referrer-Policy"] = "no-referrer";
+        // JSON-API не пользуется ни одним из этих API браузера. Заголовок отзывает
+        // их и для всего, что вздумает встроить ответ в свой контекст.
+        headers["Permissions-Policy"] = PermissionsPolicy;
 
         var isSwagger = context.Request.Path.StartsWithSegments("/swagger");
         headers["Content-Security-Policy"] = isSwagger ? SwaggerCsp : ApiCsp;

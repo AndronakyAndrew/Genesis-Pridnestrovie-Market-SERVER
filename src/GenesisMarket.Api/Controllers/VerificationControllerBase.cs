@@ -23,6 +23,9 @@ public abstract class VerificationControllerBase(VerificationService verificatio
             SendStatus.NoTarget => Problem(title: "Контакт не указан", statusCode: StatusCodes.Status400BadRequest),
             SendStatus.Cooldown => TooManyRequests(result.RetryAfterSeconds,
                 "Код уже отправлен, подождите перед повторной отправкой"),
+            SendStatus.ChannelUnavailable => Problem(
+                title: "Подтверждение по этому каналу временно недоступно",
+                statusCode: StatusCodes.Status503ServiceUnavailable),
             _ => Problem(statusCode: StatusCodes.Status400BadRequest)
         };
     }

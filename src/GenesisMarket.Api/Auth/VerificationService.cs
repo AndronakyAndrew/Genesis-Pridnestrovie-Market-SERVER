@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace GenesisMarket.Api.Auth;
 
-public enum SendStatus { Ok, AlreadyVerified, NoTarget, Cooldown }
+public enum SendStatus { Ok, AlreadyVerified, NoTarget, Cooldown, ChannelUnavailable }
 public enum VerifyStatus { Ok, AlreadyVerified, NoCode, Expired, TooManyAttempts, Invalid }
 
 public sealed record SendResult(SendStatus Status, DateTimeOffset? ExpiresAt = null, int RetryAfterSeconds = 0);
@@ -66,7 +66,18 @@ public sealed class VerificationService(
         });
         await db.SaveChangesAsync(ct);
 
-        await sender.SendCodeAsync(channel, target, code, _o.CodeTtlMinutes, ct);
+        try
+        {
+            await sender.SendCodeAsync(channel, target, code, _o.CodeTtlMinutes, ct);
+        }
+        catch (VerificationChannelUnavailableException)
+        {
+            // Канал не настроен (например, нет SMS-провайдера). Сохранённый код
+            // никому не отправлен и просто истечёт; наружу — честное «недоступно»,
+            // а не 500 и не молчаливый успех с кодом в логе.
+            return new SendResult(SendStatus.ChannelUnavailable);
+        }
+
         return new SendResult(SendStatus.Ok, expiresAt);
     }
 

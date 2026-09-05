@@ -1,0 +1,193 @@
+# ============================================================================
+#  Genesis Market — обязательная проверка перед мержем и деплоем.
+#
+#  Что здесь принципиально:
+#   * секретов у этого workflow нет вообще — брать нечего;
+#   * триггер pull_request (не pull_request_target): чужой PR исполняется
+#     БЕЗ доступа к секретам и с правами только на чтение;
+#   * все actions закреплены по коммиту (SHA), а не по плавающему тегу:
+#     тег можно переставить на другой коммит, SHA — нет;
+#   * gitleaks и проверка уязвимых зависимостей РОНЯЮТ сборку, а не
+#     предупреждают. Пароль продовой БД пролежал в публичном репозитории
+#     месяц именно потому, что такой проверки не было.
+# ============================================================================
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+
+jobs:
+  secrets:
+    name: Секреты в истории
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v5.0.0
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          # Полная история: секрет мог попасть в любой коммит, а не только в HEAD.
+          fetch-depth: 0
+
+      # gitleaks/gitleaks-action@v2.3.9
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Отдельная проверка на то, с чего всё началось: конфигурации окружений
+      # не должны содержать заполненных секретов, даже «просто dev-ных».
+      - name: appsettings без секретов
+        run: |
+          set -euo pipefail
+          found=$(grep -REn '"(Key|Password|SecretKey|BotToken|IpHashKey|ApiKey)"[[:space:]]*:[[:space:]]*"[^"]+"' \
+            --include='appsettings*.json' src/ || true)
+          if [[ -n "$found" ]]; then
+            echo "::error::В appsettings есть непустые секреты. Секреты — только из окружения."
+            echo "$found"
+            exit 1
+          fi
+          echo "OK: секретные ключи в appsettings пусты."
+
+  build:
+    name: Сборка, тесты, зависимости
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      # actions/setup-dotnet@v5.0.0
+      - uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: restore
+        run: dotnet restore GenesisMarket.slnx
+
+      # TreatWarningsAsErrors уже включён в Directory.Build.props.
+      - name: build
+        run: dotnet build GenesisMarket.slnx --no-restore -c Release
+
+      # Уязвимые пакеты роняют сборку. NU1901-1904 в проекте понижены до
+      # предупреждений, поэтому проверяем отдельной командой и парсим вывод.
+      - name: Уязвимые зависимости
+        run: |
+          set -euo pipefail
+          report=$(dotnet list GenesisMarket.slnx package --vulnerable --include-transitive)
+          echo "$report"
+          if grep -qE '^\s+>\s' <<<"$report"; then
+            echo "::error::Найдены уязвимые пакеты — обновите версии перед мержем."
+            exit 1
+          fi
+          echo "OK: уязвимых пакетов нет."
+
+      # Интеграционные тесты поднимают PostgreSQL через Testcontainers —
+      # на ubuntu-latest docker доступен из коробки.
+      - name: test
+        run: dotnet test GenesisMarket.slnx --no-build -c Release --logger "console;verbosity=normal"
+
+  image:
+    name: Образ без секретов
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      - name: Сборка образа
+        run: docker build -t genesis-api:ci -f Dockerfile .
+
+      # Слои образа не должны содержать секретов, конфигураций окружений
+      # и не должны запускаться от root.
+      - name: Проверка слоёв
+        run: IMAGE=genesis-api:ci ./scripts/check-image-secrets.sh
+
+  smoke:
+    name: Smoke-тест стека
+    runs-on: ubuntu-latest
+    needs: [build, image]
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      # Полноценный прод-стек с фиктивными, но валидными секретами.
+      # Конфигурация НЕ мокается: поднимается настоящий compose-стек,
+      # и smoke-тест ходит по нему снаружи, как посторонний.
+      - name: Поднять стек
+        run: |
+          set -euo pipefail
+          cat > .env <<'ENVEOF'
+          ASPNETCORE_ENVIRONMENT=Production
+          ASPNETCORE_HTTP_PORTS=8080
+          LOG_LEVEL=Warning
+          POSTGRES_DB=genesis
+          POSTGRES_USER=genesis
+          POSTGRES_PASSWORD=ci-only-not-a-real-password-9f3a1c
+          MINIO_ROOT_USER=ci-minio-user
+          MINIO_ROOT_PASSWORD=ci-minio-password-7d2b
+          MINIO_BUCKET=genesis-photos
+          MINIO_USE_SSL=false
+          JWT_SECRET=ci-only-jwt-signing-key-at-least-32-bytes-long-0123456789
+          JWT_ISSUER=genesis-market
+          JWT_AUDIENCE=genesis-market
+          IPHASH_KEY=ci-only-iphash-key-at-least-32-bytes-long-0123456789
+          SMTP_HOST=smtp.invalid
+          SMTP_USER=ci
+          SMTP_PASSWORD=ci
+          RESEND_API_KEY=re_ci_only_not_a_real_key
+          RESEND_FROM_EMAIL=ci@genesis-market.invalid
+          CORS_ALLOWED_ORIGINS=https://ci.genesis-market.invalid
+          API_HOST_PORT=8090
+          ENVEOF
+          I_CONFIRM_PROD_LAUNCH=yes docker compose up -d --build
+
+      # Приложение миграции при старте не накатывает (роли приложения не нужны
+      # права на DDL), поэтому на пустой базе оно не поднимется, пока схемы нет:
+      # Quartz сразу ищет свои qrtz_*. Тот же шаг, что и при реальном деплое.
+      - name: Миграции
+        run: |
+          set -euo pipefail
+          GENESIS_NETWORK="$(docker network ls --filter name=_genesis --format '{{.Name}}' | head -1)" \
+            ./scripts/migrate.sh
+
+      # Роль приложения с правами только на DML — так же, как в проде.
+      - name: Ограниченная роль приложения
+        run: |
+          set -euo pipefail
+          docker exec -i genesis-postgres psql -U genesis -d genesis \
+            -v app_user=genesis_app -v app_password=ci-app-role-password-4b7e \
+            -f /sql/create-app-role.sql
+          printf 'POSTGRES_APP_USER=genesis_app\nPOSTGRES_APP_PASSWORD=ci-app-role-password-4b7e\n' >> .env
+          I_CONFIRM_PROD_LAUNCH=yes docker compose up -d api
+
+      - name: Дождаться готовности
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 3 http://127.0.0.1:8090/health/live >/dev/null 2>&1; then
+              echo "API поднялся за ${i} c."; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::API не поднялся за 120 c."
+          I_CONFIRM_PROD_LAUNCH=yes docker compose logs --tail 100 api
+          exit 1
+
+      - name: Smoke-тест
+        run: ./scripts/smoke-deploy.sh
+
+      - name: Логи при провале
+        if: failure()
+        run: I_CONFIRM_PROD_LAUNCH=yes docker compose logs --tail 200
+
+      - name: Снести стек
+        if: always()
+        run: I_CONFIRM_PROD_LAUNCH=yes docker compose down -v || true

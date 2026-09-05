@@ -1,10 +1,15 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Metadata.Profiles.Exif;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 using Xunit;
 
 namespace GenesisMarket.Tests;
@@ -134,7 +139,7 @@ public class ProfileTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
         var client = await AuthedClient(email);
 
         using var form = new MultipartFormDataContent();
-        form.Add(new ByteArrayContent([0xFF, 0xD8, 0xFF]), "file", "avatar.jpg");
+        form.Add(new ByteArrayContent(JpegWithGps()), "file", "avatar.jpg");
         var upload = await client.PostAsync("/api/me/avatar", form);
         Assert.Equal(HttpStatusCode.OK, upload.StatusCode);
 
@@ -151,10 +156,82 @@ public class ProfileTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
 
         var avatar = await factory.CreateClient().GetAsync($"/api/users/{userId}/avatar");
         Assert.Equal(HttpStatusCode.OK, avatar.StatusCode);
-        Assert.Equal("image/jpeg", avatar.Content.Headers.ContentType?.MediaType);
+        // Аватар нормализуется в WebP тем же конвейером, что и фото объявлений.
+        Assert.Equal("image/webp", avatar.Content.Headers.ContentType?.MediaType);
+    }
+
+    /// <summary>
+    /// Регрессия: аватар — публичный анонимный эндпоинт, а в EXIF снимка лежат
+    /// GPS-координаты, то есть домашний адрес продавца. Загрузка обязана снимать
+    /// метаданные ДО записи в хранилище (раньше байты клали как пришли).
+    /// </summary>
+    [Fact]
+    public async Task Uploaded_avatar_with_gps_has_no_exif_after_processing()
+    {
+        var email = Unique("avatar-exif");
+        var userId = await factory.SeedUserAsync(email, Password);
+        var client = await AuthedClient(email);
+
+        var jpeg = JpegWithGps();
+        // Исходник действительно содержит GPS — иначе тест проверял бы пустоту.
+        using (var src = Image.Load(jpeg))
+            Assert.NotNull(src.Metadata.ExifProfile);
+
+        using var form = new MultipartFormDataContent();
+        form.Add(new ByteArrayContent(jpeg), "file", "avatar.jpg");
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/me/avatar", form)).StatusCode);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var key = await db.Profiles.AsNoTracking()
+            .Where(p => p.UserId == userId).Select(p => p.AvatarUrl!).FirstAsync();
+
+        Assert.True(factory.Storage.TryGet(key, out var stored));
+        Assert.Equal("WEBP", Image.DetectFormat(stored).Name, ignoreCase: true);
+
+        using var processed = Image.Load(stored);
+        Assert.Null(processed.Metadata.ExifProfile);
+        Assert.Null(processed.Metadata.IptcProfile);
+        Assert.Null(processed.Metadata.XmpProfile);
+    }
+
+    /// <summary>Не-изображение с «правильным» именем и Content-Type в аватары не проходит.</summary>
+    [Fact]
+    public async Task Avatar_upload_rejects_content_that_is_not_an_image()
+    {
+        var email = Unique("avatar-fake");
+        await factory.SeedUserAsync(email, Password);
+        var client = await AuthedClient(email);
+
+        using var form = new MultipartFormDataContent();
+        var payload = new ByteArrayContent("<?php system($_GET['c']); ?>"u8.ToArray());
+        payload.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+        form.Add(payload, "file", "avatar.jpg");
+
+        var resp = await client.PostAsync("/api/me/avatar", form);
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
     // ---- helpers ----
+
+    /// <summary>Настоящий JPEG с GPS-координатами в EXIF — вход для проверок обработки.</summary>
+    private static byte[] JpegWithGps()
+    {
+        using var image = new Image<Rgba32>(600, 600);
+        image.Mutate(x => x.BackgroundColor(Color.CornflowerBlue));
+
+        var exif = new ExifProfile();
+        exif.SetValue(ExifTag.GPSLatitudeRef, "N");
+        exif.SetValue(ExifTag.GPSLatitude, [new Rational(46), new Rational(50), new Rational(0)]);
+        exif.SetValue(ExifTag.GPSLongitudeRef, "E");
+        exif.SetValue(ExifTag.GPSLongitude, [new Rational(29), new Rational(38), new Rational(0)]);
+        exif.SetValue(ExifTag.Make, "GenesisTestCam");
+        image.Metadata.ExifProfile = exif;
+
+        using var ms = new MemoryStream();
+        image.SaveAsJpeg(ms);
+        return ms.ToArray();
+    }
 
     private static string Unique(string prefix) => $"{prefix}-{Guid.NewGuid():N}@test.io";
 

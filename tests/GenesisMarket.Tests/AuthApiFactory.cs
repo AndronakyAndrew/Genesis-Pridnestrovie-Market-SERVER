@@ -25,8 +25,7 @@ namespace GenesisMarket.Tests;
 /// </summary>
 public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:17-alpine")
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
         .Build();
 
     public async Task InitializeAsync()
