@@ -189,7 +189,7 @@ dotnet ef database update  -p src/GenesisMarket.Infrastructure -s src/GenesisMar
 - **Логотип** `gm-logo.png` вшивается в письмо как inline-вложение (`cid:`) — рендерится сразу, без хостинга картинки.
 - Письмо стало **multipart/alternative**: HTML + текстовая версия (для клиентов без HTML).
 - `VerificationEmailRenderer` читает шаблон и логотип из встроенных ресурсов **один раз при старте** и кеширует; подстановка — `string.Replace`.
-- **Имя отправителя** (`Smtp:FromName`, по умолчанию «Genesis Market») — получатель видит `Genesis Market ‹адрес›` вместо голого e-mail. Реальная отправка — Gmail SMTP (App Password из env); при пустом `Smtp:Host` — dev-фолбэк в лог.
+- **Имя отправителя** (`Smtp:FromName`, по умолчанию «Местная площадка Genesis») — получатель видит `Местная площадка Genesis ‹адрес›` вместо голого e-mail. Реальная отправка — SMTP-relay Resend (`smtp.resend.com:587`, STARTTLS, API-ключ из env); при пустом `Smtp:Host` — dev-фолбэк в лог.
 - Плейсхолдер брендового домена отправителя выровнен на будущий `genesis-hq.com`.
 
 **Почему именно так:**

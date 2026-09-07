@@ -16,7 +16,7 @@ public sealed class SeoOptions
     public string WebBaseUrl { get; set; } = "";
 
     /// <summary>Название площадки для суффикса &lt;title&gt; и поля seller/publisher в JSON-LD.</summary>
-    public string SiteName { get; set; } = "Genesis Market";
+    public string SiteName { get; set; } = "Местная площадка Genesis";
 
     /// <summary>
     /// Срок жизни presigned-ссылки на og:image превью. Длинный намеренно: og-картинку

@@ -59,9 +59,9 @@ public sealed class ResendEmailService : IResendEmailService
         const string subject = "Мы получили ваше сообщение";
         var html = "<div style=\"font-family:Arial,sans-serif;font-size:15px;color:#0F1117\">"
                    + "<p>Здравствуйте!</p>"
-                   + "<p>Мы получили ваше обращение в Genesis Market и ответим на указанный контакт, как только сможем.</p>"
+                   + "<p>Мы получили ваше обращение и ответим на указанный контакт, как только сможем.</p>"
                    + "</div>";
-        const string text = "Здравствуйте!\n\nМы получили ваше обращение в Genesis Market и ответим на указанный контакт, как только сможем.";
+        const string text = "Здравствуйте!\n\nМы получили ваше обращение и ответим на указанный контакт, как только сможем.";
         return SendAsync(feedback.Contact, subject, html, text, feedback, ct);
     }
 

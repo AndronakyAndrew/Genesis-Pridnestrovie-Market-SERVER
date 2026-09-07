@@ -1,6 +1,6 @@
 namespace GenesisMarket.Api.Auth;
 
-/// <summary>Отправка SMS. Код подтверждения телефона шлётся напрямую от Genesis Market.</summary>
+/// <summary>Отправка SMS. Код подтверждения телефона шлётся напрямую от «Местной площадки Genesis».</summary>
 public interface ISmsSender
 {
     Task SendAsync(string phoneE164, string message, CancellationToken ct);

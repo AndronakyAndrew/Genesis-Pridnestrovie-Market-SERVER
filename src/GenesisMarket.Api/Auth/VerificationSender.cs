@@ -23,7 +23,7 @@ public sealed class VerificationSender(
         {
             VerificationChannel.Phone => sms.SendAsync(
                 target,
-                $"Genesis Market: код подтверждения {code}. Действует {ttlMinutes} мин.",
+                $"Местная площадка Genesis: код подтверждения {code}. Действует {ttlMinutes} мин.",
                 ct),
             VerificationChannel.Email => SendEmailAsync(target, code, ct),
             _ => Task.CompletedTask

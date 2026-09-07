@@ -22,14 +22,14 @@ public sealed class VerificationEmailRenderer
             .Replace("{{LOGO_URL}}", $"cid:{LogoContentId}");
 
         var text =
-            $"Genesis Market — код подтверждения\n\n" +
+            $"Местная площадка Genesis — код подтверждения\n\n" +
             $"Ваш код: {code}\n" +
             $"Действует {CodeTtlMinutes} минут.\n\n" +
-            "Никому не сообщайте этот код. Если вы не регистрировались на Genesis Market — " +
+            "Никому не сообщайте этот код. Если вы не регистрировались на нашей площадке — " +
             "просто проигнорируйте это письмо.";
 
         return new RenderedEmail(
-            "Genesis Market — код подтверждения",
+            "Местная площадка Genesis — код подтверждения",
             html,
             text,
             new InlineImage(LogoContentId, _logo, "image/png"));

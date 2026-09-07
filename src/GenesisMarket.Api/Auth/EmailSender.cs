@@ -21,7 +21,7 @@ public sealed class SmtpOptions
     public string From { get; set; } = "no-reply@genesis-hq.com";
 
     /// <summary>Отображаемое имя отправителя (получатель видит его вместо адреса).</summary>
-    public string FromName { get; set; } = "Genesis Market";
+    public string FromName { get; set; } = "Местная площадка Genesis";
 
     public bool UseSsl { get; set; } = true;
 }
