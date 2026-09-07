@@ -85,13 +85,29 @@ check_header "Content-Security-Policy" "default-src 'none'"
 check_header "Permissions-Policy"     "geolocation=()"
 
 # Версия сервера наружу не уходит.
-for leaky in "Server" "X-Powered-By" "X-AspNet-Version"; do
+for leaky in "X-Powered-By" "X-AspNet-Version"; do
   if grep -qi "^${leaky}:" <<<"$HEADERS"; then
     bad "отдаётся заголовок ${leaky}: $(grep -i "^${leaky}:" <<<"$HEADERS" | tr -d '\r')"
   else
     ok "заголовка ${leaky} нет"
   fi
 done
+
+# Server — отдельно. Приложение его не отдаёт (AddServerHeader = false), но при
+# публикации через Cloudflare Tunnel edge дописывает свой `Server: cloudflare`
+# уже после нас. Снять его на стороне зоны нельзя, и наш стек он не раскрывает:
+# что сайт за Cloudflare, видно и по DNS. Поэтому послабление ровно одно и
+# только на ответах, прошедших через edge (их выдаёт заголовок cf-ray):
+# значение `cloudflare` и ничего кроме. На loopback Server не допускается вовсе.
+SERVER_LINE="$(grep -i '^Server:' <<<"$HEADERS" | tr -d '\r')"
+if [[ -z "$SERVER_LINE" ]]; then
+  ok "заголовка Server нет"
+elif grep -qi '^cf-ray:' <<<"$HEADERS" &&
+     grep -qiE '^server:[[:space:]]*cloudflare[[:space:]]*$' <<<"$SERVER_LINE"; then
+  ok "${SERVER_LINE} — ставит edge Cloudflare, наш стек не раскрыт"
+else
+  bad "отдаётся заголовок ${SERVER_LINE}"
+fi
 
 # HSTS обязателен, если проверяем по HTTPS (за TLS-терминатором).
 if [[ "$BASE_URL" == https://* ]]; then
