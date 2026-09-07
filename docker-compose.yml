@@ -7,8 +7,10 @@
 #  ОТДЕЛЬНЫЙ, полностью изолированный стек (см. README-dev.md).
 #
 #  Сетевой периметр: наружу не смотрит ни один порт. API слушает только
-#  127.0.0.1 — снаружи он доступен исключительно через обратный прокси
-#  (docker-compose.proxy.yml, TLS на 443) либо через туннель ngrok.
+#  127.0.0.1 — снаружи он доступен исключительно через Cloudflare Tunnel
+#  (cloudflared на хосте: api.genesis-hq.com -> http://127.0.0.1:8090,
+#  см. docs/cloudflare-tunnel.md) либо через обратный прокси
+#  (docker-compose.proxy.yml, TLS на 443) — если появится белый IP.
 #  PostgreSQL и MinIO портов на хосте не имеют вообще: доступ к ним —
 #  по внутренней docker-сети, а с рабочей машины — SSH-туннелем:
 #      ssh -L 5434:127.0.0.1:5432 user@host   # но см. ниже: порта на хосте нет,
@@ -121,7 +123,8 @@ services:
       Network__KnownProxies: ${TRUSTED_PROXY_IPS}
       Network__ForwardLimit: ${TRUSTED_PROXY_FORWARD_LIMIT:-1}
       # Защита от ботов: все публичные запросы ограничиваются по реальному IP,
-      # полученному от доверенного прокси/ngrok. Меняются без пересборки образа.
+      # полученному от доверенного прокси (Cloudflare Tunnel ставит X-Forwarded-For).
+      # Меняются без пересборки образа.
       RateLimit__GlobalPerMinute: ${RATE_LIMIT_GLOBAL_PER_MINUTE:-120}
       RateLimit__SearchPerMinute: ${RATE_LIMIT_SEARCH_PER_MINUTE:-60}
       RateLimit__SensitiveAnonPerHour: ${RATE_LIMIT_SENSITIVE_ANON_PER_HOUR:-3}
@@ -136,9 +139,10 @@ services:
       # OpenTelemetry: адрес OTLP-коллектора. Пусто -> экспорт выключен (инструментация вхолостую).
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
     ports:
-      # ТОЛЬКО loopback. Наружу API отдаёт обратный прокси (443) или туннель ngrok,
-      # который тоже подключается к 127.0.0.1. Публикация на 0.0.0.0 означала бы,
-      # что прокси можно обойти, а вместе с ним — и TLS, и подсчёт лимитов по IP.
+      # ТОЛЬКО loopback. Наружу API отдаёт cloudflared (Cloudflare Tunnel),
+      # который подключается к этому же 127.0.0.1, либо обратный прокси (443).
+      # Публикация на 0.0.0.0 означала бы, что туннель можно обойти, а вместе
+      # с ним — и TLS, и подсчёт лимитов по реальному IP.
       - "127.0.0.1:${API_HOST_PORT:-8090}:${ASPNETCORE_HTTP_PORTS:-8080}"
     # ---- Hardening контейнера ----
     read_only: true                       # ФС только для чтения; писать — только в tmpfs ниже.

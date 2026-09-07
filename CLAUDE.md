@@ -67,8 +67,17 @@ src/
 ```
 
 ## API / backend
-Backend — ASP.NET Core (проект-сиблинг `SERVER/`). Адрес в
-`NEXT_PUBLIC_API_BASE_URL` (`.env.local`), сейчас туннель ngrok.
+Backend — ASP.NET Core (проект-сиблинг `SERVER/`).
+
+Боевые адреса (свой домен, с 2026-09-07):
+- API — `https://api.genesis-hq.com` (Cloudflare Tunnel с серверного ноутбука).
+- Фронтенд — `https://market.genesis-hq.com` (Vercel, свой домен).
+
+Адрес API задаётся `NEXT_PUBLIC_API_BASE_URL`: локально — `.env.local`,
+на проде — переменная проекта в Vercel. То же значение продублировано
+дефолтом в четырёх файлах: `src/lib/api/http.ts`, `next.config.ts` и два
+route-handler'а (`/api/img`, `/api/session`). При смене адреса правятся все
+четыре плюс переменная окружения.
 
 Все запросы — через `src/lib/api` (`import { api } from "@/lib/api"`);
 `fetch` в компонентах не вызывать. Слой:
@@ -85,7 +94,8 @@ Backend — ASP.NET Core (проект-сиблинг `SERVER/`). Адрес в
 - Access + refresh токены приходят в теле `AuthResponse` (сервер cookie
   не ставит). Access — в память (`tokenStore`), refresh — по решению F1;
   в localStorage не класть.
-- Для ngrok-free все запросы шлют заголовок `ngrok-skip-browser-warning`.
+- Заголовков-обходов интерстициала (`ngrok-skip-browser-warning`) больше нет:
+  Cloudflare отдаёт ответ API напрямую. Не возвращать.
 - Auth — свой JWT (`Authorization: Bearer`), не cookie ⇒ на сервере
   origin фронта должен быть в `Cors:AllowedOrigins` (иначе CORS-блок).
 
@@ -111,8 +121,17 @@ Backend — ASP.NET Core (проект-сиблинг `SERVER/`). Адрес в
 
 - Секретов нет ни в одном `appsettings*.json`, включая `appsettings.Development.json`:
   локальные креды — в user-secrets или `.env.dev`. Проверяется на старте и в CI.
-- Наружу (`0.0.0.0`) смотрит только обратный прокси. API — на `127.0.0.1`,
-  PostgreSQL и MinIO — без `ports` вообще.
+- Наружу (`0.0.0.0`) не смотрит ни один порт. API — на `127.0.0.1`,
+  PostgreSQL и MinIO — без `ports` вообще. Публикация — Cloudflare Tunnel:
+  `cloudflared` на хосте отдаёт `api.genesis-hq.com` в `127.0.0.1:8090`
+  (`docs/cloudflare-tunnel.md`). Caddy-overlay `docker-compose.proxy.yml` —
+  альтернатива туннелю на случай белого IP, вместе они не поднимаются.
+- В прод-`CORS_ALLOWED_ORIGINS` только боевые origin фронтенда. `*` и
+  `http://localhost:*` — нет: прод-периметр не включает машины разработки.
+- Реальный IP клиента приходит в `X-Forwarded-For` от edge Cloudflare;
+  доверие к заголовку — только из `TRUSTED_PROXY_NETWORKS`. Менять периметр
+  публикации, не проверив, что лимиты по IP считаются по посетителю,
+  а не по туннелю, нельзя: иначе один глобальный лимит кладёт сайт целиком.
 - Adminer и любой другой веб-клиент БД — только в `docker-compose.dev.yml`.
 - `bin/`, `obj/`, `backups/`, `db-backups/` в git не попадают.
 - `.dockerignore` исключает `**/appsettings.*.json`; в образе только базовый `appsettings.json`.

@@ -17,6 +17,11 @@
 CI — `.github/workflows/ci.yml`. Оба добавлены при закрытии находок №6 и №18;
 на момент прохода в репозитории их не было.
 
+> **Обновлено 2026-09-07: публикация переехала с ngrok на Cloudflare Tunnel.**
+> API — `https://api.genesis-hq.com`, фронтенд — `https://market.genesis-hq.com`
+> (Vercel, свой домен). Порты наружу по-прежнему не публикуются; Caddy-overlay
+> не поднимается. См. `docs/cloudflare-tunnel.md`.
+
 ---
 
 ## 1. Сервисы
@@ -28,7 +33,10 @@ CI — `.github/workflows/ci.yml`. Оба добавлены при закрыт
 | `api` | `genesis-api` | локальная сборка из `Dockerfile` (final: `mcr.microsoft.com/dotnet/aspnet:10.0-alpine`) | `ENTRYPOINT ["dotnet", "GenesisMarket.Api.dll"]` | `unless-stopped` |
 | `postgres` | `genesis-postgres` | `postgres:17-alpine` | по умолчанию (`postgres`) | `unless-stopped` |
 | `minio` | `genesis-minio` | `minio/minio@sha256:14cea493…8936e` (закреплён по digest) | `server /data --console-address ":9001"` | `unless-stopped` |
-| `caddy` (overlay `docker-compose.proxy.yml`) | `genesis-caddy` | `caddy:2.10-alpine` | по умолчанию, конфиг `deploy/Caddyfile` | `unless-stopped` |
+| `caddy` (overlay `docker-compose.proxy.yml`, **не поднимается**) | `genesis-caddy` | `caddy:2.10-alpine` | по умолчанию, конфиг `deploy/Caddyfile` | `unless-stopped` |
+
+Публикация наружу — `cloudflared` на **хосте**, вне docker-стека: служба
+системы, конфиг `~/.cloudflared/config.yml` (`docs/cloudflare-tunnel.md`).
 
 Сервиса `adminer` в прод-стеке нет намеренно. У всех сервисов задан `logging`
 (json-file, `max-size: 10m`, `max-file: 5`).
@@ -68,16 +76,19 @@ Hardening прод-`api`: `read_only: true`, `tmpfs: /tmp`, `security_opt: no-ne
 | `postgres` | 5432 | — | — | нет (секции `ports` нет) |
 | `minio` (S3 API) | 9000 | — | — | нет |
 | `minio` (Console) | 9001 | — | — | нет |
-| `caddy` (overlay) | 80, 443, 443/udp | 80, 443, 443/udp | `0.0.0.0` | **да — единственный** |
+| `caddy` (overlay, **не используется**) | 80, 443, 443/udp | 80, 443, 443/udp | `0.0.0.0` | да, если поднят |
 
-Единственный сервис, смотрящий в интернет, — обратный прокси. Порт 80 нужен не
-только для редиректа на HTTPS, но и для ACME HTTP-01, иначе сертификат не
-выпустится. API доступен только с самой машины, поэтому прокси нельзя обойти —
-а вместе с ним нельзя обойти ни TLS, ни подсчёт rate-limit по реальному IP.
+**Наружу не смотрит ни один порт.** Публикация идёт через Cloudflare Tunnel:
+`cloudflared` на хосте держит исходящее соединение к Cloudflare и проксирует
+`api.genesis-hq.com` в `http://127.0.0.1:8090` (`docs/cloudflare-tunnel.md`).
+Входящих слушателей на внешнем интерфейсе нет вообще, поэтому туннель нельзя
+обойти — а вместе с ним нельзя обойти ни TLS, ни подсчёт rate-limit по реальному IP.
 
-Без overlay (например, при публикации через ngrok) туннель поднимается на
-`127.0.0.1:8090` — `ngrok http 8090` подключается к loopback (`docs/ngrok-public-api.md`).
-До прода к БД ходят через `docker exec -it genesis-postgres psql`, а не через
+Caddy-overlay — альтернатива туннелю на случай белого IP (порт 80 ему нужен не
+только для редиректа на HTTPS, но и для ACME HTTP-01). Одновременно с туннелем
+не поднимается.
+
+К БД ходят через `docker exec -it genesis-postgres psql`, а не через
 проброшенный порт.
 
 ### Dev — `docker-compose.dev.yml`
@@ -189,7 +200,7 @@ Bind-mount в прод-стеке два, оба read-only: `./scripts/create-ap
 | `RATE_LIMIT_FEEDBACK_ANON_PER_HOUR` / `..._USER_PER_HOUR` | лимиты формы обратной связи | нет |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | адрес OTLP-коллектора | нет |
 | `API_HOST_PORT` | порт API на 127.0.0.1 (ADMINER_HOST_PORT больше не используется) | нет |
-| `PUBLIC_DOMAIN` | домен для сертификата Caddy (overlay) | нет |
+| `PUBLIC_DOMAIN` | домен для сертификата Caddy (overlay; не заполнен — overlay не используется) | нет |
 | `ACME_EMAIL` | почта для уведомлений Let's Encrypt (overlay) | нет |
 | `KESTREL_MAX_BODY_BYTES` и др. `KESTREL_*` | лимиты запроса и таймауты Kestrel | нет |
 | `BACKUP_RETENTION_DAYS` | сколько суток хранить дампы (`scripts/backup.sh`) | нет |
@@ -223,7 +234,7 @@ Bind-mount в прод-стеке два, оба read-only: `./scripts/create-ap
 | Telegram Bot API (уведомления и посты об объявлениях) | исходящее | HTTPS, `api.telegram.org` | `TELEGRAM_BOT_TOKEN` в URL | `Outbox/Telegram/HttpTelegramClient.cs` |
 | SMTP-сервер (письма с кодом подтверждения e-mail) | исходящее | SMTP/TLS, `SMTP_HOST:SMTP_PORT` | `SMTP_USER` + `SMTP_PASSWORD` | `Auth/EmailSender.cs` (`SmtpEmailSender`) |
 | OTLP-коллектор (трейсы и метрики) | исходящее | OTLP/gRPC | нет | `Observability/ObservabilitySetup.cs`; выключено, `OTEL_EXPORTER_OTLP_ENDPOINT` пуст |
-| ngrok (публикация API наружу) | входящее | HTTPS → HTTP на хост-порт 8090 | authtoken агента ngrok (вне репозитория) | `docs/ngrok-public-api.md` |
+| Cloudflare Tunnel (публикация API наружу, `api.genesis-hq.com`) | входящее | HTTPS (edge) → HTTP на хост-порт 8090 | креды туннеля `~/.cloudflared/<UUID>.json` (вне репозитория) | `docs/cloudflare-tunnel.md` |
 | Docker Hub / MCR (образы) | исходящее, только при сборке | HTTPS | нет (анонимно) | `docker-compose*.yml`, `Dockerfile` |
 | nuget.org (пакеты) | исходящее, только при сборке | HTTPS | нет (анонимно) | `Dockerfile:18` (`dotnet restore`) |
 

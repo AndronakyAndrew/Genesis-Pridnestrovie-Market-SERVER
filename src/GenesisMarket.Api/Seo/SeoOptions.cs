@@ -11,7 +11,8 @@ public sealed class SeoOptions
 
     /// <summary>
     /// Базовый публичный адрес сайта (<c>Seo__WebBaseUrl</c>), например
-    /// <c>https://gn-market.vercel.app</c>. Все ссылки в meta/sitemap/robots — абсолютные от него.
+    /// <c>https://market.genesis-hq.com</c>. Все ссылки в meta/sitemap/robots — абсолютные от него.
+    /// Это адрес ФРОНТЕНДА, а не API: по нему открываются страницы из карты сайта.
     /// </summary>
     public string WebBaseUrl { get; set; } = "";
 
