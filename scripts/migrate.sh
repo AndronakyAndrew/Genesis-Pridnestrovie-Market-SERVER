@@ -19,23 +19,19 @@
 # ============================================================================
 set -euo pipefail
 
-COMPOSE_DIR="${COMPOSE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Каталог скриптов фиксируем до cd: COMPOSE_DIR можно нацелить на другой стек,
+# а load-env.sh лежит рядом с этим файлом.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMPOSE_DIR="${COMPOSE_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 cd "$COMPOSE_DIR"
 
 # .env — источник значений по умолчанию, но НЕ поверх уже заданных переменных:
 # так можно нацелить скрипт на конкретный стек (например, проверочный),
 # не редактируя продовый .env:
 #   POSTGRES_DB=... GENESIS_NETWORK=... ./scripts/migrate.sh
-if [[ -f .env ]]; then
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
-    key="${line%%=*}"
-    key="${key//[[:space:]]/}"
-    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    [[ -n "${!key-}" ]] && continue          # уже задано снаружи — приоритет за ним
-    export "$key=${line#*=}"
-  done < .env
-fi
+# shellcheck source=scripts/load-env.sh
+source "$SCRIPT_DIR/load-env.sh"
+load_env .env
 
 PG_DB="${POSTGRES_DB:?POSTGRES_DB не задан (.env)}"
 PG_USER="${POSTGRES_USER:?POSTGRES_USER не задан (.env)}"

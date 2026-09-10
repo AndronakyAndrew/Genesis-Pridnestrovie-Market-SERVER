@@ -25,16 +25,18 @@
 # ============================================================================
 set -euo pipefail
 
-COMPOSE_DIR="${COMPOSE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Каталог скриптов фиксируем до cd: COMPOSE_DIR можно нацелить на другой стек,
+# а load-env.sh лежит рядом с этим файлом.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMPOSE_DIR="${COMPOSE_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 cd "$COMPOSE_DIR"
 
-# Значения берём из .env рядом с docker-compose.yml.
-if [[ -f .env ]]; then
-  set -a; # экспортируем всё, что объявлено в .env
-  # shellcheck disable=SC1091
-  source .env
-  set +a
-fi
+# Значения берём из .env рядом с docker-compose.yml — дословно, без source:
+# в .env есть значения с пробелами и угловыми скобками (SMTP_FROM_NAME,
+# RESEND_FROM_EMAIL), на которых source ронял скрипт целиком.
+# shellcheck source=scripts/load-env.sh
+source "$SCRIPT_DIR/load-env.sh"
+load_env .env
 
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
@@ -77,12 +79,27 @@ echo "[$(date -u +%FT%TZ)] Готово: ${OUT} (${SIZE} байт)"
 MINIO_OUT="$BACKUP_DIR/genesis-minio-${STAMP}.tar.gz"
 require_running "$MINIO_CONTAINER"
 echo "[$(date -u +%FT%TZ)] Архивирую объекты MinIO -> ${MINIO_OUT}"
-docker exec "$MINIO_CONTAINER" tar -czf - -C /data . > "$MINIO_OUT"
+# tar запускаем НЕ внутри minio: в его образе tar нет вообще (там только сам
+# сервер), и `docker exec ... tar` возвращал 127, а в файл попадал текст ошибки
+# «executable file not found» — 122 байта, которые прежняя проверка «меньше 100»
+# пропускала как валидный архив.
+# --volumes-from подключает тот же том по тому же пути /data и работает и с
+# именованным томом, и с bind-монтированием, не требуя знать имя тома.
+# Образ берём тот же, что уже тянет стек (в нём есть busybox tar и gzip), —
+# на сервер ничего дополнительно не скачивается.
+TAR_IMAGE="${TAR_IMAGE:-postgres:17-alpine}"
+docker run --rm --volumes-from "${MINIO_CONTAINER}:ro" \
+  --entrypoint tar "$TAR_IMAGE" -czf - -C /data . > "$MINIO_OUT"
 chmod 600 "$MINIO_OUT"
 
 MINIO_SIZE="$(wc -c < "$MINIO_OUT")"
 if [[ "$MINIO_SIZE" -lt 100 ]]; then
   echo "ОШИБКА: архив MinIO подозрительно мал (${MINIO_SIZE} байт) — прерываю." >&2
+  exit 1
+fi
+# Размер ни о чём не говорит: проверяем, что это действительно читаемый gzip.
+if ! gzip -t "$MINIO_OUT" 2>/dev/null; then
+  echo "ОШИБКА: ${MINIO_OUT} не является корректным gzip-архивом — прерываю." >&2
   exit 1
 fi
 echo "[$(date -u +%FT%TZ)] Готово: ${MINIO_OUT} (${MINIO_SIZE} байт)"
