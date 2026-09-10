@@ -149,7 +149,7 @@ public class CatalogHygieneTests(AuthApiFactory factory) : IClassFixture<AuthApi
     public async Task Restore_within_window_returns_to_active()
     {
         var email = Unique("restore");
-        var owner = await factory.SeedUserAsync(email, Password);
+        var owner = await factory.SeedUserAsync(email, Password, emailVerified: true);
         var id = await factory.SeedListingAsync(owner, category: Category.Home);
         var client = await AuthedClient(email);
 
@@ -181,7 +181,7 @@ public class CatalogHygieneTests(AuthApiFactory factory) : IClassFixture<AuthApi
     public async Task Restore_goes_to_premoderation_when_user_had_recent_reject()
     {
         var email = Unique("restore-rej");
-        var owner = await factory.SeedUserAsync(email, Password);
+        var owner = await factory.SeedUserAsync(email, Password, emailVerified: true);
         var moderator = await factory.SeedUserAsync(Unique("mod"), Password, role: UserRole.Moderator);
         var id = await factory.SeedListingAsync(owner, category: Category.Home);
         var client = await AuthedClient(email);

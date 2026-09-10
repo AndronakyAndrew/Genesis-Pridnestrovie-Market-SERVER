@@ -189,8 +189,83 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             OwnerId = ownerId
         };
         db.Listings.Add(listing);
+
+        // ReviewQueuedAt/ApprovedAt — свойства с приватным сеттером (меняются только
+        // доменными переходами), поэтому в сидере пишем их через EF-метаданные.
+        var entry = db.Entry(listing);
+        var now = DateTimeOffset.UtcNow;
+
+        // Премодерация без места в очереди — состояние, которого приложение не создаёт:
+        // такое объявление не попало бы ни в каталог, ни к модератору.
+        if (status == ListingStatus.PendingReview)
+            entry.Property(l => l.ReviewQueuedAt).CurrentValue = now;
+
+        // Объявление, дошедшее до каталога, считается одобренным — как после бэкфилла
+        // миграции. Триггер listings_trust_sync поднимет автору ApprovedListingsCount.
+        if (status is ListingStatus.Active or ListingStatus.Sold or ListingStatus.Archived)
+            entry.Property(l => l.ApprovedAt).CurrentValue = now;
+
         await db.SaveChangesAsync();
         return listing.Id;
+    }
+
+    /// <summary>
+    /// Ставит уже опубликованное объявление в очередь постмодерации (Active + ReviewQueuedAt) —
+    /// состояние, в котором объявление одновременно в каталоге и у модератора.
+    /// </summary>
+    public async Task QueueForPostReviewAsync(Guid listingId, int priority = 0)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var listing = await db.Listings.FirstAsync(l => l.Id == listingId);
+        listing.SendToReview(PublishMode.PostReview, DateTimeOffset.UtcNow, priority);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Проставляет автору денормализованные сигналы доверия напрямую — чтобы тест
+    /// не гонял N реальных публикаций ради нужного score.
+    /// </summary>
+    public async Task SetAuthorTrustAsync(
+        Guid userId, int? approvedListings = null, DateTimeOffset? lastRejectedAt = null,
+        DateTimeOffset? createdAt = null)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var user = await db.Users.FirstAsync(u => u.Id == userId);
+        var entry = db.Entry(user);
+
+        if (approvedListings is { } count)
+            entry.Property(u => u.ApprovedListingsCount).CurrentValue = count;
+        if (lastRejectedAt is { } rejected)
+            entry.Property(u => u.LastRejectedAt).CurrentValue = rejected;
+        if (createdAt is { } created)
+            user.CreatedAt = created;
+
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Сигналы доверия автора из БД — для проверки, что триггер отработал.</summary>
+    public async Task<(int ApprovedListings, DateTimeOffset? LastRejectedAt)> AuthorTrustAsync(Guid userId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var user = await db.Users.AsNoTracking()
+            .Select(u => new { u.Id, u.ApprovedListingsCount, u.LastRejectedAt })
+            .FirstAsync(u => u.Id == userId);
+        return (user.ApprovedListingsCount, user.LastRejectedAt);
+    }
+
+    /// <summary>Состояние очереди модерации по объявлению: статус + момент постановки.</summary>
+    public async Task<(ListingStatus Status, DateTimeOffset? ReviewQueuedAt, DateTimeOffset? ApprovedAt)>
+        ListingModerationStateAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var l = await db.Listings.IgnoreQueryFilters().AsNoTracking()
+            .Select(x => new { x.Id, x.Status, x.ReviewQueuedAt, x.ApprovedAt })
+            .FirstAsync(x => x.Id == listingId);
+        return (l.Status, l.ReviewQueuedAt, l.ApprovedAt);
     }
 
     /// <summary>Добавляет объявлению изображение (только строку БД — для проверки sendPhoto).</summary>
@@ -599,11 +674,18 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             .ExecuteUpdateAsync(s => s.SetProperty(l => l.ArchivedAt, archivedAt));
     }
 
-    /// <summary>Пишет запись журнала модерации о reject объявления (для проверки повторной премодерации).</summary>
+    /// <summary>
+    /// Эмулирует отказ модератора: запись в журнал плюс отметка <c>users.LastRejectedAt</c>
+    /// у автора. В приложении оба эффекта происходят вместе (журнал пишет контроллер,
+    /// отметку — триггер listings_trust_sync на переходе в rejected), и сидер обязан
+    /// воспроизводить пару целиком: политика модерации читает именно отметку.
+    /// </summary>
     public async Task SeedRejectLogAsync(Guid listingId, Guid moderatorId)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTimeOffset.UtcNow;
+
         db.ModerationLogs.Add(new ModerationLog
         {
             ActorId = moderatorId,
@@ -611,6 +693,12 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             TargetType = ModerationLog.TargetListing,
             TargetId = listingId
         });
+
+        var ownerId = await db.Listings.IgnoreQueryFilters()
+            .Where(l => l.Id == listingId).Select(l => l.OwnerId).FirstAsync();
+        var owner = await db.Users.FirstAsync(u => u.Id == ownerId);
+        db.Entry(owner).Property(u => u.LastRejectedAt).CurrentValue = now;
+
         await db.SaveChangesAsync();
     }
 

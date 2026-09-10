@@ -349,13 +349,21 @@ public class ListingsController(
 
         if (request.Publish)
         {
-            if (await PublishGuardAsync(userId, ct) is { } guard)
+            var (guard, author) = await PublishGuardAsync(userId, ct);
+            if (guard is not null)
                 return guard;
-            var target = await moderation.ResolveOnPublishAsync(userId, ct);
-            listing.Publish(target, DateTimeOffset.UtcNow);
 
-            // Сразу активное объявление — анонсируем в Telegram-канал (в той же транзакции).
-            if (target == ListingStatus.Active)
+            // hasImages: true намеренно. Объявление создаётся одним запросом, фотографии
+            // грузятся следующим — на этот момент их не может быть физически ни у кого,
+            // и штраф «нет фото» ударил бы по всем без разбора. На редактировании и
+            // восстановлении из архива признак уже считается по факту.
+            var decision = moderation.Resolve(
+                author, request.Title, request.Description, request.Price, request.Category, hasImages: true);
+            listing.Publish(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
+
+            // Попало в каталог (Auto или постмодерация) — анонсируем в Telegram-канал
+            // в той же транзакции. При премодерации канал ждёт одобрения.
+            if (listing.Status == ListingStatus.Active)
                 EnqueueChannelPublish(listing.Id);
         }
 
@@ -383,6 +391,9 @@ public class ListingsController(
             return Problem(title: "Подкатегория не найдена или не соответствует категории",
                 statusCode: StatusCodes.Status400BadRequest);
 
+        // Существенно ли меняется объявление — считаем ДО присваивания новых значений.
+        var substantial = IsSubstantialEdit(listing, request);
+
         // Обновляем только редактируемые поля. Status/Slug/ViewsCount/PublishedAt не трогаем.
         listing.Title = request.Title;
         listing.Description = request.Description;
@@ -394,6 +405,25 @@ public class ListingsController(
         listing.District = request.District;
         listing.Condition = request.Condition;
         listing.UpdatedAt = DateTimeOffset.UtcNow;
+
+        // Главный обходной путь автопубликации: опубликовать безобидное объявление,
+        // дождаться выхода в каталог и переписать текст. Поэтому существенная правка
+        // уже опубликованного объявления заново проходит политику модерации — и при
+        // низком score уезжает из каталога обратно на премодерацию.
+        if (substantial && listing.Status is ListingStatus.Active or ListingStatus.PendingReview)
+        {
+            var author = await db.Users.FirstAsync(u => u.Id == userId, ct);
+            var decision = moderation.Resolve(
+                author, listing.Title, listing.Description, listing.Price, listing.Category,
+                await HasImagesAsync(listing.Id, ct));
+
+            var wasInCatalog = listing.Status == ListingStatus.Active;
+            listing.SendToReview(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
+
+            // Ушло из каталога на повторную премодерацию — снимаем пост в канале.
+            if (wasInCatalog && listing.Status == ListingStatus.PendingReview)
+                EnqueueChannelMark(listing.Id, ChannelMark.Archived);
+        }
 
         await db.SaveChangesAsync(ct);
         return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
@@ -435,14 +465,17 @@ public class ListingsController(
             return Problem(title: "Объявление уже отправлено на публикацию",
                 statusCode: StatusCodes.Status409Conflict);
 
-        if (await PublishGuardAsync(userId, ct) is { } guard)
+        var (guard, author) = await PublishGuardAsync(userId, ct);
+        if (guard is not null)
             return guard;
 
-        var target = await moderation.ResolveOnPublishAsync(userId, ct);
-        listing.Publish(target, DateTimeOffset.UtcNow);
+        var decision = moderation.Resolve(
+            author, listing.Title, listing.Description, listing.Price, listing.Category,
+            await HasImagesAsync(listing.Id, ct));
+        listing.Publish(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
 
-        // Сразу активное — анонсируем в Telegram-канал (в той же транзакции).
-        if (target == ListingStatus.Active)
+        // Попало в каталог (Auto или постмодерация) — анонсируем в Telegram-канал.
+        if (listing.Status == ListingStatus.Active)
             EnqueueChannelPublish(listing.Id);
 
         await db.SaveChangesAsync(ct);
@@ -581,8 +614,20 @@ public class ListingsController(
                 title: $"Восстановить можно только в течение {hygiene.Value.RestoreWithinDays} дн. после архивации",
                 statusCode: StatusCodes.Status409Conflict);
 
-        var requireReview = await HasRecentRejectAsync(userId, ct);
-        listing.RestoreFromArchive(requireReview, DateTimeOffset.UtcNow);
+        // Восстановление — это возвращение в каталог, то есть публикация: те же ворота,
+        // что у POST /publish (подтверждённый контакт, лимит «в обороте»). Без этой
+        // проверки restore был бы обходом обоих ограничений.
+        var (guard, author) = await PublishGuardAsync(userId, ct);
+        if (guard is not null)
+            return guard;
+
+        // И та же политика модерации: свежий отказ модератора или рисковый текст
+        // (объявление могли отредактировать, пока оно лежало в архиве) снова уводят
+        // объявление на проверку.
+        var decision = moderation.Resolve(
+            author, listing.Title, listing.Description, listing.Price, listing.Category,
+            await HasImagesAsync(listing.Id, ct));
+        listing.RestoreFromArchive(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
 
         // Вернулось в каталог (Active) — снимаем пометку «Снято» с поста. При уходе на
         // повторную премодерацию (PendingReview) канал не трогаем: снова опубликуем при одобрении.
@@ -649,22 +694,44 @@ public class ListingsController(
             q.PriceType?.ToString() ?? "-");
     }
 
-    /// <summary>Проверки при публикации: подтверждённый контакт + лимит «в обороте». null — ок.</summary>
-    private async Task<ObjectResult?> PublishGuardAsync(Guid userId, CancellationToken ct)
+    /// <summary>
+    /// Проверки при публикации: подтверждённый контакт + лимит «в обороте».
+    /// Error = null — публиковать можно; заодно отдаёт загруженного автора, чтобы
+    /// политика модерации считала доверие по его денормализованным полям и не ходила
+    /// в БД второй раз.
+    /// </summary>
+    private async Task<(ObjectResult? Error, User Author)> PublishGuardAsync(Guid userId, CancellationToken ct)
     {
         var user = await db.Users.FirstAsync(u => u.Id == userId, ct);
         var (canPublish, reason) = publishing.CanPublish(user);
         if (!canPublish)
-            return Problem(title: reason, statusCode: StatusCodes.Status403Forbidden);
+            return (Problem(title: reason, statusCode: StatusCodes.Status403Forbidden), user);
 
         var inCirculation = await db.Listings
             .CountAsync(l => l.OwnerId == userId && InCirculation.Contains(l.Status), ct);
         if (inCirculation >= options.Value.MaxActivePerUser)
-            return Problem(title: "Достигнут лимит активных объявлений, архивируйте лишние",
-                statusCode: StatusCodes.Status409Conflict);
+            return (Problem(title: "Достигнут лимит активных объявлений, архивируйте лишние",
+                statusCode: StatusCodes.Status409Conflict), user);
 
-        return null;
+        return (null, user);
     }
+
+    /// <summary>Есть ли у объявления хотя бы одна фотография (вход риск-оценки).</summary>
+    private Task<bool> HasImagesAsync(Guid listingId, CancellationToken ct) =>
+        db.ListingImages.AnyAsync(i => i.ListingId == listingId, ct);
+
+    /// <summary>
+    /// Существенная ли правка — то есть меняет ли она то, что оценивала модерация:
+    /// текст, цену и категорию. Город, район и состояние на решение не влияют,
+    /// и гонять объявление по очереди из-за смены района незачем.
+    /// </summary>
+    private static bool IsSubstantialEdit(Listing listing, UpdateListingRequest request) =>
+        !string.Equals(listing.Title, request.Title, StringComparison.Ordinal) ||
+        !string.Equals(listing.Description, request.Description, StringComparison.Ordinal) ||
+        listing.Price != request.Price ||
+        listing.PriceType != request.PriceType ||
+        listing.Category != request.Category ||
+        listing.SubcategoryId != request.SubcategoryId;
 
     private Task<bool> SubcategoryValidAsync(Category category, int subcategoryId, CancellationToken ct) =>
         db.Subcategories.AnyAsync(s => s.Id == subcategoryId && s.Category == category, ct);
@@ -754,19 +821,9 @@ public class ListingsController(
         return (int)Math.Max(0, Math.Ceiling(remaining));
     }
 
-    /// <summary>
-    /// Получал ли автор reject по любому из своих объявлений за последние RejectLookbackDays
-    /// дней. Источник — журнал модерации (listing.reject), связанный с объявлениями автора.
-    /// </summary>
-    private async Task<bool> HasRecentRejectAsync(Guid userId, CancellationToken ct)
-    {
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-hygiene.Value.RejectLookbackDays);
-        return await db.ModerationLogs
-            .Where(m => m.Action == ModerationLog.ActionRejectListing && m.CreatedAt >= cutoff)
-            .Join(db.Listings.IgnoreQueryFilters(),
-                m => m.TargetId, l => l.Id, (m, l) => l.OwnerId)
-            .AnyAsync(ownerId => ownerId == userId, ct);
-    }
+    // Факт свежего отказа больше не собирается джойном по журналу модерации: он
+    // денормализован в users.LastRejectedAt (триггер listings_trust_sync) и читается
+    // политикой из уже загруженной строки автора.
 
     /// <summary>Число раскрытий контактов по объявлению — отдельным запросом (не N+1).</summary>
     private Task<int> RevealCountAsync(Guid listingId, CancellationToken ct) =>

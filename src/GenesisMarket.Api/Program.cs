@@ -56,12 +56,19 @@ try
     var allowedOrigins = (builder.Configuration["Cors:AllowedOrigins"] ?? string.Empty)
         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+    // Access-Control-Max-Age: сколько браузер держит результат preflight (OPTIONS)
+    // в кеше. Сутки по умолчанию; значение в конфиге, чтобы перед сменой политики
+    // CORS его можно было опустить до нуля без пересборки образа.
+    var preflightMaxAge = TimeSpan.FromSeconds(
+        builder.Configuration.GetValue("Cors:PreflightMaxAgeSeconds", 86400));
+
     builder.Services.AddCors(options =>
         options.AddPolicy(corsPolicy, policy => policy
             .WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .AllowCredentials()));
+            .AllowCredentials()
+            .SetPreflightMaxAge(preflightMaxAge)));
 
     // ---- Валидация конфигурации при старте: пустой JWT-ключ, дефолтный пароль БД,
     //      пустой CORS, секреты в appsettings — не дают приложению подняться ----

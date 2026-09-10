@@ -90,7 +90,7 @@ public class ListingLifecycleTests(AuthApiFactory factory) : IClassFixture<AuthA
         var publish = await client.PostAsync($"/api/listings/{id}/publish", null);
         Assert.Equal(HttpStatusCode.OK, publish.StatusCode);
 
-        // Новый пользователь (<3 опубликованных, <7 дней) → премодерация.
+        // Новый автор: 0 одобренных объявлений, возраст аккаунта 0 дней → премодерация.
         var body = await publish.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("PendingReview", body.GetProperty("status").GetString());
     }

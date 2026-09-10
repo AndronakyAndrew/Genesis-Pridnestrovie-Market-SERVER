@@ -111,6 +111,16 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
         // «Мои объявления» по статусу.
         b.HasIndex(l => new { l.OwnerId, l.Status });
 
+        // Очередь модерации: только стоящие в очереди (их единицы на фоне каталога),
+        // в порядке выборки — приоритет DESC, затем FIFO по времени постановки.
+        b.HasIndex(l => new { l.ModerationPriority, l.ReviewQueuedAt })
+            .IsDescending(true, false)
+            .HasFilter("\"ReviewQueuedAt\" IS NOT NULL");
+
+        // Счётчик доверия автора (users.ApprovedListingsCount) — бэкфилл и пересборка.
+        b.HasIndex(l => new { l.OwnerId, l.ApprovedAt })
+            .HasFilter("\"ApprovedAt\" IS NOT NULL");
+
         b.HasIndex(l => l.SubcategoryId);
 
         // GIN по будущему SearchVector.

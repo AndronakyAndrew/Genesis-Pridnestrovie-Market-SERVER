@@ -10,8 +10,10 @@ public static class ListingsServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.Configure<ListingOptions>(configuration.GetSection(ListingOptions.Section));
+        services.Configure<ModerationOptions>(configuration.GetSection(ModerationOptions.Section));
         services.Configure<ContactRevealOptions>(configuration.GetSection(ContactRevealOptions.Section));
-        services.AddScoped<IListingModerationPolicy, ListingModerationPolicy>();
+        // Политика в БД не ходит и состояния не держит — синглтона достаточно.
+        services.AddSingleton<IListingModerationPolicy, ListingModerationPolicy>();
         services.AddScoped<IListingViewCounter, ListingViewCounter>();
         services.AddScoped<IContactRevealService, ContactRevealService>();
         services.AddValidatorsFromAssemblyContaining<CreateListingRequestValidator>();
