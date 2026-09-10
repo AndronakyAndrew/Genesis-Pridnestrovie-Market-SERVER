@@ -14,15 +14,17 @@
 # ============================================================================
 set -euo pipefail
 
-COMPOSE_DIR="${COMPOSE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Каталог скриптов фиксируем до cd: COMPOSE_DIR можно нацелить на другой стек,
+# а load-env.sh лежит рядом с этим файлом.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMPOSE_DIR="${COMPOSE_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 cd "$COMPOSE_DIR"
 
-if [[ -f .env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env
-  set +a
-fi
+# .env читаем дословно: значения с пробелами (SMTP_FROM_NAME и др.) source
+# исполнял как команды и ронял скрипт.
+# shellcheck source=scripts/load-env.sh
+source "$SCRIPT_DIR/load-env.sh"
+load_env .env
 
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 PG_DB="${POSTGRES_DB:?POSTGRES_DB не задан (.env)}"
