@@ -11,11 +11,8 @@ public sealed class ListingOptions
     /// <summary>Максимальная цена (рубли ПМР).</summary>
     public long MaxPrice { get; set; } = 100_000_000;
 
-    /// <summary>Меньше стольких опубликованных объявлений ⇒ премодерация.</summary>
-    public int MinPublishedForAutoActive { get; set; } = 3;
-
-    /// <summary>Аккаунт моложе стольких дней ⇒ премодерация.</summary>
-    public int MinAccountAgeDays { get; set; } = 7;
+    // Пороги «нужна ли модерация» переехали в секцию Moderation (ModerationOptions):
+    // решение теперь принимает скоринг автора и контента, а не два счётчика.
 
     /// <summary>Не чаще одного засчитанного просмотра в стольких минутах на (Listing, IpHash).</summary>
     public int ViewThrottleMinutes { get; set; } = 60;

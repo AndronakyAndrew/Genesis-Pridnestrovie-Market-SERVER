@@ -88,7 +88,19 @@ public record ModerationListingCard(
     Guid OwnerId,
     string OwnerDisplayName,
     bool OwnerIsBanned,
-    IReadOnlyList<ModerationReportItem> OpenReports);
+    IReadOnlyList<ModerationReportItem> OpenReports,
+    /// <summary>
+    /// Момент постановки в очередь модерации. Вместе со <see cref="Status"/> задаёт режим:
+    /// заполнен + PendingReview — премодерация (в каталоге нет); заполнен + Active —
+    /// постмодерация (уже на витрине); null — проверка не требуется.
+    /// </summary>
+    DateTimeOffset? ReviewQueuedAt = null,
+    /// <summary>Момент первого одобрения. null — объявление ещё ни разу не подтверждено.</summary>
+    DateTimeOffset? ApprovedAt = null,
+    /// <summary>Сколько объявлений автора уже одобрено — контекст для решения модератора.</summary>
+    int OwnerApprovedListings = 0,
+    /// <summary>Когда автор последний раз получал отказ. null — отказов не было.</summary>
+    DateTimeOffset? OwnerLastRejectedAt = null);
 
 /// <summary>Открытая жалоба в карточке объявления.</summary>
 public record ModerationReportItem(
@@ -131,12 +143,16 @@ public record ModerationUserContacts(
 
 /// <summary>Счётчики очереди и активности модерации за сегодня/неделю.</summary>
 public record ModerationStats(
+    /// <summary>Премодерация: объявления, которых из-за очереди ещё нет в каталоге.</summary>
     int PendingListings,
     int OpenReports,
+    /// <summary>Всё, что ждёт модератора: премодерация + постмодерация + открытые жалобы.</summary>
     int QueueTotal,
     int ActionsToday,
     int ActionsThisWeek,
-    int BansToday);
+    int BansToday,
+    /// <summary>Постмодерация: объявления уже в каталоге, но ждут выборочной проверки.</summary>
+    int PostReviewListings = 0);
 
 /// <summary>Результат простого действия модератора (approve/resolve/ban/unban).</summary>
 public record ModerationActionResult(string Message);

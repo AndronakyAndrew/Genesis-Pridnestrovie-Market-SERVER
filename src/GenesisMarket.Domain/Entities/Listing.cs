@@ -67,10 +67,32 @@ public class Listing : BaseEntity, IOwnedResource
 
     /// <summary>
     /// Приоритет в очереди модерации. Обычно 0; поднимается автоматикой жалоб
-    /// (N независимых Fraud/Prohibited на объявление) — тогда объявление уходит
-    /// в PendingReview и в начало очереди модерации. Извне не редактируется.
+    /// (N независимых Fraud/Prohibited на объявление) и риск-оценкой при публикации —
+    /// тогда объявление встаёт ближе к началу очереди. Извне не редактируется.
     /// </summary>
     public int ModerationPriority { get; private set; }
+
+    /// <summary>
+    /// Объявление стоит в очереди модерации (заполнено ⇒ ждёт решения человека).
+    /// Не путать со <see cref="Status"/>: очередь ортогональна видимости в каталоге.
+    /// <list type="bullet">
+    /// <item>PendingReview + заполнено — премодерация, в каталоге НЕТ;</item>
+    /// <item>Active + заполнено — постмодерация, в каталоге УЖЕ ЕСТЬ;</item>
+    /// <item>Active + null — проверено либо автор доверен, очередь не нужна.</item>
+    /// </list>
+    /// Единственный признак «показать модератору» — этот, а не Status.
+    /// </summary>
+    public DateTimeOffset? ReviewQueuedAt { get; private set; }
+
+    /// <summary>
+    /// Момент, когда объявление ПЕРВЫЙ раз стало проверенно-активным: одобрено
+    /// модератором либо опубликовано автоматически доверенным автором. Проставляется
+    /// один раз и не сбрасывается. Служит единицей доверия: счётчик
+    /// <c>users.ApprovedListingsCount</c> поддерживается по этому полю триггером БД.
+    /// У объявления на постмодерации остаётся null до решения модератора — иначе
+    /// автопубликация сама себе накручивала бы доверие.
+    /// </summary>
+    public DateTimeOffset? ApprovedAt { get; private set; }
 
     public DateTimeOffset? PublishedAt { get; set; }
 
@@ -137,21 +159,94 @@ public class Listing : BaseEntity, IOwnedResource
 
     /// <summary>
     /// Публикация черновика: Draft → Active | PendingReview. Фиксирует <see cref="PublishedAt"/>;
-    /// для сразу активного объявления задаёт и <see cref="BumpedAt"/> (позиция в каталоге).
-    /// Итоговый статус (нужна ли премодерация) решает вызывающий и передаёт в <paramref name="target"/>.
+    /// для попавшего в каталог объявления задаёт и <see cref="BumpedAt"/> (позиция в каталоге).
+    /// Режим (без проверки / постмодерация / премодерация) решает политика модерации
+    /// и передаёт в <paramref name="mode"/>; <paramref name="priority"/> — риск-приоритет
+    /// в очереди (учитывается только для режимов с проверкой).
     /// </summary>
-    public void Publish(ListingStatus target, DateTimeOffset now)
+    public void Publish(PublishMode mode, DateTimeOffset now, int priority = 0)
     {
         if (Status != ListingStatus.Draft)
             throw new InvalidOperationException($"Опубликовать можно только черновик (текущий статус: {Status}).");
-        if (target is not (ListingStatus.Active or ListingStatus.PendingReview))
-            throw new ArgumentException("Публикация допускает переход только в Active или PendingReview.", nameof(target));
 
-        Status = target;
+        Status = mode == PublishMode.PreReview ? ListingStatus.PendingReview : ListingStatus.Active;
         PublishedAt = now;
-        if (target == ListingStatus.Active)
+        if (Status == ListingStatus.Active)
             BumpedAt = now;
+
+        if (mode == PublishMode.Auto)
+        {
+            // Автор доверен — проверка не нужна, объявление сразу идёт в зачёт доверия.
+            ApprovedAt ??= now;
+        }
+        else
+        {
+            ReviewQueuedAt = now;
+            ModerationPriority = priority;
+        }
+
         ArchiveWarningAt = null;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Вернуть уже опубликованное объявление на проверку — после существенной правки
+    /// или автофлага жалоб. <see cref="PublishMode.PreReview"/> дополнительно убирает
+    /// объявление из каталога (Active → PendingReview), <see cref="PublishMode.PostReview"/>
+    /// оставляет его на витрине. <see cref="PublishMode.Auto"/> — no-op (проверка не нужна).
+    /// Приоритет только повышается: автофлаг жалоб не должен опускаться до риск-оценки.
+    /// Место в очереди при повторном вызове сохраняется (FIFO не сбрасывается).
+    /// </summary>
+    public void SendToReview(PublishMode mode, DateTimeOffset now, int priority = 0)
+    {
+        if (mode == PublishMode.Auto)
+            return;
+        if (Status is not (ListingStatus.Active or ListingStatus.PendingReview))
+            throw new InvalidOperationException(
+                $"На проверку можно вернуть только опубликованное объявление (текущий статус: {Status}).");
+
+        if (mode == PublishMode.PreReview)
+            Status = ListingStatus.PendingReview;
+
+        ReviewQueuedAt ??= now;
+        ModerationPriority = Math.Max(ModerationPriority, priority);
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Одобрение модератором: снимает объявление с очереди и делает его активным.
+    /// Работает и для премодерации (PendingReview → Active), и для постмодерации
+    /// (Active остаётся Active). Фиксирует <see cref="ApprovedAt"/> — с этого момента
+    /// объявление идёт в зачёт доверия автора.
+    /// </summary>
+    public void Approve(DateTimeOffset now)
+    {
+        if (ReviewQueuedAt is null)
+            throw new InvalidOperationException("Объявление не находится в очереди модерации.");
+
+        Status = ListingStatus.Active;
+        PublishedAt ??= now;
+        BumpedAt ??= now;
+        ApprovedAt ??= now;
+        ReviewQueuedAt = null;
+        ModerationPriority = 0;
+        ArchiveWarningAt = null;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Отклонение модератором: снимает с очереди и убирает из каталога. Допустимо
+    /// и для премодерации, и для постмодерации (объявление уже было на витрине —
+    /// пост в канале снимает вызывающий).
+    /// </summary>
+    public void Reject(DateTimeOffset now)
+    {
+        if (ReviewQueuedAt is null)
+            throw new InvalidOperationException("Объявление не находится в очереди модерации.");
+
+        Status = ListingStatus.Rejected;
+        ReviewQueuedAt = null;
+        ModerationPriority = 0;
         UpdatedAt = now;
     }
 
@@ -225,21 +320,30 @@ public class Listing : BaseEntity, IOwnedResource
     /// <summary>
     /// Восстановление из архива: Archived → Active | PendingReview. При возврате в каталог
     /// объявление получает свежий <see cref="BumpedAt"/> (обнуляет отсчёт архивации).
-    /// Нужна ли повторная премодерация (<paramref name="requireReview"/>) и соблюдение окна
-    /// (90 дней с <see cref="ArchivedAt"/>) решает вызывающий.
+    /// Режим проверки (<paramref name="mode"/>) даёт та же политика модерации, что и при
+    /// публикации; соблюдение окна (90 дней с <see cref="ArchivedAt"/>) — забота вызывающего.
     /// </summary>
-    public void RestoreFromArchive(bool requireReview, DateTimeOffset now)
+    public void RestoreFromArchive(PublishMode mode, DateTimeOffset now, int priority = 0)
     {
         if (Status != ListingStatus.Archived)
             throw new InvalidOperationException($"Восстановить можно только архивное объявление (текущий статус: {Status}).");
 
-        Status = requireReview ? ListingStatus.PendingReview : ListingStatus.Active;
+        Status = mode == PublishMode.PreReview ? ListingStatus.PendingReview : ListingStatus.Active;
         ArchivedAt = null;
         if (Status == ListingStatus.Active)
         {
             BumpedAt = now;
             ArchiveWarningAt = null;
         }
+
+        if (mode == PublishMode.Auto)
+            ApprovedAt ??= now;
+        else
+        {
+            ReviewQueuedAt ??= now;
+            ModerationPriority = Math.Max(ModerationPriority, priority);
+        }
+
         UpdatedAt = now;
     }
 }

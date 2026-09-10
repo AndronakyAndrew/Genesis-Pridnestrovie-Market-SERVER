@@ -44,6 +44,22 @@ public class User : BaseEntity
     /// </summary>
     public int ReviewsCount { get; private set; }
 
+    /// <summary>
+    /// Денормализованное число ОДОБРЕННЫХ объявлений автора: прошедших модератора либо
+    /// опубликованных автоматически при полном доверии. Считает <c>listings.ApprovedAt</c>,
+    /// а не факт подачи — поданное и отклонённое объявление доверия не приносит.
+    /// Извне не редактируется: поддерживается триггером БД (<c>listings_trust_sync</c>)
+    /// в той же транзакции, что и одобрение объявления.
+    /// </summary>
+    public int ApprovedListingsCount { get; private set; }
+
+    /// <summary>
+    /// Момент последнего отклонения объявления этого автора модератором. Тем же
+    /// триггером, что и <see cref="ApprovedListingsCount"/>. Свежий отказ — жёсткий
+    /// сигнал политике модерации: автопубликация автору временно закрыта.
+    /// </summary>
+    public DateTimeOffset? LastRejectedAt { get; private set; }
+
     public bool IsBanned { get; set; }
     public DateTimeOffset? BannedUntil { get; set; }
 

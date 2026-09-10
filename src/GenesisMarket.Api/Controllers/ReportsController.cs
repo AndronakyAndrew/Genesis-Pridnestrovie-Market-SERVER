@@ -131,10 +131,15 @@ public class ReportsController(
             return;
 
         // Трогаем только активные объявления; проданные/снятые не воскрешаем.
+        // ReviewQueuedAt через COALESCE: объявление могло уже стоять в очереди на
+        // постмодерацию — тогда сохраняем его исходное место в FIFO, а не отправляем
+        // в конец. Приоритет при этом поднимается до автофлагового.
+        var now = DateTimeOffset.UtcNow;
         var affected = await db.Listings
             .Where(l => l.Id == listingId && l.Status == ListingStatus.Active)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(l => l.Status, ListingStatus.PendingReview)
+                .SetProperty(l => l.ReviewQueuedAt, l => l.ReviewQueuedAt ?? now)
                 .SetProperty(l => l.ModerationPriority, _o.AutoFlagPriority), ct);
 
         if (affected > 0)

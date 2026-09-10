@@ -31,6 +31,9 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         // Денормализованный рейтинг: пересчитывается триггером reviews_rating_sync.
         b.Property(u => u.ReviewsCount).HasDefaultValue(0);
 
+        // Денормализованные сигналы доверия: поддерживаются триггером listings_trust_sync.
+        b.Property(u => u.ApprovedListingsCount).HasDefaultValue(0);
+
         // Профиль 1:1 (owned-подобно, но отдельной таблицей profiles).
         b.HasOne(u => u.Profile)
             .WithOne(p => p.User)

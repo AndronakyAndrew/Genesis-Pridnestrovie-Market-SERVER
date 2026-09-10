@@ -2,6 +2,7 @@ using System.Text.Json;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Moderation;
+using GenesisMarket.Api.Outbox.Telegram;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
@@ -35,10 +36,13 @@ public class ModerationController(
         [ListingStatus.Active, ListingStatus.PendingReview];
 
     /// <summary>
-    /// Очередь модерации: объявления на премодерации (PendingReview) и открытые
-    /// жалобы (New) в едином потоке. Сортировка: сначала автофлаги (по убыванию
-    /// приоритета), затем по дате (старые раньше). Курсорная пагинация. Фильтры:
-    /// тип (listing|report), причина (сужает до жалоб), минимальный приоритет.
+    /// Очередь модерации: объявления, ждущие решения (<c>ReviewQueuedAt</c> заполнен —
+    /// и премодерация, и постмодерация), плюс открытые жалобы (New) в едином потоке.
+    /// Статус элемента показывает режим: <c>PendingReview</c> — в каталог ещё не пущено,
+    /// <c>Active</c> — уже на витрине и проверяется постфактум.
+    /// Сортировка: сначала автофлаги и рисковые (по убыванию приоритета), затем по дате
+    /// постановки в очередь (старые раньше). Курсорная пагинация. Фильтры: тип
+    /// (listing|report), причина (сужает до жалоб), минимальный приоритет.
     /// </summary>
     [HttpGet("queue")]
     public async Task<ActionResult<ModerationQueuePage>> GetQueue(
@@ -98,9 +102,12 @@ public class ModerationController(
                 x.Id, x.Slug, x.Title, x.Description, x.Price, x.PriceType, x.Category,
                 x.SubcategoryId, x.City, x.District, x.Condition, x.Status, x.ViewsCount,
                 x.FavoritesCount, x.ModerationPriority, x.CreatedAt, x.PublishedAt, x.DeletedAt,
+                x.ReviewQueuedAt, x.ApprovedAt,
                 x.OwnerId,
                 OwnerName = x.Owner!.Profile!.DisplayName,
-                OwnerBanned = x.Owner.IsBanned
+                OwnerBanned = x.Owner.IsBanned,
+                OwnerApprovedListings = x.Owner.ApprovedListingsCount,
+                OwnerLastRejectedAt = x.Owner.LastRejectedAt
             })
             .FirstOrDefaultAsync(ct);
 
@@ -118,34 +125,36 @@ public class ModerationController(
             l.Id, l.Slug, l.Title, l.Description, l.Price, l.PriceType, l.Category,
             l.SubcategoryId, l.City, l.District, l.Condition, l.Status, l.ViewsCount,
             l.FavoritesCount, l.ModerationPriority, l.CreatedAt, l.PublishedAt, l.DeletedAt,
-            l.OwnerId, l.OwnerName, l.OwnerBanned, reports));
+            l.OwnerId, l.OwnerName, l.OwnerBanned, reports,
+            l.ReviewQueuedAt, l.ApprovedAt, l.OwnerApprovedListings, l.OwnerLastRejectedAt));
     }
 
-    /// <summary>Одобрить объявление: PendingReview → Active, приоритет очереди сбрасывается.</summary>
+    /// <summary>
+    /// Одобрить объявление: снимает его с очереди модерации и делает активным.
+    /// Работает в обоих режимах — и для премодерации (PendingReview → Active,
+    /// объявление впервые попадает в каталог), и для постмодерации (объявление уже
+    /// на витрине, подтверждаем). Проставляет <c>ApprovedAt</c>: именно с этого момента
+    /// объявление идёт в зачёт доверия автора (триггер listings_trust_sync).
+    /// </summary>
     [HttpPost("listings/{id:guid}/approve")]
     public async Task<ActionResult<ModerationActionResult>> Approve(Guid id, CancellationToken ct)
     {
         var listing = await db.Listings.IgnoreQueryFilters()
-            .Where(l => l.Id == id)
-            .Select(l => new { l.Status, l.PublishedAt })
-            .FirstOrDefaultAsync(ct);
+            .FirstOrDefaultAsync(l => l.Id == id, ct);
 
         if (listing is null)
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
-        if (listing.Status != ListingStatus.PendingReview)
+        if (listing.ReviewQueuedAt is null)
             return Problem(title: "Объявление не находится на модерации", statusCode: StatusCodes.Status409Conflict);
 
+        // Постмодерация: объявление уже в каталоге и уже анонсировано в канал —
+        // повторный анонс не нужен, одобрение здесь ничего публично не меняет.
+        var wasInCatalog = listing.Status == ListingStatus.Active;
         var now = DateTimeOffset.UtcNow;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        await db.Listings.IgnoreQueryFilters()
-            .Where(l => l.Id == id)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(l => l.Status, ListingStatus.Active)
-                .SetProperty(l => l.ModerationPriority, 0)
-                .SetProperty(l => l.PublishedAt, l => l.PublishedAt ?? now)
-                .SetProperty(l => l.UpdatedAt, now), ct);
+        listing.Approve(now);
 
         // Уведомление автора об одобрении — через outbox в той же транзакции.
         db.OutboxMessages.Add(new OutboxMessage
@@ -154,49 +163,50 @@ public class ModerationController(
             Payload = JsonSerializer.Serialize(new { listingId = id })
         });
 
-        // Объявление стало Active — анонсируем его в публичный Telegram-канал (та же транзакция).
-        db.OutboxMessages.Add(new OutboxMessage
-        {
-            Type = OutboxMessage.ListingPublished,
-            Payload = JsonSerializer.Serialize(new { listingId = id })
-        });
+        // Объявление впервые попало в каталог — анонсируем в публичный Telegram-канал.
+        if (!wasInCatalog)
+            db.OutboxMessages.Add(new OutboxMessage
+            {
+                Type = OutboxMessage.ListingPublished,
+                Payload = JsonSerializer.Serialize(new { listingId = id })
+            });
 
-        audit.Record(ModerationLog.ActionApproveListing, ModerationLog.TargetListing, id);
+        audit.Record(ModerationLog.ActionApproveListing, ModerationLog.TargetListing, id,
+            payload: new { postModeration = wasInCatalog });
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        return Ok(new ModerationActionResult("Объявление одобрено и опубликовано."));
+        return Ok(new ModerationActionResult(wasInCatalog
+            ? "Объявление проверено и оставлено в каталоге."
+            : "Объявление одобрено и опубликовано."));
     }
 
     /// <summary>
-    /// Отклонить объявление: → Rejected. Автору уходит уведомление с текстом причины
-    /// через outbox (в той же транзакции). Причина и комментарий пишутся в журнал.
+    /// Отклонить объявление: → Rejected. Работает в обоих режимах; при постмодерации
+    /// объявление уже было в каталоге, поэтому дополнительно снимается пост в канале.
+    /// Автору уходит уведомление с текстом причины через outbox (в той же транзакции).
+    /// Отказ фиксируется в <c>users.LastRejectedAt</c> триггером — и на время окна
+    /// <c>CatalogHygiene:RejectLookbackDays</c> закрывает автору автопубликацию.
     /// </summary>
     [HttpPost("listings/{id:guid}/reject")]
     public async Task<ActionResult<ModerationActionResult>> Reject(
         Guid id, RejectListingRequest request, CancellationToken ct)
     {
         var listing = await db.Listings.IgnoreQueryFilters()
-            .Where(l => l.Id == id)
-            .Select(l => new { l.Status, l.OwnerId, l.Title })
-            .FirstOrDefaultAsync(ct);
+            .FirstOrDefaultAsync(l => l.Id == id, ct);
 
         if (listing is null)
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
-        if (listing.Status != ListingStatus.PendingReview)
+        if (listing.ReviewQueuedAt is null)
             return Problem(title: "Объявление не находится на модерации", statusCode: StatusCodes.Status409Conflict);
 
+        var wasInCatalog = listing.Status == ListingStatus.Active;
         var now = DateTimeOffset.UtcNow;
         var comment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim();
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        await db.Listings.IgnoreQueryFilters()
-            .Where(l => l.Id == id)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(l => l.Status, ListingStatus.Rejected)
-                .SetProperty(l => l.ModerationPriority, 0)
-                .SetProperty(l => l.UpdatedAt, now), ct);
+        listing.Reject(now);
 
         // Уведомление автора — через outbox (в той же транзакции). Только идентификаторы
         // и причина: текст письма/сообщения соберёт обработчик по типу.
@@ -211,14 +221,24 @@ public class ModerationController(
             })
         });
 
+        // Постмодерация: пост в канале уже висит — помечаем его снятым.
+        if (wasInCatalog)
+            db.OutboxMessages.Add(new OutboxMessage
+            {
+                Type = OutboxMessage.ListingChannelUpdate,
+                Payload = JsonSerializer.Serialize(new { listingId = id, mark = ChannelMark.Archived })
+            });
+
         audit.Record(ModerationLog.ActionRejectListing, ModerationLog.TargetListing, id,
             reason: comment,
-            payload: new { reason = request.Reason.ToString(), comment });
+            payload: new { reason = request.Reason.ToString(), comment, postModeration = wasInCatalog });
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        return Ok(new ModerationActionResult("Объявление отклонено, автор уведомлён."));
+        return Ok(new ModerationActionResult(wasInCatalog
+            ? "Объявление отклонено и снято с публикации, автор уведомлён."
+            : "Объявление отклонено, автор уведомлён."));
     }
 
     /// <summary>
@@ -294,11 +314,15 @@ public class ModerationController(
         user.SecurityStamp = Guid.NewGuid();   // немедленно инвалидирует выданные access-токены
         user.UpdatedAt = now;
 
-        // Активные объявления забаненного скрываем из каталога.
+        // Активные объявления забаненного скрываем из каталога и убираем из очереди
+        // модерации: разбирать публикации заблокированного автора незачем, а зависший
+        // ReviewQueuedAt держал бы архивные объявления в очереди навсегда.
         var archived = await db.Listings
             .Where(l => l.OwnerId == id && LiveStatuses.Contains(l.Status))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(l => l.Status, ListingStatus.Archived)
+                .SetProperty(l => l.ReviewQueuedAt, (DateTimeOffset?)null)
+                .SetProperty(l => l.ModerationPriority, 0)
                 .SetProperty(l => l.UpdatedAt, now), ct);
 
         // Все refresh-токены отзываются (в этой же транзакции — общий DbContext).
@@ -380,7 +404,13 @@ public class ModerationController(
         var todayStart = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero);
         var weekStart = todayStart.AddDays(-7);
 
-        var pendingListings = await db.Listings.CountAsync(l => l.Status == ListingStatus.PendingReview, ct);
+        // Премодерация и постмодерация считаются раздельно: первая — очередь, которая
+        // держит объявления вне каталога (её просрочка видна пользователям), вторая —
+        // выборочная проверка уже опубликованного (её просрочка видна только рискам).
+        var pendingListings = await db.Listings.CountAsync(
+            l => l.ReviewQueuedAt != null && l.Status == ListingStatus.PendingReview, ct);
+        var postReviewListings = await db.Listings.CountAsync(
+            l => l.ReviewQueuedAt != null && l.Status == ListingStatus.Active, ct);
         var openReports = await db.Reports.CountAsync(r => r.Status == ReportStatus.New, ct);
         var actionsToday = await db.ModerationLogs.CountAsync(m => m.CreatedAt >= todayStart, ct);
         var actionsThisWeek = await db.ModerationLogs.CountAsync(m => m.CreatedAt >= weekStart, ct);
@@ -388,8 +418,8 @@ public class ModerationController(
             m => m.Action == ModerationLog.ActionBanUser && m.CreatedAt >= todayStart, ct);
 
         return Ok(new ModerationStats(
-            pendingListings, openReports, pendingListings + openReports,
-            actionsToday, actionsThisWeek, bansToday));
+            pendingListings, openReports, pendingListings + postReviewListings + openReports,
+            actionsToday, actionsThisWeek, bansToday, postReviewListings));
     }
 
     // ---- queue helpers ----
@@ -397,7 +427,9 @@ public class ModerationController(
     private async Task<IEnumerable<QueueRow>> LoadListingRowsAsync(
         ModerationQueueQuery query, (int Priority, DateTimeOffset CreatedAt, Guid Id)? cursor, int limit, CancellationToken ct)
     {
-        var q = db.Listings.AsNoTracking().Where(l => l.Status == ListingStatus.PendingReview);
+        // Очередь = «стоит на проверке», а не «скрыто из каталога»: постмодерация
+        // держит объявление активным, но в очереди (см. Listing.ReviewQueuedAt).
+        var q = db.Listings.AsNoTracking().Where(l => l.ReviewQueuedAt != null);
 
         if (query.Priority is { } minPriority && minPriority > 0)
             q = q.Where(l => l.ModerationPriority >= minPriority);
@@ -405,19 +437,21 @@ public class ModerationController(
         if (cursor is { } c)
             q = q.Where(l =>
                 l.ModerationPriority < c.Priority ||
-                (l.ModerationPriority == c.Priority && l.CreatedAt > c.CreatedAt) ||
-                (l.ModerationPriority == c.Priority && l.CreatedAt == c.CreatedAt && l.Id > c.Id));
+                (l.ModerationPriority == c.Priority && l.ReviewQueuedAt > c.CreatedAt) ||
+                (l.ModerationPriority == c.Priority && l.ReviewQueuedAt == c.CreatedAt && l.Id > c.Id));
 
         var rows = await q
             .OrderByDescending(l => l.ModerationPriority)
-            .ThenBy(l => l.CreatedAt)
+            .ThenBy(l => l.ReviewQueuedAt)
             .ThenBy(l => l.Id)
             .Take(limit + 1)
-            .Select(l => new { l.Id, l.ModerationPriority, l.CreatedAt, l.Status, l.Title })
+            .Select(l => new { l.Id, l.ModerationPriority, QueuedAt = l.ReviewQueuedAt!.Value, l.Status, l.Title })
             .ToListAsync(ct);
 
+        // В элемент очереди отдаём время ПОСТАНОВКИ в очередь, а не создания объявления:
+        // по нему строится FIFO, и по нему же продолжает страницу курсор.
         return rows.Select(l => new QueueRow(
-            ModerationQueueKind.Listing, l.Id, l.ModerationPriority, l.CreatedAt, l.Status.ToString(),
+            ModerationQueueKind.Listing, l.Id, l.ModerationPriority, l.QueuedAt, l.Status.ToString(),
             Title: l.Title));
     }
 
