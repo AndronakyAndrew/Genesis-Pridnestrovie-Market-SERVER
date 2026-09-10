@@ -22,6 +22,15 @@ public sealed class ImageSharpImageProcessor : IImageProcessor
     private const int Quality = 82;            // WebP quality
     private const long MaxPixels = 50_000_000; // предел до декодирования
 
+    /// <summary>
+    /// Усилие энкодера WebP. Замер на фото 4000x3000: Method=4 (Default) — 747 мс на
+    /// один энкод, Method=2 — 183 мс на оба, при росте файла с 60 до 63 кБ. Качество
+    /// задаётся <see cref="Quality"/> и от Method не зависит: тот платит за 5% размера
+    /// вчетверо большим временем. На сервере под лимитом CPU это основной вклад в
+    /// задержку загрузки, поэтому берём Level2.
+    /// </summary>
+    private const WebpEncodingMethod EncodingMethod = WebpEncodingMethod.Level2;
+
     // format.Name у ImageSharp: "JPEG" / "PNG" / "WEBP".
     private static readonly HashSet<string> AllowedFormats =
         new(StringComparer.OrdinalIgnoreCase) { "JPEG", "PNG", "WEBP" };
@@ -93,28 +102,40 @@ public sealed class ImageSharpImageProcessor : IImageProcessor
             image.Metadata.IptcProfile = null;
             image.Metadata.XmpProfile = null;
 
-            var encoder = new WebpEncoder { Quality = Quality, FileFormat = WebpFileFormatType.Lossy };
+            var encoder = new WebpEncoder
+            {
+                Quality = Quality,
+                FileFormat = WebpFileFormatType.Lossy,
+                Method = EncodingMethod
+            };
 
-            var original = await EncodeResizedAsync(image, MaxLongSide, encoder, ct);
-            var thumbnail = await EncodeCropAsync(image, ThumbWidth, ThumbHeight, encoder, ct);
+            // Ужимаем один раз и переиспользуем: превью режется из уже уменьшенной
+            // картинки, а не из исходных мегапикселей. Для превью 400x300 пикселей
+            // в стороне 1600 с запасом, а лишний проход ресайза по полному кадру уходит.
+            using var resized = Resize(image, MaxLongSide);
 
-            return new ProcessedImage(original.Bytes, thumbnail, original.Width, original.Height);
+            var original = await EncodeAsync(resized, encoder, ct);
+            var thumbnail = await EncodeCropAsync(resized, ThumbWidth, ThumbHeight, encoder, ct);
+
+            return new ProcessedImage(original, thumbnail, resized.Width, resized.Height);
         }
     }
 
-    /// <summary>Ужимает до <paramref name="maxSide"/> по длинной стороне (только вниз) и кодирует в WebP.</summary>
-    private static async Task<(byte[] Bytes, int Width, int Height)> EncodeResizedAsync(
-        Image<Rgba32> source, int maxSide, WebpEncoder encoder, CancellationToken ct)
-    {
-        using var clone = source.Clone(ctx =>
+    /// <summary>Копия, ужатая до <paramref name="maxSide"/> по длинной стороне (только вниз).</summary>
+    private static Image<Rgba32> Resize(Image<Rgba32> source, int maxSide) =>
+        source.Clone(ctx =>
         {
             if (Math.Max(source.Width, source.Height) > maxSide)
                 ctx.Resize(new ResizeOptions { Mode = ResizeMode.Max, Size = new Size(maxSide, maxSide) });
         });
 
+    /// <summary>Кодирует изображение в WebP как есть.</summary>
+    private static async Task<byte[]> EncodeAsync(
+        Image<Rgba32> source, WebpEncoder encoder, CancellationToken ct)
+    {
         using var ms = new MemoryStream();
-        await clone.SaveAsync(ms, encoder, ct);
-        return (ms.ToArray(), clone.Width, clone.Height);
+        await source.SaveAsync(ms, encoder, ct);
+        return ms.ToArray();
     }
 
     /// <summary>Превью фиксированного размера, кроп «cover» из центра, кодирование в WebP.</summary>
