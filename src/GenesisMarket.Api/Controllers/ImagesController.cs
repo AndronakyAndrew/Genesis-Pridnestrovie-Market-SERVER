@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using GenesisMarket.Api.Http;
 using GenesisMarket.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -26,14 +27,31 @@ public class ImagesController(IObjectStorage storage) : ApiControllerBase
             return Problem(title: "Изображение не найдено", statusCode: StatusCodes.Status404NotFound);
 
         var objectKey = $"listings/{listingId}/{file}";
+        var etag = ImageCaching.ETagFor(objectKey);
+
+        // Ревалидация обслуживается без обращения к MinIO: ключ неизменяем, поэтому
+        // совпадения ETag достаточно. Побочный эффект: клиент со старым ETag получит
+        // 304 и на уже удалённую картинку — но её URL к тому моменту не отдаёт ни одна
+        // ручка, так что промах дешевле похода в хранилище на каждую ревалидацию.
+        if (ImageCaching.IsNotModified(Request, etag))
+        {
+            Response.Headers.CacheControl = ImageCaching.Immutable;
+            Response.Headers.ETag = etag.ToString();
+            return StatusCode(StatusCodes.Status304NotModified);
+        }
+
         try
         {
             var stream = await storage.GetAsync(objectKey, ct);
-            Response.Headers.CacheControl = "public, max-age=3600";
-            return File(stream, "image/webp", enableRangeProcessing: true);
+            // Ключ содержит GUIDv7, выданный при загрузке, и никогда не перезаписывается:
+            // новая картинка — всегда новый ключ. Поэтому URL кешируется навсегда.
+            Response.Headers.CacheControl = ImageCaching.Immutable;
+            return File(stream, "image/webp", lastModified: null, entityTag: etag,
+                enableRangeProcessing: true);
         }
         catch (FileNotFoundException)
         {
+            // Cache-Control выставляется только на успешном пути: кешировать 404 на год нельзя.
             return Problem(title: "Изображение не найдено", statusCode: StatusCodes.Status404NotFound);
         }
     }

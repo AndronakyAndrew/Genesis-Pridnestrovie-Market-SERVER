@@ -1,4 +1,5 @@
 using GenesisMarket.Api.Contracts;
+using GenesisMarket.Api.Http;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
 using GenesisMarket.Infrastructure.Storage;
@@ -61,11 +62,23 @@ public class UsersController(AppDbContext db, IObjectStorage storage) : ApiContr
         if (avatar is null)
             return Problem(title: "Аватар не найден", statusCode: StatusCodes.Status404NotFound);
 
+        // ETag считается от ключа в хранилище: он меняется при каждой загрузке нового
+        // аватара, поэтому валидатор честный даже при том, что сам URL перезаписываемый.
+        // Cache-Control остаётся коротким и без immutable — см. комментарий к ручке.
+        var etag = ImageCaching.ETagFor(avatar.Key);
+        if (ImageCaching.IsNotModified(Request, etag))
+        {
+            Response.Headers.CacheControl = "public, max-age=3600";
+            Response.Headers.ETag = etag.ToString();
+            return StatusCode(StatusCodes.Status304NotModified);
+        }
+
         try
         {
             var stream = await storage.GetAsync(avatar.Key, ct);
             Response.Headers.CacheControl = "public, max-age=3600";
-            return File(stream, ContentTypeFor(avatar.Key), enableRangeProcessing: true);
+            return File(stream, ContentTypeFor(avatar.Key), lastModified: null, entityTag: etag,
+                enableRangeProcessing: true);
         }
         catch (FileNotFoundException)
         {
