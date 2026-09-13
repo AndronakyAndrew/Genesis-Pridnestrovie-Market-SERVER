@@ -26,6 +26,13 @@ public record CatalogQuery
     public Condition? Condition { get; init; }
     public PriceType? PriceType { get; init; }
 
+    /// <summary>
+    /// «ID профиля» продавца (5 цифр, query-параметр <c>seller</c>): только его активные
+    /// объявления — лента публичного профиля. Код не той формы, несуществующий или
+    /// удалённого аккаунта даёт пустую выдачу, а не весь каталог.
+    /// </summary>
+    public string? Seller { get; init; }
+
     /// <summary>new | price_asc | price_desc | popular. По умолчанию new.</summary>
     public string? Sort { get; init; }
 

@@ -6,6 +6,7 @@ using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Outbox.Telegram;
+using GenesisMarket.Api.Profiles;
 using GenesisMarket.Api.Security;
 using GenesisMarket.Api.Seo;
 using GenesisMarket.Domain.Entities;
@@ -34,6 +35,7 @@ public class ListingsController(
     IListingModerationPolicy moderation,
     IListingViewCounter viewCounter,
     IContactRevealService contactReveal,
+    IPublicCodeResolver publicCodes,
     IValidator<CreateListingRequest> createValidator,
     IValidator<UpdateListingRequest> updateValidator,
     IMemoryCache cache,
@@ -77,11 +79,15 @@ public class ListingsController(
 
         var limit = Math.Clamp(query.Limit ?? DefaultLimit, 1, MaxLimit);
 
+        // Неизвестный продавец — пустая выдача, а не весь каталог.
+        if (await CatalogSourceAsync(query, ct) is not { } source)
+            return Ok(new CatalogPageResponse([], NextCursor: null, HasMore: false));
+
         if (q is not null)
-            return await SearchAsync(query, q, sort, limit, ct);
+            return await SearchAsync(source, query, q, sort, limit, ct);
 
         // ---- Обычный каталог (без q) ----
-        var listings = CatalogQueryBuilder.Filter(db.Listings.AsNoTracking(), query);
+        var listings = CatalogQueryBuilder.Filter(source, query);
 
         if (query.Cursor is { Length: > 0 } cursor)
         {
@@ -105,10 +111,10 @@ public class ListingsController(
     /// странице — fuzzy-fallback по опечаткам (pg_trgm), а окончательный ноль — в SearchMisses.
     /// </summary>
     private async Task<ActionResult<CatalogPageResponse>> SearchAsync(
-        CatalogQuery query, string q, CatalogSort sort, int limit, CancellationToken ct)
+        IQueryable<Listing> source, CatalogQuery query, string q, CatalogSort sort, int limit, CancellationToken ct)
     {
         var filtered = CatalogQueryBuilder.ApplyTextSearch(
-            CatalogQueryBuilder.Filter(db.Listings.AsNoTracking(), query), q);
+            CatalogQueryBuilder.Filter(source, query), q);
 
         var isFirstPage = query.Cursor is not { Length: > 0 };
         if (!isFirstPage)
@@ -136,7 +142,7 @@ public class ListingsController(
 
         // FTS вернул 0 на первой странице → отдельный fuzzy-режим (не смешиваем с FTS).
         if (rows.Count == 0 && isFirstPage)
-            return await TrigramFallbackAsync(query, q, limit, ct);
+            return await TrigramFallbackAsync(source, query, q, limit, ct);
 
         var page = rows.Take(limit).ToList();
         var items = await HighlightAsync(page, q, ct);
@@ -145,14 +151,15 @@ public class ListingsController(
 
     /// <summary>Fuzzy-поиск по опечаткам, когда FTS ничего не нашёл. Без keyset (только первая страница).</summary>
     private async Task<ActionResult<CatalogPageResponse>> TrigramFallbackAsync(
-        CatalogQuery query, string q, int limit, CancellationToken ct)
+        IQueryable<Listing> source, CatalogQuery query, string q, int limit, CancellationToken ct)
     {
         var rows = await CatalogQueryBuilder
             .Project(CatalogQueryBuilder.ApplyTrigramFallback(
-                CatalogQueryBuilder.Filter(db.Listings.AsNoTracking(), query), q).Take(limit))
+                CatalogQueryBuilder.Filter(source, query), q).Take(limit))
             .ToListAsync(ct);
 
-        if (rows.Count == 0)
+        // Промах поиска внутри ленты одного продавца — не пробел в каталоге.
+        if (rows.Count == 0 && string.IsNullOrEmpty(query.Seller))
         {
             // Ни FTS, ни fuzzy — это пробел в каталоге, логируем для наполнения.
             db.SearchMisses.Add(new SearchMiss { Query = q });
@@ -232,7 +239,10 @@ public class ListingsController(
         var cacheKey = CountCacheKey(query);
         if (!cache.TryGetValue(cacheKey, out long total))
         {
-            total = await CatalogQueryBuilder.Filter(db.Listings.AsNoTracking(), query).LongCountAsync(ct);
+            // Неизвестный продавец — 0, а не размер всего каталога.
+            total = await CatalogSourceAsync(query, ct) is { } source
+                ? await CatalogQueryBuilder.Filter(source, query).LongCountAsync(ct)
+                : 0;
             cache.Set(cacheKey, total, CountCacheTtl);
         }
 
@@ -725,6 +735,29 @@ public class ListingsController(
         return null;
     }
 
+    /// <summary>
+    /// Источник выборки каталога с учётом продавца. Без <c>seller</c> — все объявления
+    /// (фильтр Active и остальные накладывает <see cref="CatalogQueryBuilder.Filter"/>).
+    /// С <c>seller</c> — только объявления владельца этого «ID профиля».
+    /// <para>
+    /// null — код не той формы, не существует или аккаунт удалён: вызывающий отдаёт
+    /// пустую выдачу. Раньше неизвестный параметр молча игнорировался, и профиль
+    /// продавца показывал ВЕСЬ каталог. Ответ для несуществующего кода совпадает
+    /// с ответом для продавца без активных объявлений — перебор кодов через каталог
+    /// выдаёт лишь тех, чьи объявления и так видны в общей витрине.
+    /// </para>
+    /// </summary>
+    private async Task<IQueryable<Listing>?> CatalogSourceAsync(CatalogQuery query, CancellationToken ct)
+    {
+        var source = db.Listings.AsNoTracking();
+        if (string.IsNullOrEmpty(query.Seller))
+            return source;
+
+        return await publicCodes.ResolveAsync(query.Seller, ct) is { } ownerId
+            ? source.Where(l => l.OwnerId == ownerId)
+            : null;
+    }
+
     /// <summary>Стабильный ключ кэша количества по набору фильтров (сорт/курсор/лимит не влияют).</summary>
     private static string CountCacheKey(CatalogQuery q)
     {
@@ -739,7 +772,8 @@ public class ListingsController(
             q.PriceFrom?.ToString() ?? "-",
             q.PriceTo?.ToString() ?? "-",
             q.Condition?.ToString() ?? "-",
-            q.PriceType?.ToString() ?? "-");
+            q.PriceType?.ToString() ?? "-",
+            string.IsNullOrEmpty(q.Seller) ? "-" : q.Seller);
     }
 
     /// <summary>
