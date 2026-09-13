@@ -278,9 +278,10 @@ public class ListingsController(
     }
 
     /// <summary>
-    /// Раскрытие контактов продавца. Отдаёт телефон и deeplink'и мессенджеров
-    /// ТОЛЬКО если объявление Active, продавец не забанен и ShowPhoneInListing = true;
-    /// иначе — единый 404 без объяснения причины. Телефон нигде больше в API не отдаётся.
+    /// Раскрытие контактов продавца — только для Active-объявления незабаненного продавца.
+    /// Телефон и привязанные к нему Viber/WhatsApp отдаются, только если ShowPhoneInListing = true;
+    /// при скрытом номере остаётся Telegram (строится из username, номер не раскрывает).
+    /// Если показать нечего — единый 404 без объяснения причины. Телефон нигде больше в API не отдаётся.
     /// Анти-скрейпинг: rate-limit по (IpHash, UserId), задержка анонимам, журнал раскрытий.
     /// </summary>
     [AllowAnonymous]
@@ -312,14 +313,23 @@ public class ListingsController(
             })
             .FirstOrDefaultAsync(ct);
 
-        // Единый 404 без деталей: нет объявления / не Active / бан / показ выключен / нет телефона.
-        if (seller is null || seller.IsBanned || !seller.ShowPhone || string.IsNullOrEmpty(seller.PhoneE164))
+        if (seller is null || seller.IsBanned)
+            return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
+
+        // Скрытый номер в построитель не попадает вовсе — вместе с ним отпадают
+        // Viber и WhatsApp, чьи ссылки содержат номер.
+        var visiblePhone = seller.ShowPhone ? seller.PhoneE164 : null;
+        var contact = ContactLinkBuilder.Build(
+            visiblePhone, seller.TelegramUsername, seller.ViberEnabled, seller.WhatsappEnabled);
+
+        // Единый 404 без деталей и тогда, когда показать нечего: номер скрыт или
+        // не задан, а Telegram не указан. Скрейпер не отличит «скрыто» от «нет».
+        if (contact.Phone is null && contact.TelegramUrl is null)
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
 
         await contactReveal.RecordAsync(id, userId, ipHash, ct);
 
-        return Ok(ContactLinkBuilder.Build(
-            seller.PhoneE164, seller.TelegramUsername, seller.ViberEnabled, seller.WhatsappEnabled));
+        return Ok(contact);
     }
 
     [Authorize]

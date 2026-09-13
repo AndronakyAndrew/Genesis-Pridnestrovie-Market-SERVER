@@ -84,10 +84,42 @@ public class ContactRevealTests(AuthApiFactory factory) : IClassFixture<AuthApiF
     }
 
     [Fact]
-    public async Task Contact_returns_404_when_show_phone_disabled()
+    public async Task Contact_with_hidden_phone_returns_only_telegram()
+    {
+        var ownerId = await factory.SeedUserAsync(Unique("hidden-tg"), Password);
+        // Номер скрыт, но Viber/WhatsApp включены: их ссылки несут номер —
+        // отдавать их нельзя. Telegram строится из username и остаётся.
+        await factory.ConfigureContactAsync(ownerId, showPhone: false,
+            telegram: "seller_ivan", viber: true, whatsapp: true);
+        var listingId = await factory.SeedListingAsync(ownerId);
+
+        var viewer = Unique("viewer-hidden-tg");
+        await factory.SeedUserAsync(viewer, Password);
+        var client = await AuthedClient(viewer);
+
+        var resp = await client.GetAsync($"/api/listings/{listingId}/contact");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var raw = await resp.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(SellerDigits, raw);
+
+        using var doc = JsonDocument.Parse(raw);
+        var body = doc.RootElement;
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("phone").ValueKind);
+        Assert.Equal("https://t.me/seller_ivan", body.GetProperty("telegramUrl").GetString());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("viberUrl").ValueKind);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("whatsappUrl").ValueKind);
+
+        // Раскрытие Telegram — тоже попытка контакта: пишется в журнал.
+        Assert.Equal(1, await factory.ContactRevealCountAsync(listingId));
+    }
+
+    [Fact]
+    public async Task Contact_returns_404_when_phone_hidden_and_no_telegram()
     {
         var ownerId = await factory.SeedUserAsync(Unique("hidden"), Password);
-        await factory.ConfigureContactAsync(ownerId, showPhone: false);
+        // Номер скрыт, Telegram не задан; включённые Viber/WhatsApp без номера бесполезны.
+        await factory.ConfigureContactAsync(ownerId, showPhone: false, viber: true, whatsapp: true);
         var listingId = await factory.SeedListingAsync(ownerId);
 
         var viewer = Unique("viewer-hidden");
