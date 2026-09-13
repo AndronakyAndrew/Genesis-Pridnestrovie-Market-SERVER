@@ -56,6 +56,9 @@ public static class DependencyInjection
         // ---- Health checks (readiness) ----
         services.AddHealthChecks()
             .AddNpgSql(postgres, name: "postgres", tags: ["ready"])
+            // Схема отстала от кода — приложение не готово. Иначе рассинхрон
+            // всплывает случайной пятисоткой в первой ручке, тронувшей новую колонку.
+            .AddCheck<MigrationsHealthCheck>("migrations", tags: ["ready"])
             .AddCheck<MinioHealthCheck>("minio", tags: ["ready"]);
 
         // ---- Планировщик (Quartz): гигиена каталога. Персистентный стор — та же БД. ----
