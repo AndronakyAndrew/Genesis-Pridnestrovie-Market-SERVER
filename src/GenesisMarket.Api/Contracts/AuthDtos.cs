@@ -37,6 +37,12 @@ public record MessageResponse(string Message);
 /// </summary>
 public record UserResponse(
     Guid Id,
+    /// <summary>
+    /// «ID профиля». Уходит вместе с сессией, чтобы клиент мог сразу сверять
+    /// владельца («это моё объявление?») — иначе проверка ждала бы /api/me и
+    /// интерфейс мигал бы, как это было с ролью.
+    /// </summary>
+    string PublicCode,
     string Email,
     string DisplayName,
     City City,

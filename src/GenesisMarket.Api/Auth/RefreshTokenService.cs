@@ -19,14 +19,29 @@ public sealed record RefreshOutcome(
     RefreshStatus Status,
     Guid UserId,
     string? NewRawToken,
-    DateTimeOffset? ExpiresAt);
+    DateTimeOffset? ExpiresAt,
+    Guid SessionId = default);
+
+/// <summary>
+/// Всё, что известно о клиенте в момент выдачи токена. Сырой User-Agent сюда
+/// не попадает — он разбирается на границе (контроллер) и дальше не живёт.
+/// </summary>
+public sealed record SessionContext(string? Ip, ClientAgent Agent)
+{
+    public static SessionContext Empty => new(null, new ClientAgent(null, null, null));
+}
 
 public interface IRefreshTokenService
 {
-    Task<(string RawToken, DateTimeOffset ExpiresAt)> IssueAsync(Guid userId, string? ip, CancellationToken ct);
-    Task<RefreshOutcome> RotateAsync(string rawToken, string? ip, CancellationToken ct);
+    Task<(string RawToken, DateTimeOffset ExpiresAt, Guid SessionId)> IssueAsync(
+        Guid userId, SessionContext context, CancellationToken ct);
+
+    Task<RefreshOutcome> RotateAsync(string rawToken, SessionContext context, CancellationToken ct);
     Task<bool> RevokeAsync(string rawToken, CancellationToken ct);
     Task RevokeAllAsync(Guid userId, CancellationToken ct);
+
+    /// <summary>Отзыв одной сессии владельцем. false — сессии нет или она чужая.</summary>
+    Task<bool> RevokeSessionAsync(Guid userId, Guid sessionId, CancellationToken ct);
 }
 
 /// <summary>
@@ -42,25 +57,36 @@ public sealed class RefreshTokenService(
 {
     private readonly int _lifetimeDays = options.Value.RefreshTokenDays;
 
-    public async Task<(string RawToken, DateTimeOffset ExpiresAt)> IssueAsync(
-        Guid userId, string? ip, CancellationToken ct)
+    public async Task<(string RawToken, DateTimeOffset ExpiresAt, Guid SessionId)> IssueAsync(
+        Guid userId, SessionContext context, CancellationToken ct)
     {
         var (raw, hash) = Generate();
-        var expiresAt = DateTimeOffset.UtcNow.AddDays(_lifetimeDays);
+        var now = DateTimeOffset.UtcNow;
+        var expiresAt = now.AddDays(_lifetimeDays);
 
-        db.RefreshTokens.Add(new RefreshToken
+        var token = new RefreshToken
         {
             UserId = userId,
             TokenHash = hash,
             ExpiresAt = expiresAt,
-            CreatedByIpHash = ipHasher.Hash(ip)
-        });
+            CreatedByIpHash = ipHasher.Hash(context.Ip),
+            SessionStartedAt = now,
+            LastSeenAt = now,
+            DeviceFamily = context.Agent.Device,
+            BrowserFamily = context.Agent.Browser,
+            OsFamily = context.Agent.Os,
+            IpPrefix = ClientFingerprint.IpPrefix(context.Ip)
+        };
+        // Новая сессия: её идентификатор — идентификатор первой строки цепочки.
+        token.SessionId = token.Id;
+
+        db.RefreshTokens.Add(token);
         await db.SaveChangesAsync(ct);
 
-        return (raw, expiresAt);
+        return (raw, expiresAt, token.SessionId);
     }
 
-    public async Task<RefreshOutcome> RotateAsync(string rawToken, string? ip, CancellationToken ct)
+    public async Task<RefreshOutcome> RotateAsync(string rawToken, SessionContext context, CancellationToken ct)
     {
         var hash = Hash(rawToken);
         var token = await db.RefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
@@ -68,9 +94,21 @@ public sealed class RefreshTokenService(
         if (token is null)
             return new RefreshOutcome(RefreshStatus.Invalid, Guid.Empty, null, null);
 
-        // Повторное использование уже отозванного токена = признак кражи.
         if (token.RevokedAt is not null)
         {
+            // Отозван ЯВНО (logout, отзыв сессии из «Безопасности», logout-all):
+            // ReplacedByTokenId пуст. Токен просто мёртв — владелец сам его убил.
+            // Считать это кражей нельзя: отозванное устройство ещё какое-то время
+            // продолжает ходить за обновлением, и «отзыв цепочки» разлогинивал бы
+            // человека со ВСЕХ устройств через несколько минут после того, как он
+            // отключил одно. Тогда кнопка «выйти на этом устройстве» делала бы
+            // ровно то же, что «выйти везде».
+            if (token.ReplacedByTokenId is null)
+                return new RefreshOutcome(RefreshStatus.Invalid, Guid.Empty, null, null);
+
+            // Отозван РОТАЦИЕЙ (есть замена) — предъявлен старый токен из середины
+            // цепочки. Законный клиент так не делает: он всегда держит последний.
+            // Это признак кражи, отзываем всё.
             await RevokeAllAsync(token.UserId, ct);
             logger.LogWarning(
                 "Security: повторное использование отозванного refresh-токена. UserId={UserId}. Цепочка отозвана.",
@@ -83,21 +121,49 @@ public sealed class RefreshTokenService(
 
         // Активный токен — ротация.
         var (raw, newHash) = Generate();
-        var expiresAt = DateTimeOffset.UtcNow.AddDays(_lifetimeDays);
+        var now = DateTimeOffset.UtcNow;
+        var expiresAt = now.AddDays(_lifetimeDays);
         var newToken = new RefreshToken
         {
             UserId = token.UserId,
             TokenHash = newHash,
             ExpiresAt = expiresAt,
-            CreatedByIpHash = ipHasher.Hash(ip)
+            CreatedByIpHash = ipHasher.Hash(context.Ip),
+
+            // Сессия переживает ротацию: идентификатор и время входа переносятся,
+            // иначе устройство выглядело бы как новое каждые 15 минут.
+            SessionId = token.SessionId,
+            SessionStartedAt = token.SessionStartedAt,
+            LastSeenAt = now,
+
+            // Семейства перечитываем: браузер мог обновиться, а адрес — смениться
+            // (мобильная сеть). Если заголовка нет — оставляем прежние значения,
+            // чтобы сессия не «обнулилась» из-за запроса без User-Agent.
+            DeviceFamily = context.Agent.Device ?? token.DeviceFamily,
+            BrowserFamily = context.Agent.Browser ?? token.BrowserFamily,
+            OsFamily = context.Agent.Os ?? token.OsFamily,
+            IpPrefix = ClientFingerprint.IpPrefix(context.Ip) ?? token.IpPrefix
         };
         db.RefreshTokens.Add(newToken);
 
-        token.RevokedAt = DateTimeOffset.UtcNow;
+        token.RevokedAt = now;
         token.ReplacedByTokenId = newToken.Id;
 
         await db.SaveChangesAsync(ct);
-        return new RefreshOutcome(RefreshStatus.Ok, token.UserId, raw, expiresAt);
+        return new RefreshOutcome(RefreshStatus.Ok, token.UserId, raw, expiresAt, newToken.SessionId);
+    }
+
+    public async Task<bool> RevokeSessionAsync(Guid userId, Guid sessionId, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        // Фильтр по UserId — в самом запросе: чужая сессия не отзывается и не
+        // подтверждается, вызывающий получит тот же ответ, что и для несуществующей.
+        var affected = await db.RefreshTokens
+            .Where(t => t.UserId == userId && t.SessionId == sessionId && t.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), ct);
+
+        return affected > 0;
     }
 
     public async Task<bool> RevokeAsync(string rawToken, CancellationToken ct)

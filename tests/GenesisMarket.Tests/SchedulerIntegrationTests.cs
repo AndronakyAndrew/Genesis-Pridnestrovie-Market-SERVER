@@ -83,6 +83,9 @@ public sealed class SchedulerIntegrationTests : IAsyncLifetime
         {
             Email = $"sched-{Guid.NewGuid():N}@test.io",
             PasswordHash = "x",
+            // Хост здесь минимальный (только планировщик), генератора кодов в нём нет;
+            // пользователь в этой БД ровно один, так что литерала достаточно.
+            PublicCode = "10001",
             PhoneE164 = "+37312345678",
             Profile = new Profile { DisplayName = "Планировщик", City = City.Tiraspol }
         };

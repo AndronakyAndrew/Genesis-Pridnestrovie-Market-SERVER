@@ -17,7 +17,12 @@ public record ListingResponse(
     Condition Condition,
     ListingStatus Status,
     int ViewsCount,
-    Guid OwnerId,
+    /// <summary>
+    /// «ID профиля» владельца — по нему строится ссылка на продавца. Guid владельца
+    /// наружу не отдаём: это UUID v7, в старших битах которого лежит время
+    /// регистрации с точностью до миллисекунды.
+    /// </summary>
+    string OwnerPublicCode,
     DateTimeOffset CreatedAt,
     DateTimeOffset? PublishedAt,
     int ContactRevealCount = 0,
@@ -30,6 +35,17 @@ public record ListingResponse(
     /// Заполняется только для Active-объявлений; для остальных статусов — null.
     /// </summary>
     int? DaysUntilArchive = null,
+    /// <summary>
+    /// Код причины последнего отклонения. Заполняется ТОЛЬКО в ответе владельцу:
+    /// это один DTO и для публичной карточки, и для «моих объявлений», поэтому
+    /// условие явное (см. ListingsController.ToResponseAsync). Постороннему —
+    /// всегда null, даже если объявление отклонено.
+    /// </summary>
+    string? RejectionReasonCode = null,
+    /// <summary>Комментарий модератора. Видимость — как у RejectionReasonCode.</summary>
+    string? RejectionComment = null,
+    /// <summary>Когда отклонили. Видимость — как у RejectionReasonCode.</summary>
+    DateTimeOffset? RejectedAt = null,
     /// <summary>
     /// Канонический публичный адрес карточки (<c>/obyavlenie/{slug}</c>) — для &lt;link rel=canonical&gt;
     /// и шеринга. null, если публичный адрес сайта не настроен (<c>Seo:WebBaseUrl</c>).

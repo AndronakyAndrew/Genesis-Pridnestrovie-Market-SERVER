@@ -23,7 +23,11 @@ public record UpdateReviewRequest(
 public record ReviewResponse(
     Guid Id,
     Guid ListingId,
-    Guid AuthorId,
+    /// <summary>
+    /// «ID профиля» автора вместо Guid: по нему строится ссылка на его профиль.
+    /// Guid автора наружу не отдаём — это UUID v7, то есть дата регистрации.
+    /// </summary>
+    string AuthorPublicCode,
     string AuthorName,
     string? AuthorAvatarUrl,
     int Rating,

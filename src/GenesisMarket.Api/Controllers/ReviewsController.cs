@@ -2,10 +2,13 @@ using System.Globalization;
 using System.Text.Json;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
+using GenesisMarket.Api.Profiles;
+using GenesisMarket.Api.Security;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -19,7 +22,7 @@ namespace GenesisMarket.Api.Controllers;
 /// в той же транзакции, что и запись/редактирование/скрытие отзыва.
 /// </summary>
 [Route("api/reviews")]
-public class ReviewsController(AppDbContext db) : ApiControllerBase
+public class ReviewsController(AppDbContext db, IPublicCodeResolver publicCodes) : ApiControllerBase
 {
     private const int DefaultLimit = 20;
     private const int MaxLimit = 50;
@@ -96,14 +99,11 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
                 statusCode: StatusCodes.Status409Conflict);
         }
 
-        var author = await db.Profiles.AsNoTracking()
-            .Where(p => p.UserId == userId)
-            .Select(p => new { p.DisplayName, p.AvatarUrl, p.UpdatedAt })
-            .FirstAsync(ct);
+        var author = await AuthorAsync(userId, ct);
 
         var response = new ReviewResponse(
-            review.Id, review.ListingId, review.AuthorId,
-            author.DisplayName, BuildAvatarUrl(userId, author.AvatarUrl, author.UpdatedAt),
+            review.Id, review.ListingId, author.PublicCode,
+            author.DisplayName, BuildAvatarUrl(author.PublicCode, author.AvatarUrl, author.UpdatedAt),
             review.Rating, review.Text, review.CreatedAt, review.UpdatedAt,
             IsEditable: true);
 
@@ -114,6 +114,19 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
     /// Отзывы о продавце: курсорная пагинация, свежие сверху, скрытые модератором
     /// не отдаются. Публичный эндпоинт.
     /// </summary>
+    [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.ProfileByCode)]
+    [HttpGet("~/api/users/by-code/{code}/reviews")]
+    public async Task<ActionResult<ReviewsPageResponse>> ForUserByCode(
+        string code, [FromQuery] string? cursor, [FromQuery] int? limit, CancellationToken ct)
+    {
+        var id = await publicCodes.ResolveAsync(code, ct);
+        return id is null
+            ? Problem(title: "Профиль не найден", statusCode: StatusCodes.Status404NotFound)
+            : await ForUser(id.Value, cursor, limit, ct);
+    }
+
+    /// <summary>Отзывы по Guid продавца — legacy-адрес, ради уже расшаренных ссылок.</summary>
     [AllowAnonymous]
     [HttpGet("~/api/users/{id:guid}/reviews")]
     public async Task<ActionResult<ReviewsPageResponse>> ForUser(
@@ -141,8 +154,8 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
             .OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id)
             .Take(take + 1)
             .Select(r => new ReviewRow(
-                r.Id, r.ListingId, r.AuthorId,
-                r.Author!.Profile!.DisplayName,
+                r.Id, r.ListingId, r.AuthorId, r.Author!.PublicCode,
+                r.Author.Profile!.DisplayName,
                 r.Author.Profile.AvatarUrl, r.Author.Profile.UpdatedAt,
                 r.Rating, r.Text, r.CreatedAt, r.UpdatedAt))
             .ToListAsync(ct);
@@ -155,8 +168,8 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
         foreach (var row in page)
         {
             items.Add(new ReviewResponse(
-                row.Id, row.ListingId, row.AuthorId, row.AuthorName,
-                BuildAvatarUrl(row.AuthorId, row.AuthorAvatarUrl, row.AuthorAvatarUpdatedAt),
+                row.Id, row.ListingId, row.AuthorPublicCode, row.AuthorName,
+                BuildAvatarUrl(row.AuthorPublicCode, row.AuthorAvatarUrl, row.AuthorAvatarUpdatedAt),
                 row.Rating, row.Text, row.CreatedAt, row.UpdatedAt,
                 IsEditable: viewer == row.AuthorId && now - row.CreatedAt <= EditWindow));
         }
@@ -203,14 +216,11 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
         // Триггер пересчитывает агрегат (изменение оценки влияет на среднее).
         await db.SaveChangesAsync(ct);
 
-        var author = await db.Profiles.AsNoTracking()
-            .Where(p => p.UserId == userId)
-            .Select(p => new { p.DisplayName, p.AvatarUrl, p.UpdatedAt })
-            .FirstAsync(ct);
+        var author = await AuthorAsync(userId, ct);
 
         return Ok(new ReviewResponse(
-            review.Id, review.ListingId, review.AuthorId,
-            author.DisplayName, BuildAvatarUrl(userId, author.AvatarUrl, author.UpdatedAt),
+            review.Id, review.ListingId, author.PublicCode,
+            author.DisplayName, BuildAvatarUrl(author.PublicCode, author.AvatarUrl, author.UpdatedAt),
             review.Rating, review.Text, review.CreatedAt, review.UpdatedAt,
             IsEditable: true));
     }
@@ -246,7 +256,9 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
     private sealed record ReviewRow(
         Guid Id,
         Guid ListingId,
+        /// <summary>Нужен только внутри: по нему считается IsEditable. Наружу не уходит.</summary>
         Guid AuthorId,
+        string AuthorPublicCode,
         string AuthorName,
         string? AuthorAvatarUrl,
         DateTimeOffset? AuthorAvatarUpdatedAt,
@@ -255,8 +267,14 @@ public class ReviewsController(AppDbContext db) : ApiControllerBase
         DateTimeOffset CreatedAt,
         DateTimeOffset? UpdatedAt);
 
-    private string? BuildAvatarUrl(Guid userId, string? avatarKey, DateTimeOffset? updatedAt) =>
-        avatarKey is null
-            ? null
-            : $"{Request.Scheme}://{Request.Host}/api/users/{userId}/avatar?v={updatedAt?.UtcTicks ?? 0}";
+    private sealed record AuthorRow(string PublicCode, string DisplayName, string? AvatarUrl, DateTimeOffset? UpdatedAt);
+
+    private Task<AuthorRow> AuthorAsync(Guid userId, CancellationToken ct) =>
+        db.Profiles.AsNoTracking()
+            .Where(p => p.UserId == userId)
+            .Select(p => new AuthorRow(p.User!.PublicCode, p.DisplayName, p.AvatarUrl, p.UpdatedAt))
+            .FirstAsync(ct);
+
+    private string? BuildAvatarUrl(string publicCode, string? avatarKey, DateTimeOffset? updatedAt) =>
+        avatarKey is null ? null : AvatarUrl.Build(Request, publicCode, updatedAt);
 }

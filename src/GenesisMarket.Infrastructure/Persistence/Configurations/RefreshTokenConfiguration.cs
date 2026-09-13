@@ -14,9 +14,21 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
         b.Property(t => t.TokenHash).IsRequired();
         b.Property(t => t.CreatedByIpHash).HasMaxLength(128);
 
+        // ---- Сессия ----
+        // Семейства из User-Agent. Сырой User-Agent не хранится, колонки под него нет.
+        b.Property(t => t.DeviceFamily).HasMaxLength(32);
+        b.Property(t => t.BrowserFamily).HasMaxLength(32);
+        b.Property(t => t.OsFamily).HasMaxLength(32);
+
+        // Два октета IPv4 либо два хекстета IPv6 — единственная открытая часть адреса.
+        b.Property(t => t.IpPrefix).HasMaxLength(39);
+
         // Поиск по хешу токена при refresh/logout — по нему же уникальность.
         b.HasIndex(t => t.TokenHash).IsUnique();
         b.HasIndex(t => t.UserId);
+
+        // Список сессий и отзыв по SessionId: выборка всегда в пределах владельца.
+        b.HasIndex(t => new { t.UserId, t.SessionId });
 
         b.HasOne(t => t.User)
             .WithMany(u => u.RefreshTokens)

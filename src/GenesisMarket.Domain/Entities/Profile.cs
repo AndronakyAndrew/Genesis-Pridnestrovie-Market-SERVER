@@ -22,6 +22,14 @@ public class Profile
     public string? TelegramUsername { get; set; }
 
     /// <summary>
+    /// «О себе» — свободный текст продавца, видимый всем (публичный профиль).
+    /// Нормализуется на входе (<c>ProfileText.NormalizeDescription</c>); пустой текст хранится
+    /// как null, а не как "". Ограничение ≤ 300 задано в EF (<c>HasMaxLength</c>)
+    /// ⇒ в БД колонка <c>character varying(300)</c>.
+    /// </summary>
+    public string? Description { get; set; }
+
+    /// <summary>
     /// Канал, которым доставлять уведомления (outbox). По умолчанию — почта:
     /// адрес есть у каждого. Telegram работает только при заполненном <see cref="TelegramChatId"/>.
     /// </summary>

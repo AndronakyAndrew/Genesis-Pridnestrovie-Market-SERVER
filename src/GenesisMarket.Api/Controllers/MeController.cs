@@ -1,5 +1,7 @@
+using System.Text.Json;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
+using GenesisMarket.Api.Profiles;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Imaging;
@@ -54,6 +56,21 @@ public class MeController(
         if (request.WhatsappEnabled is { } whatsapp) p.WhatsappEnabled = whatsapp;
         if (request.ShowPhoneInListing is { } showPhone) p.ShowPhoneInListing = showPhone;
 
+        if (request.Description is not null)
+        {
+            // TODO (до запуска рекламы): «О себе» — свободный пользовательский текст,
+            // видимый всем в публичном профиле и в карточке продавца, то есть такая же
+            // площадка для спама/оскорблений/контактов в обход площадки, как и текст
+            // объявления — но без премодерации: ListingModerationPolicy решает лишь,
+            // слать ли объявление в PendingReview, содержимое не проверяет, и на
+            // профиль не распространяется вовсе. Как только у текста объявлений
+            // появится фильтр содержимого, прогонять описание через него же —
+            // одним правилом, а не отдельной веткой.
+            // Экранирование HTML здесь не нужно: оно делается на границе вывода
+            // (HtmlEncoder в письмах и Telegram-постах), см. комментарий в ProfileText.
+            p.Description = ProfileText.NormalizeDescription(request.Description);
+        }
+
         if (request.PhoneE164 is not null)
         {
             var normalized = PhoneNumber.Normalize(request.PhoneE164, phoneOptions.Value.AllowOtherCountries);
@@ -81,7 +98,7 @@ public class MeController(
     /// (<see cref="IImageProcessor"/>): тип по magic bytes, защита от decompression bomb,
     /// снятие EXIF/IPTC/XMP и перекодирование в WebP — всё ДО записи в хранилище.
     /// Снятие EXIF здесь принципиально: в метаданных снимка лежат GPS-координаты,
-    /// а аватар отдаётся анонимно (<c>GET /api/users/{id}/avatar</c>).
+    /// а аватар отдаётся анонимно (<c>GET /api/users/by-code/{code}/avatar</c>).
     /// </summary>
     [HttpPost("avatar")]
     [RequestSizeLimit(MaxAvatarBytes)]
@@ -113,7 +130,9 @@ public class MeController(
         }
 
         var userId = CurrentUserId()!.Value;
-        var profile = await db.Profiles.FirstOrDefaultAsync(pr => pr.UserId == userId, ct);
+        // User нужен ради PublicCode: адрес аватара строится по нему, не по Guid.
+        var profile = await db.Profiles.Include(pr => pr.User)
+            .FirstOrDefaultAsync(pr => pr.UserId == userId, ct);
         if (profile is null)
             return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
 
@@ -122,11 +141,113 @@ public class MeController(
         await using (var os = new MemoryStream(processed.Original))
             await storage.PutAsync(key, os, os.Length, "image/webp", ct);
 
+        // Прежний аватар: ссылку перетираем, а объект отправляем на удаление.
+        // Без этого каждая повторная загрузка оставляла в хранилище сироту.
+        EnqueueAvatarDeletion(profile.AvatarUrl);
+
         profile.AvatarUrl = key;
         profile.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
 
-        return Ok(new AvatarResponse(BuildAvatarUrl(userId, profile.UpdatedAt)));
+        return Ok(new AvatarResponse(
+            AvatarUrl.Build(Request, profile.User!.PublicCode, profile.UpdatedAt)));
+    }
+
+    /// <summary>
+    /// Удаление аватара. Идемпотентно: 204 и когда аватар был, и когда его нет —
+    /// повторный клик по «Удалить» не должен давать 404.
+    ///
+    /// Порядок строго такой: сначала снимается ссылка в БД, и только после
+    /// коммита удаляется объект. Наоборот нельзя — упавшая транзакция оставила бы
+    /// профиль со ссылкой на несуществующий файл. Само удаление идёт заявкой в
+    /// outbox в той же транзакции (как у фото объявлений, ListingImagesController):
+    /// заявка и обнуление ссылки либо фиксируются вместе, либо не происходят вовсе,
+    /// а недоступность MinIO в момент запроса не роняет ответ — диспетчер повторит.
+    ///
+    /// Rate-limit: как у загрузки — именованной политики нет, действует только
+    /// глобальный лимит на IP (RateLimit:GlobalPerMinute). Ставить сюда отдельную
+    /// политику значило бы ограничить удаление строже, чем загрузку, хотя удаление
+    /// дешевле: ни разбора картинки, ни записи в хранилище, ни 5 МБ тела — одна
+    /// строка UPDATE и запись в outbox.
+    /// </summary>
+    [HttpDelete("avatar")]
+    public async Task<IActionResult> DeleteAvatar(CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+
+        var profile = await db.Profiles.FirstOrDefaultAsync(pr => pr.UserId == userId, ct);
+        if (profile is null)
+            return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
+
+        // Аватара нет — уже в нужном состоянии, БД не трогаем.
+        if (profile.AvatarUrl is null)
+            return NoContent();
+
+        EnqueueAvatarDeletion(profile.AvatarUrl);
+        profile.AvatarUrl = null;
+        profile.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Активные сессии владельца. Только свои и только живые: отозванные и
+    /// просроченные строки не показываем — в списке устройств им не место.
+    ///
+    /// Одна строка = одна сессия, а не один refresh-токен: ротация создаёт новую
+    /// строку каждые ≤15 минут, поэтому группируем по SessionId и берём
+    /// действующую. TODO (город): в дизайне рядом с IP стоит «Тирасполь, MD».
+    /// Не реализовано намеренно — это требует базы GeoIP и превращает таблицу
+    /// сессий в журнал перемещений владельца. City всегда null.
+    /// </summary>
+    [HttpGet("sessions")]
+    public async Task<ActionResult<IReadOnlyList<SessionResponse>>> GetSessions(CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+        var currentSessionId = CurrentUser.SessionId;
+        var now = DateTimeOffset.UtcNow;
+
+        var sessions = await db.RefreshTokens.AsNoTracking()
+            .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now)
+            .OrderByDescending(t => t.LastSeenAt ?? t.SessionStartedAt)
+            .Select(t => new SessionResponse(
+                t.SessionId,
+                t.DeviceFamily,
+                t.BrowserFamily,
+                t.OsFamily,
+                t.IpPrefix,
+                null,                       // City — см. TODO выше
+                t.SessionStartedAt,
+                t.LastSeenAt,
+                // Текущая сессия — по claim sid, а не по «самой свежей LastSeenAt»:
+                // одновременная активность на двух устройствах сделала бы такую
+                // догадку неверной.
+                currentSessionId != null && t.SessionId == currentSessionId))
+            .ToListAsync(ct);
+
+        return Ok(sessions);
+    }
+
+    /// <summary>
+    /// Отзыв одной сессии. Чужая сессия — 404, а не 403: 403 подтверждал бы, что
+    /// такой идентификатор существует.
+    ///
+    /// Отзыв своей текущей сессии разрешён и равносилен выходу: refresh-токен
+    /// умирает сразу, access-токен доживает свой срок (≤ Jwt:AccessTokenMinutes,
+    /// по умолчанию 15 минут) — ровно так же ведёт себя POST /api/auth/logout.
+    /// Мгновенно убить и access-токены может только logout-all: он меняет
+    /// SecurityStamp, а тот общий на все сессии.
+    /// </summary>
+    [HttpDelete("sessions/{id:guid}")]
+    public async Task<IActionResult> RevokeSession(Guid id, CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+
+        var revoked = await refreshTokens.RevokeSessionAsync(userId, id, ct);
+        return revoked
+            ? NoContent()
+            : Problem(title: "Сессия не найдена", statusCode: StatusCodes.Status404NotFound);
     }
 
     [HttpDelete]
@@ -154,7 +275,14 @@ public class MeController(
         {
             user.Profile.DisplayName = "Удалённый пользователь";
             user.Profile.TelegramUsername = null;
+            // Файл аватара раньше оставался в хранилище навсегда: ссылку снимали,
+            // объект — нет. Заявка на удаление идёт в той же транзакции, что и
+            // анонимизация, тем же путём, что и DELETE /api/me/avatar.
+            EnqueueAvatarDeletion(user.Profile.AvatarUrl);
             user.Profile.AvatarUrl = null;
+            // «О себе» — текст, написанный самим пользователем, в том числе о себе
+            // лично: при удалении аккаунта он стирается вместе с контактами.
+            user.Profile.Description = null;
             user.Profile.UpdatedAt = now;
         }
 
@@ -177,6 +305,27 @@ public class MeController(
 
     // ---- helpers ----
 
+    /// <summary>
+    /// Ставит объект аватара в очередь на удаление из хранилища. Вызывается ДО
+    /// <c>SaveChangesAsync</c>, чтобы заявка попала в ту же транзакцию, что и
+    /// снятие ссылки. <c>null</c> (аватара не было) — ничего не ставим.
+    ///
+    /// Тип сообщения — <see cref="OutboxMessage.DeleteImages"/> (payload: массив
+    /// ключей), тот же, что у фото объявлений: у аватара ключ один, но заводить
+    /// ради этого отдельный тип и обработчик незачем.
+    /// </summary>
+    private void EnqueueAvatarDeletion(string? objectKey)
+    {
+        if (objectKey is null)
+            return;
+
+        db.OutboxMessages.Add(new OutboxMessage
+        {
+            Type = OutboxMessage.DeleteImages,
+            Payload = JsonSerializer.Serialize(new[] { objectKey })
+        });
+    }
+
     private Task<User?> LoadAsync(CancellationToken ct)
     {
         var userId = CurrentUserId()!.Value;
@@ -184,15 +333,17 @@ public class MeController(
     }
 
     private async Task<MeResponse> MapMeAsync(User u, CancellationToken ct) => new(
-        u.Id, u.Email, u.Role, u.PhoneE164, u.PhoneVerified, u.EmailVerified,
+        u.Id, u.PublicCode, u.Email, u.Role, u.PhoneE164, u.PhoneVerified, u.EmailVerified,
         u.IsBanned, u.BannedUntil, u.IsDeleted,
         u.Profile?.DisplayName ?? "", u.Profile?.City ?? default,
-        u.Profile?.AvatarUrl is null ? null : BuildAvatarUrl(u.Id, u.Profile.UpdatedAt), u.Profile?.TelegramUsername,
+        u.Profile?.AvatarUrl is null
+            ? null
+            : AvatarUrl.Build(Request, u.PublicCode, u.Profile.UpdatedAt),
+        u.Profile?.TelegramUsername,
+        u.Profile?.Description,
         u.Profile?.ViberEnabled ?? false, u.Profile?.WhatsappEnabled ?? false,
         u.Profile?.ShowPhoneInListing ?? true,
         u.CreatedAt, u.UpdatedAt);
 
-    private string BuildAvatarUrl(Guid userId, DateTimeOffset? updatedAt) =>
-        $"{Request.Scheme}://{Request.Host}/api/users/{userId}/avatar?v={updatedAt?.UtcTicks ?? 0}";
 
 }

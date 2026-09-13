@@ -72,8 +72,26 @@ public sealed class ListingRejectedHandler(AppDbContext db, IUserNotifier notifi
         await notifier.NotifyAsync(listing.OwnerId, "Объявление отклонено", body, ct);
     }
 
-    private static string ReasonText(string reason) =>
-        Enum.TryParse<ReportReason>(reason, out var r) ? r switch
+    /// <summary>
+    /// Текст причины для письма. Разбирается как <see cref="RejectionReasonCode"/>,
+    /// но старые значения <see cref="ReportReason"/> тоже понимаются: в очереди
+    /// outbox могут лежать сообщения, записанные до смены набора кодов.
+    /// </summary>
+    private static string ReasonText(string reason)
+    {
+        if (Enum.TryParse<RejectionReasonCode>(reason, out var code))
+            return code switch
+            {
+                RejectionReasonCode.Duplicate => "дубликат объявления",
+                RejectionReasonCode.ProhibitedItem => "запрещённый товар или услуга",
+                RejectionReasonCode.WrongCategory => "неверная категория",
+                RejectionReasonCode.BadPhotos => "фотографии не подходят",
+                RejectionReasonCode.ContactsInText => "контакты в заголовке или описании",
+                RejectionReasonCode.PriceViolation => "нарушение в цене",
+                _ => "нарушение правил"
+            };
+
+        return Enum.TryParse<ReportReason>(reason, out var legacy) ? legacy switch
         {
             ReportReason.Spam => "спам",
             ReportReason.Fraud => "мошенничество",
@@ -83,6 +101,7 @@ public sealed class ListingRejectedHandler(AppDbContext db, IUserNotifier notifi
             ReportReason.PriceViolation => "нарушение в цене",
             _ => "нарушение правил"
         } : "нарушение правил";
+    }
 }
 
 /// <summary>Скоро автоархивация → напоминание автору поднять объявление.</summary>

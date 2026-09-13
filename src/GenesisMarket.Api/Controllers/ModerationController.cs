@@ -99,7 +99,8 @@ public class ModerationController(
                 x.SubcategoryId, x.City, x.District, x.Condition, x.Status, x.ViewsCount,
                 x.FavoritesCount, x.ModerationPriority, x.CreatedAt, x.PublishedAt, x.DeletedAt,
                 x.OwnerId,
-                OwnerName = x.Owner!.Profile!.DisplayName,
+                OwnerCode = x.Owner!.PublicCode,
+                OwnerName = x.Owner.Profile!.DisplayName,
                 OwnerBanned = x.Owner.IsBanned
             })
             .FirstOrDefaultAsync(ct);
@@ -111,14 +112,19 @@ public class ModerationController(
             .Where(r => r.TargetType == ReportTargetType.Listing && r.TargetId == id &&
                         (r.Status == ReportStatus.New || r.Status == ReportStatus.InReview))
             .OrderBy(r => r.CreatedAt)
-            .Select(r => new ModerationReportItem(r.Id, r.Reason, r.Comment, r.Status, r.ReporterId, r.CreatedAt))
+            .Select(r => new ModerationReportItem(
+                r.Id, r.Reason, r.Comment, r.Status, r.ReporterId,
+                // Навигации Reporter у Report нет (заявитель может быть анонимом),
+                // поэтому код подтягиваем подзапросом.
+                db.Users.Where(u => u.Id == r.ReporterId).Select(u => u.PublicCode).FirstOrDefault(),
+                r.CreatedAt))
             .ToListAsync(ct);
 
         return Ok(new ModerationListingCard(
             l.Id, l.Slug, l.Title, l.Description, l.Price, l.PriceType, l.Category,
             l.SubcategoryId, l.City, l.District, l.Condition, l.Status, l.ViewsCount,
             l.FavoritesCount, l.ModerationPriority, l.CreatedAt, l.PublishedAt, l.DeletedAt,
-            l.OwnerId, l.OwnerName, l.OwnerBanned, reports));
+            l.OwnerId, l.OwnerCode, l.OwnerName, l.OwnerBanned, reports));
     }
 
     /// <summary>Одобрить объявление: PendingReview → Active, приоритет очереди сбрасывается.</summary>
@@ -176,10 +182,17 @@ public class ModerationController(
     public async Task<ActionResult<ModerationActionResult>> Reject(
         Guid id, RejectListingRequest request, CancellationToken ct)
     {
+        var comment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim();
+
+        // Код Other ничего не объясняет сам по себе — без комментария автор
+        // останется ровно в том же положении, что и с общим «отклонено».
+        if (request.Reason == RejectionReasonCode.Other && comment is null)
+            return Problem(
+                title: "При причине «Другое» комментарий обязателен",
+                statusCode: StatusCodes.Status400BadRequest);
+
         var listing = await db.Listings.IgnoreQueryFilters()
-            .Where(l => l.Id == id)
-            .Select(l => new { l.Status, l.OwnerId, l.Title })
-            .FirstOrDefaultAsync(ct);
+            .FirstOrDefaultAsync(l => l.Id == id, ct);
 
         if (listing is null)
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
@@ -187,16 +200,12 @@ public class ModerationController(
             return Problem(title: "Объявление не находится на модерации", statusCode: StatusCodes.Status409Conflict);
 
         var now = DateTimeOffset.UtcNow;
-        var comment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim();
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        await db.Listings.IgnoreQueryFilters()
-            .Where(l => l.Id == id)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(l => l.Status, ListingStatus.Rejected)
-                .SetProperty(l => l.ModerationPriority, 0)
-                .SetProperty(l => l.UpdatedAt, now), ct);
+        // Через доменный метод, а не ExecuteUpdate: статус и причина меняются
+        // вместе, и правило «статус только через переходы» здесь тоже действует.
+        listing.Reject(request.Reason, comment, now);
 
         // Уведомление автора — через outbox (в той же транзакции). Только идентификаторы
         // и причина: текст письма/сообщения соберёт обработчик по типу.
@@ -354,12 +363,28 @@ public class ModerationController(
     /// Каждый вызов пишется в журнал модерации (даже если это просто просмотр).
     /// </summary>
     [HttpGet("users/{id:guid}")]
-    public async Task<ActionResult<ModerationUserContacts>> GetUserContacts(Guid id, CancellationToken ct)
+    public Task<ActionResult<ModerationUserContacts>> GetUserContacts(Guid id, CancellationToken ct) =>
+        UserContactsAsync(u => u.Id == id, ct);
+
+    /// <summary>
+    /// Та же карточка, но по «ID профиля» («82914»), а не по GUID: в жалобах и
+    /// в поддержке пользователя называют именно кодом. Ручка закрыта политикой
+    /// Moderator намеренно — кодов всего 90 000, и открытый резолвер «код → аккаунт»
+    /// превратил бы их в перечислимое пространство имён. Просмотр пишется в журнал
+    /// так же, как и обращение по GUID.
+    /// </summary>
+    [HttpGet("users/by-code/{code}")]
+    public Task<ActionResult<ModerationUserContacts>> GetUserContactsByCode(string code, CancellationToken ct) =>
+        UserContactsAsync(u => u.PublicCode == code, ct);
+
+    private async Task<ActionResult<ModerationUserContacts>> UserContactsAsync(
+        System.Linq.Expressions.Expression<Func<User, bool>> match, CancellationToken ct)
     {
         var user = await db.Users.AsNoTracking()
-            .Where(u => u.Id == id && !u.IsDeleted)
+            .Where(match)
+            .Where(u => !u.IsDeleted)
             .Select(u => new ModerationUserContacts(
-                u.Id, u.Email, u.PhoneE164, u.EmailVerified, u.PhoneVerified,
+                u.Id, u.PublicCode, u.Email, u.PhoneE164, u.EmailVerified, u.PhoneVerified,
                 u.Role, u.IsBanned, u.BannedUntil, u.CreatedAt))
             .FirstOrDefaultAsync(ct);
 
@@ -367,7 +392,7 @@ public class ModerationController(
             return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
 
         // Обязательно фиксируем факт просмотра чувствительных данных.
-        audit.Record(ModerationLog.ActionViewUserContacts, ModerationLog.TargetUser, id);
+        audit.Record(ModerationLog.ActionViewUserContacts, ModerationLog.TargetUser, user.Id);
         await db.SaveChangesAsync(ct);
 
         return Ok(user);

@@ -134,7 +134,7 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
         var listingId = await factory.SeedListingAsync(sellerId, ListingStatus.PendingReview);
 
         var resp = await mod.PostAsJsonAsync($"/api/moderation/listings/{listingId}/reject",
-            new { reason = "Prohibited", comment = "Запрещённый товар" });
+            new { reason = "ProhibitedItem", comment = "Запрещённый товар" });
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
 
         Assert.Equal("Rejected", (await factory.ListingModerationAsync(listingId)).Status);

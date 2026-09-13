@@ -2,6 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GenesisMarket.Domain.Enums;
+using GenesisMarket.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace GenesisMarket.Tests;
@@ -148,6 +151,112 @@ public class ListingLifecycleTests(AuthApiFactory factory) : IClassFixture<AuthA
 
         var resp = await client.PostAsJsonAsync("/api/listings", CreateBody("Коротко", publish: false)); // < 10
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    /// <summary>
+    /// Счётчики для вкладок «Моих объявлений»: по одному числу на статус плюс
+    /// "all". Проверяем каждое число, наличие нулевых статусов (клиент не должен
+    /// дорисовывать их сам) и что "all" равен сумме остальных.
+    /// </summary>
+    [Fact]
+    public async Task My_listing_counts_cover_every_status_and_sum_to_all()
+    {
+        var email = Unique("counts");
+        var ownerId = await factory.SeedUserAsync(email, Password);
+
+        // Draft 3, Active 2, Sold 1, Archived 1; PendingReview и Rejected — 0.
+        for (var i = 0; i < 3; i++) await factory.SeedListingAsync(ownerId, ListingStatus.Draft);
+        for (var i = 0; i < 2; i++) await factory.SeedListingAsync(ownerId, ListingStatus.Active);
+        await factory.SeedListingAsync(ownerId, ListingStatus.Sold);
+        await factory.SeedListingAsync(ownerId, ListingStatus.Archived);
+
+        var client = await AuthedClient(email);
+        var counts = await client.GetFromJsonAsync<JsonElement>("/api/me/listings/counts");
+
+        Assert.Equal(3, counts.GetProperty("Draft").GetInt32());
+        Assert.Equal(2, counts.GetProperty("Active").GetInt32());
+        Assert.Equal(1, counts.GetProperty("Sold").GetInt32());
+        Assert.Equal(1, counts.GetProperty("Archived").GetInt32());
+        // Пустые статусы присутствуют явными нулями.
+        Assert.Equal(0, counts.GetProperty("PendingReview").GetInt32());
+        Assert.Equal(0, counts.GetProperty("Rejected").GetInt32());
+        Assert.Equal(7, counts.GetProperty("all").GetInt32());
+
+        // all — ровно сумма остальных ключей, без расхождений.
+        var perStatus = Enum.GetValues<ListingStatus>()
+            .Sum(s => counts.GetProperty(s.ToString()).GetInt32());
+        Assert.Equal(counts.GetProperty("all").GetInt32(), perStatus);
+
+        // Ключи статусов — те же литералы, что принимает фильтр списка:
+        // берём их из ответа и проверяем, что по ним действительно фильтруется.
+        var drafts = await client.GetFromJsonAsync<JsonElement>("/api/me/listings?status=Draft");
+        Assert.Equal(counts.GetProperty("Draft").GetInt32(), drafts.GetArrayLength());
+
+        // И "all" сходится с длиной невыфильтрованного списка.
+        var all = await client.GetFromJsonAsync<JsonElement>("/api/me/listings");
+        Assert.Equal(counts.GetProperty("all").GetInt32(), all.GetArrayLength());
+    }
+
+    /// <summary>
+    /// Мягко удалённое объявление не попадает ни в список, ни в счётчики.
+    /// У Listing стоит глобальный фильтр DeletedAt == null; если счётчики его
+    /// обойдут (например, через IgnoreQueryFilters), сумма разойдётся с выдачей.
+    /// </summary>
+    [Fact]
+    public async Task My_listing_counts_exclude_soft_deleted_listings()
+    {
+        var email = Unique("counts-deleted");
+        var ownerId = await factory.SeedUserAsync(email, Password);
+        await factory.SeedListingAsync(ownerId, ListingStatus.Active);
+        var doomedId = await factory.SeedListingAsync(ownerId, ListingStatus.Active);
+
+        var client = await AuthedClient(email);
+        var before = await client.GetFromJsonAsync<JsonElement>("/api/me/listings/counts");
+        Assert.Equal(2, before.GetProperty("Active").GetInt32());
+        Assert.Equal(2, before.GetProperty("all").GetInt32());
+
+        // Мягкое удаление — прямо в БД, минуя фильтр.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.Listings.IgnoreQueryFilters()
+                .Where(l => l.Id == doomedId)
+                .ExecuteUpdateAsync(s => s.SetProperty(l => l.DeletedAt, DateTimeOffset.UtcNow));
+        }
+
+        var after = await client.GetFromJsonAsync<JsonElement>("/api/me/listings/counts");
+        Assert.Equal(1, after.GetProperty("Active").GetInt32());
+        Assert.Equal(1, after.GetProperty("all").GetInt32());
+
+        var list = await client.GetFromJsonAsync<JsonElement>("/api/me/listings");
+        Assert.Equal(after.GetProperty("all").GetInt32(), list.GetArrayLength());
+    }
+
+    /// <summary>Счётчики — только свои: чужие объявления в них не видны.</summary>
+    [Fact]
+    public async Task My_listing_counts_never_include_other_users_listings()
+    {
+        var strangerId = await factory.SeedUserAsync(Unique("counts-stranger"), Password);
+        for (var i = 0; i < 4; i++) await factory.SeedListingAsync(strangerId, ListingStatus.Active);
+
+        var email = Unique("counts-own");
+        var ownerId = await factory.SeedUserAsync(email, Password);
+        await factory.SeedListingAsync(ownerId, ListingStatus.Draft);
+
+        var client = await AuthedClient(email);
+        var counts = await client.GetFromJsonAsync<JsonElement>("/api/me/listings/counts");
+
+        Assert.Equal(1, counts.GetProperty("all").GetInt32());
+        Assert.Equal(1, counts.GetProperty("Draft").GetInt32());
+        Assert.Equal(0, counts.GetProperty("Active").GetInt32());
+    }
+
+    /// <summary>Счётчики закрыты авторизацией — это приватные данные владельца.</summary>
+    [Fact]
+    public async Task My_listing_counts_require_authentication()
+    {
+        var resp = await factory.CreateClient().GetAsync("/api/me/listings/counts");
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
     }
 
     // ---- helpers ----

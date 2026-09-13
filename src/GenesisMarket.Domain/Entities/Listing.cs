@@ -98,6 +98,23 @@ public class Listing : BaseEntity, IOwnedResource
     /// <summary>Метка мягкого удаления. Заполнена ⇒ объявление скрыто query-фильтром.</summary>
     public DateTimeOffset? DeletedAt { get; set; }
 
+    // ---- Отклонение модератором ----
+    // Втроём описывают последний отказ. Отдаются ТОЛЬКО владельцу: посторонним
+    // знать, за что объявление сняли, незачем. Меняются только через Reject/
+    // ClearRejection — присваивание снаружи, как и со статусом, не предусмотрено.
+
+    /// <summary>Код причины последнего отклонения. null ⇒ объявление не отклоняли.</summary>
+    public RejectionReasonCode? RejectionReasonCode { get; private set; }
+
+    /// <summary>
+    /// Комментарий модератора к отказу, до 500 символов. Обязателен при коде
+    /// <see cref="Enums.RejectionReasonCode.Other"/> — иначе автор не поймёт, что чинить.
+    /// </summary>
+    public string? RejectionComment { get; private set; }
+
+    /// <summary>Когда отклонили. null ⇒ объявление не отклоняли (либо отказ снят).</summary>
+    public DateTimeOffset? RejectedAt { get; private set; }
+
     // Владелец. Проверяется на сервере в каждом мутирующем эндпоинте.
     public Guid OwnerId { get; set; }
     public User? Owner { get; set; }
@@ -152,6 +169,7 @@ public class Listing : BaseEntity, IOwnedResource
         if (target == ListingStatus.Active)
             BumpedAt = now;
         ArchiveWarningAt = null;
+        ClearRejection();
         UpdatedAt = now;
     }
 
@@ -240,6 +258,38 @@ public class Listing : BaseEntity, IOwnedResource
             BumpedAt = now;
             ArchiveWarningAt = null;
         }
+        ClearRejection();
         UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Отклонение модератором: PendingReview → Rejected. Причина сохраняется на
+    /// объявлении, чтобы автор увидел её в своей выдаче, а не только в письме.
+    /// Приоритет очереди сбрасывается: объявление из неё вышло.
+    /// </summary>
+    public void Reject(RejectionReasonCode reason, string? comment, DateTimeOffset now)
+    {
+        if (Status != ListingStatus.PendingReview)
+            throw new InvalidOperationException($"Отклонить можно только объявление на модерации (текущий статус: {Status}).");
+
+        Status = ListingStatus.Rejected;
+        RejectionReasonCode = reason;
+        RejectionComment = string.IsNullOrWhiteSpace(comment) ? null : comment.Trim();
+        RejectedAt = now;
+        ModerationPriority = 0;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Снять отметку об отказе. Вызывается всеми переходами, возвращающими
+    /// объявление в оборот: иначе причина прошлого отказа висела бы на уже
+    /// исправленной версии и путала автора сильнее, чем её отсутствие.
+    /// Живёт здесь, а не в контроллерах, чтобы новый переход не забыл про очистку.
+    /// </summary>
+    private void ClearRejection()
+    {
+        RejectionReasonCode = null;
+        RejectionComment = null;
+        RejectedAt = null;
     }
 }

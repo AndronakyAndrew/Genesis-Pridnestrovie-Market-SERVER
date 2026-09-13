@@ -86,6 +86,8 @@ public record ModerationListingCard(
     DateTimeOffset? PublishedAt,
     DateTimeOffset? DeletedAt,
     Guid OwnerId,
+    /// <summary>«ID профиля» владельца — им модератор оперирует вместо GUID.</summary>
+    string OwnerPublicCode,
     string OwnerDisplayName,
     bool OwnerIsBanned,
     IReadOnlyList<ModerationReportItem> OpenReports);
@@ -97,11 +99,20 @@ public record ModerationReportItem(
     string? Comment,
     ReportStatus Status,
     Guid? ReporterId,
+    /// <summary>«ID профиля» заявителя. null — жалоба от анонима.</summary>
+    string? ReporterPublicCode,
     DateTimeOffset CreatedAt);
 
-/// <summary>Отклонение объявления модератором. Причина уходит автору через outbox.</summary>
+/// <summary>
+/// Отклонение объявления модератором. Причина уходит автору через outbox и,
+/// в отличие от прежнего поведения, сохраняется на самом объявлении.
+///
+/// Код причины обязателен: общее «объявление отклонено» не говорит автору, что
+/// чинить, и он публикует то же самое заново. Комментарий обязателен только при
+/// <see cref="RejectionReasonCode.Other"/> — там код сам по себе не объясняет ничего.
+/// </summary>
 public record RejectListingRequest(
-    [Required] ReportReason Reason,
+    [Required] RejectionReasonCode Reason,
     [MaxLength(500)] string? Comment);
 
 /// <summary>Разбор жалобы: закрыть как Resolved (нарушение подтверждено) или Rejected (жалоба неверна).</summary>
@@ -120,6 +131,8 @@ public record BanUserRequest(
 /// </summary>
 public record ModerationUserContacts(
     Guid Id,
+    /// <summary>«ID профиля» — ключ, по которому эту карточку и находят.</summary>
+    string PublicCode,
     string Email,
     string? PhoneE164,
     bool EmailVerified,

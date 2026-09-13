@@ -24,6 +24,10 @@ public class ProfileConfiguration : IEntityTypeConfiguration<Profile>
         b.Property(p => p.AvatarUrl).HasMaxLength(512);
         b.Property(p => p.TelegramUsername).HasMaxLength(64);
 
+        // «О себе»: nullable (пустой текст нормализуется в NULL, а не в ""),
+        // длина ограничена и в БД — character varying(300).
+        b.Property(p => p.Description).HasMaxLength(300);
+
         // Канал уведомлений — строкой; по умолчанию почта.
         b.Property(p => p.NotifyVia)
             .HasConversion<string>()
