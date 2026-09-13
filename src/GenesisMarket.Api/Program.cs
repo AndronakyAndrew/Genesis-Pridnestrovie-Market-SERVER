@@ -155,6 +155,10 @@ try
     // Rate-limit после аутентификации: политики «на пользователя» видят identity.
     app.UseRateLimiter();
 
+    // Отметка активности сессии — после аутентификации (нужен claim sid) и после
+    // лимитера: отклонённый по лимиту запрос активностью не считается.
+    app.UseMiddleware<SessionActivityMiddleware>();
+
     app.MapControllers();
 
     // ---- Health checks ----

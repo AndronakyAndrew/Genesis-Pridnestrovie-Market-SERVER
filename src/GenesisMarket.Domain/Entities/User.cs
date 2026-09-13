@@ -14,6 +14,18 @@ public class User : BaseEntity
     /// <summary>BCrypt-хеш пароля. Наружу (в DTO) не отдаётся никогда.</summary>
     public required string PasswordHash { get; set; }
 
+    /// <summary>
+    /// Человекочитаемый номер аккаунта: ровно 5 цифр, «10000»–«99999».
+    /// Выдаётся один раз при регистрации и не меняется никогда — на него
+    /// ссылаются в поддержке и в интерфейсе («ID профиля»).
+    ///
+    /// Осознанно НЕ выводится из <see cref="BaseEntity.Id"/> и не инкрементируется:
+    /// Id — UUID v7, то есть таймстамп регистрации, а последовательный номер выдал
+    /// бы и порядок, и общее число регистраций. Значение берётся криптослучайно,
+    /// уникальность держит индекс в БД. Генерация — IPublicCodeGenerator.
+    /// </summary>
+    public required string PublicCode { get; set; }
+
     public UserRole Role { get; set; } = UserRole.User;
 
     /// <summary>Телефон в формате E.164. Подтверждается по SMS (из профиля).</summary>

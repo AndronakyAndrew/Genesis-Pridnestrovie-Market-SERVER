@@ -5,10 +5,17 @@ namespace GenesisMarket.Api.Contracts;
 
 /// <summary>
 /// Жалоба на объект. Доступна анонимам. <c>Comment</c> опционален (до 500 символов).
+///
+/// Цель задаётся одним из двух способов. Объявление и отзыв — по <see cref="TargetId"/>
+/// (их Guid клиенту известны). Пользователь — по <see cref="TargetPublicCode"/>
+/// («ID профиля»): Guid продавца наружу больше не отдаётся, и жаловаться на него
+/// по Guid стало нечем. Guid для <c>TargetType = User</c> по-прежнему принимается —
+/// ради клиентов, которые его ещё помнят.
 /// </summary>
 public record CreateReportRequest(
     [Required] ReportTargetType TargetType,
-    [Required] Guid TargetId,
+    Guid? TargetId,
+    [MaxLength(5)] string? TargetPublicCode,
     [Required] ReportReason Reason,
     [MaxLength(500)] string? Comment);
 
@@ -19,7 +26,10 @@ public record CreateReportRequest(
 public record ReportResponse(
     Guid Id,
     ReportTargetType TargetType,
-    Guid TargetId,
+    /// <summary>Guid объекта — для объявления и отзыва. Для пользователя null.</summary>
+    Guid? TargetId,
+    /// <summary>«ID профиля» — только для жалоб на пользователя (иначе null).</summary>
+    string? TargetPublicCode,
     ReportReason Reason,
     string? Comment,
     ReportStatus Status,

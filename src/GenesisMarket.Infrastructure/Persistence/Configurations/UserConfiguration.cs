@@ -17,6 +17,14 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
 
         b.Property(u => u.PasswordHash).HasMaxLength(200).IsRequired();
 
+        // Публичный номер аккаунта: ровно 5 цифр. varchar(5), а не char(5) —
+        // у char в Postgres дополнение пробелами и обрезка хвостовых пробелов
+        // при сравнении; для кода фиксированной длины это лишняя семантика.
+        // Уникальность — на индексе: она же и защита от гонки двух регистраций,
+        // выбравших один код одновременно.
+        b.Property(u => u.PublicCode).HasMaxLength(5).IsRequired();
+        b.HasIndex(u => u.PublicCode).IsUnique();
+
         // Role — не native enum, хранится строкой.
         b.Property(u => u.Role)
             .HasConversion<string>()

@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace GenesisMarket.Api.Controllers;
 
@@ -27,6 +28,7 @@ public class AuthController(
     ISecurityAudit securityAudit,
     SecurityStampValidator securityStamp,
     PasswordResetService passwordReset,
+    IPublicCodeGenerator publicCodes,
     IOptions<PhoneOptions> phoneOptions) : ApiControllerBase
 {
     // Один и тот же текст на неверный email и неверный пароль (анти-перечисление).
@@ -59,6 +61,7 @@ public class AuthController(
                 Role = UserRole.User,        // роль всегда User, поле из запроса игнорируется
                 PhoneE164 = phone,
                 PhoneVerified = false,
+                PublicCode = await publicCodes.NextAsync(ct),
                 Profile = new Profile
                 {
                     DisplayName = request.DisplayName,
@@ -66,7 +69,7 @@ public class AuthController(
                 }
             };
             db.Users.Add(user);
-            await db.SaveChangesAsync(ct);
+            await SaveWithFreshPublicCodeAsync(user, ct);
         }
 
         // Ответ идентичен и для свободного, и для занятого email.
@@ -116,7 +119,7 @@ public class AuthController(
     public async Task<ActionResult<AuthResponse>> Refresh(RefreshRequest request, CancellationToken ct)
     {
         var ip = ClientIp();
-        var outcome = await refreshTokens.RotateAsync(request.RefreshToken, ip, ct);
+        var outcome = await refreshTokens.RotateAsync(request.RefreshToken, SessionContextOf(ip), ct);
 
         if (outcome.Status is RefreshStatus.Invalid or RefreshStatus.Reuse)
             return Problem(title: "Недействительный refresh-токен", statusCode: StatusCodes.Status401Unauthorized);
@@ -127,7 +130,7 @@ public class AuthController(
         if (user is null)
             return Problem(title: "Недействительный refresh-токен", statusCode: StatusCodes.Status401Unauthorized);
 
-        var access = tokenService.CreateAccessToken(user);
+        var access = tokenService.CreateAccessToken(user, outcome.SessionId);
         return Ok(new AuthResponse(
             access.Value, access.ExpiresAt,
             outcome.NewRawToken!, outcome.ExpiresAt!.Value,
@@ -233,20 +236,62 @@ public class AuthController(
 
     private async Task<AuthResponse> IssueAsync(User user, string ip, CancellationToken ct)
     {
-        var access = tokenService.CreateAccessToken(user);
         // IssueAsync вызывает SaveChanges — заодно сохранит возможный rehash пароля.
-        var (refreshRaw, refreshExp) = await refreshTokens.IssueAsync(user.Id, ip, ct);
+        // Сначала сессия: её идентификатор нужен access-токену (claim sid).
+        var (refreshRaw, refreshExp, sessionId) =
+            await refreshTokens.IssueAsync(user.Id, SessionContextOf(ip), ct);
+
+        var access = tokenService.CreateAccessToken(user, sessionId);
         return new AuthResponse(access.Value, access.ExpiresAt, refreshRaw, refreshExp, MapUser(user));
     }
 
+    /// <summary>
+    /// Данные о клиенте для записи сессии. User-Agent разбирается здесь, на границе,
+    /// и дальше не передаётся: сырая строка не должна попадать ни в сервис, ни в БД.
+    /// </summary>
+    private SessionContext SessionContextOf(string? ip) => new(
+        ip,
+        ClientFingerprint.ParseUserAgent(Request.Headers.UserAgent.ToString()));
+
     private static UserResponse MapUser(User u) => new(
         u.Id,
+        u.PublicCode,
         u.Email,
         u.Profile?.DisplayName ?? "",
         u.Profile?.City ?? default,
         u.PhoneE164,
         u.PhoneVerified,
         u.CreatedAt);
+
+    /// <summary>
+    /// Сохраняет нового пользователя, переигрывая публичный код при гонке.
+    /// Проверка занятости в <see cref="IPublicCodeGenerator"/> и сама вставка
+    /// не атомарны: две одновременные регистрации могут выбрать один и тот же
+    /// свободный код и обе пройти проверку. Победит одна, второй уникальный
+    /// индекс вернёт 23505 — тогда берём следующий код, а не отдаём 500.
+    /// </summary>
+    private async Task SaveWithFreshPublicCodeAsync(User user, CancellationToken ct)
+    {
+        const int maxRetries = 3;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+            catch (DbUpdateException ex)
+                when (attempt < maxRetries && IsPublicCodeConflict(ex))
+            {
+                user.PublicCode = await publicCodes.NextAsync(ct);
+            }
+        }
+    }
+
+    private static bool IsPublicCodeConflict(DbUpdateException ex) =>
+        ex.InnerException is PostgresException { SqlState: "23505" } pg &&
+        pg.ConstraintName == "IX_users_PublicCode";
 
     private static string Normalize(string email) => email.Trim().ToLowerInvariant();
 

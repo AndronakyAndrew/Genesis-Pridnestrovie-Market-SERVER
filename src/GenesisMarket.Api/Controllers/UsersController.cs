@@ -1,10 +1,15 @@
+using System.Linq.Expressions;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Http;
+using GenesisMarket.Api.Profiles;
+using GenesisMarket.Api.Security;
+using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
 using GenesisMarket.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
 namespace GenesisMarket.Api.Controllers;
@@ -12,13 +17,55 @@ namespace GenesisMarket.Api.Controllers;
 /// <summary>
 /// Публичные профили продавцов. Ни email, ни телефона, ни точной даты
 /// регистрации, ни Role, ни IsBanned наружу не отдаём.
+///
+/// Основной публичный адрес — по «ID профиля» (<c>by-code/82914</c>).
+/// Маршруты по Guid сохранены как legacy: по ним уже расшарены ссылки, ломать
+/// их нельзя, но новые адреса мы больше нигде не выдаём. Guid — это UUID v7,
+/// в первых 48 битах которого лежит время регистрации с точностью до
+/// миллисекунды; публичный профиль при этом намеренно округляет дату
+/// регистрации до месяца, так что адрес по Guid обесценивал это округление.
 /// </summary>
 [Route("api/users")]
-public class UsersController(AppDbContext db, IObjectStorage storage) : ApiControllerBase
+public class UsersController(
+    AppDbContext db,
+    IObjectStorage storage,
+    IPublicCodeResolver publicCodes) : ApiControllerBase
 {
+    /// <summary>Профиль по «ID профиля» — основной публичный адрес.</summary>
+    [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.ProfileByCode)]
+    [HttpGet("by-code/{code}/public")]
+    public async Task<ActionResult<PublicProfileResponse>> GetPublicByCode(string code, CancellationToken ct)
+    {
+        var id = await publicCodes.ResolveAsync(code, ct);
+        return id is null ? ProfileNotFound() : await PublicProfileAsync(id.Value, ct);
+    }
+
+    /// <summary>Профиль по Guid — legacy-адрес, поддерживается ради старых ссылок.</summary>
     [AllowAnonymous]
     [HttpGet("{id:guid}/public")]
-    public async Task<ActionResult<PublicProfileResponse>> GetPublic(Guid id, CancellationToken ct)
+    public Task<ActionResult<PublicProfileResponse>> GetPublic(Guid id, CancellationToken ct) =>
+        PublicProfileAsync(id, ct);
+
+    /// <summary>
+    /// Публичная выдача аватара через API. MinIO находится в приватной Docker-сети,
+    /// поэтому его внутренний адрес нельзя отдавать браузеру напрямую.
+    /// </summary>
+    [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.ProfileByCode)]
+    [HttpGet("by-code/{code}/avatar")]
+    public Task<IActionResult> GetAvatarByCode(string code, CancellationToken ct) =>
+        AvatarAsync(p => p.User!.PublicCode == code, ct);
+
+    /// <summary>Аватар по Guid — legacy-адрес (см. комментарий к контроллеру).</summary>
+    [AllowAnonymous]
+    [HttpGet("{id:guid}/avatar")]
+    public Task<IActionResult> GetAvatar(Guid id, CancellationToken ct) =>
+        AvatarAsync(p => p.UserId == id, ct);
+
+    // ---- общая часть обоих адресов ----
+
+    private async Task<ActionResult<PublicProfileResponse>> PublicProfileAsync(Guid id, CancellationToken ct)
     {
         var user = await db.Users
             .AsNoTracking()
@@ -26,7 +73,7 @@ public class UsersController(AppDbContext db, IObjectStorage storage) : ApiContr
             .FirstOrDefaultAsync(u => u.Id == id, ct);
 
         if (user is null || user.IsDeleted || user.Profile is null)
-            return Problem(title: "Профиль не найден", statusCode: StatusCodes.Status404NotFound);
+            return ProfileNotFound();
 
         var activeListings = await db.Listings
             .CountAsync(l => l.OwnerId == id && l.Status == ListingStatus.Active, ct);
@@ -35,9 +82,15 @@ public class UsersController(AppDbContext db, IObjectStorage storage) : ApiContr
         var registeredAt = new DateOnly(user.CreatedAt.Year, user.CreatedAt.Month, 1);
 
         return Ok(new PublicProfileResponse(
+            // «ID профиля» — то, чем продавца называют в переписке и в поддержке.
+            user.PublicCode,
             user.Profile.DisplayName,
             user.Profile.City,
-            user.Profile.AvatarUrl is null ? null : BuildAvatarUrl(user.Id, user.Profile.UpdatedAt),
+            user.Profile.AvatarUrl is null
+                ? null
+                : AvatarUrl.Build(Request, user.PublicCode, user.Profile.UpdatedAt),
+            // «О себе» — публично по замыслу: продавец пишет этот текст покупателям.
+            user.Profile.Description,
             registeredAt,
             activeListings,
             // Денормализованный агрегат отзывов (поддерживается триггером reviews_rating_sync).
@@ -46,16 +99,11 @@ public class UsersController(AppDbContext db, IObjectStorage storage) : ApiContr
             user.PhoneVerified));
     }
 
-    /// <summary>
-    /// Публичная выдача аватара через API. MinIO находится в приватной Docker-сети,
-    /// поэтому его внутренний адрес нельзя отдавать браузеру напрямую.
-    /// </summary>
-    [AllowAnonymous]
-    [HttpGet("{id:guid}/avatar")]
-    public async Task<IActionResult> GetAvatar(Guid id, CancellationToken ct)
+    private async Task<IActionResult> AvatarAsync(Expression<Func<Profile, bool>> match, CancellationToken ct)
     {
         var avatar = await db.Profiles.AsNoTracking()
-            .Where(p => p.UserId == id && !p.User!.IsDeleted && p.AvatarUrl != null)
+            .Where(match)
+            .Where(p => !p.User!.IsDeleted && p.AvatarUrl != null)
             .Select(p => new { Key = p.AvatarUrl!, p.UpdatedAt })
             .FirstOrDefaultAsync(ct);
 
@@ -86,8 +134,8 @@ public class UsersController(AppDbContext db, IObjectStorage storage) : ApiContr
         }
     }
 
-    private string BuildAvatarUrl(Guid userId, DateTimeOffset? updatedAt) =>
-        $"{Request.Scheme}://{Request.Host}/api/users/{userId}/avatar?v={updatedAt?.UtcTicks ?? 0}";
+    private ObjectResult ProfileNotFound() =>
+        Problem(title: "Профиль не найден", statusCode: StatusCodes.Status404NotFound);
 
     private static string ContentTypeFor(string key) => Path.GetExtension(key).ToLowerInvariant() switch
     {

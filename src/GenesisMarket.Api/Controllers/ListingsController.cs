@@ -250,7 +250,7 @@ public class ListingsController(
         if (listing.Status == ListingStatus.Active)
             await viewCounter.RegisterAsync(listing.Id, ClientIp(), ct);
 
-        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct), await IsFavoriteAsync(listing.Id, ct)));
+        return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct), await IsFavoriteAsync(listing.Id, ct)));
     }
 
     [AllowAnonymous]
@@ -264,7 +264,7 @@ public class ListingsController(
         if (listing.Status == ListingStatus.Active)
             await viewCounter.RegisterAsync(listing.Id, ClientIp(), ct);
 
-        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct), await IsFavoriteAsync(listing.Id, ct)));
+        return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct), await IsFavoriteAsync(listing.Id, ct)));
     }
 
     /// <summary>
@@ -368,7 +368,7 @@ public class ListingsController(
         }
 
         await SaveNewWithSlugAsync(listing, ct);
-        return CreatedAtAction(nameof(GetById), new { id = listing.Id }, ToResponse(listing));
+        return CreatedAtAction(nameof(GetById), new { id = listing.Id }, await ToResponseAsync(listing));
     }
 
     [Authorize]
@@ -426,7 +426,7 @@ public class ListingsController(
         }
 
         await db.SaveChangesAsync(ct);
-        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
+        return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     [Authorize]
@@ -480,7 +480,7 @@ public class ListingsController(
 
         await db.SaveChangesAsync(ct);
 
-        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
+        return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     /// <summary>
@@ -526,7 +526,7 @@ public class ListingsController(
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
+        return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     /// <summary>
@@ -553,7 +553,7 @@ public class ListingsController(
         EnqueueChannelMark(listing.Id, ChannelMark.Sold);
         await db.SaveChangesAsync(ct);
 
-        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
+        return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     /// <summary>
@@ -585,7 +585,7 @@ public class ListingsController(
         EnqueueChannelPublish(listing.Id);
         await db.SaveChangesAsync(ct);
 
-        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
+        return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     /// <summary>
@@ -636,7 +636,7 @@ public class ListingsController(
 
         await db.SaveChangesAsync(ct);
 
-        return Ok(ToResponse(listing, await RevealCountAsync(listing.Id, ct)));
+        return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct)));
     }
 
     [Authorize]
@@ -662,8 +662,56 @@ public class ListingsController(
             .Select(g => new { g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
 
-        var items = listings.Select(l => ToResponse(l, counts.GetValueOrDefault(l.Id))).ToList();
+        // Владелец у всех строк один — код берётся из кеша ToResponseAsync, не запросом на строку.
+        var items = new List<ListingResponse>(listings.Count);
+        foreach (var l in listings)
+            items.Add(await ToResponseAsync(l, counts.GetValueOrDefault(l.Id), ct: ct));
+
         return Ok(items);
+    }
+
+    /// <summary>
+    /// Счётчики «моих объявлений» по статусам — для вкладок над списком.
+    /// Ответ: <c>{ "all": 12, "Draft": 3, "PendingReview": 0, "Active": 7, ... }</c>.
+    ///
+    /// Ключи статусов — те же литералы, что принимает <c>?status=</c> у
+    /// <see cref="MyListings"/>, поэтому вкладка подставляет ключ в фильтр как есть.
+    /// Статусы с нулём тоже присутствуют: дорисовывать недостающие — не работа клиента.
+    ///
+    /// Условия выборки обязаны совпадать со списком. Здесь это тот же
+    /// <c>db.Listings</c> без <c>IgnoreQueryFilters()</c>, поэтому глобальный фильтр
+    /// мягкого удаления (<c>DeletedAt == null</c>) применяется к счётчикам так же,
+    /// как и к списку — иначе сумма разошлась бы с выдачей на число удалённых.
+    /// </summary>
+    [Authorize]
+    [HttpGet("~/api/me/listings/counts")]
+    public async Task<ActionResult<IReadOnlyDictionary<string, int>>> MyListingCounts(
+        CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+
+        // Один запрос: GROUP BY по статусу. Покрывается IX_listings_OwnerId_Status.
+        var groups = await db.Listings
+            .AsNoTracking()
+            .Where(l => l.OwnerId == userId)
+            .GroupBy(l => l.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        // "all" — сумма уже полученных групп, а не второй COUNT(*): отдельный
+        // запрос мог бы увидеть другое состояние таблицы и разойтись с частями.
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["all"] = groups.Sum(g => g.Count)
+        };
+
+        foreach (var status in Enum.GetValues<ListingStatus>())
+            counts[status.ToString()] = 0;
+
+        foreach (var group in groups)
+            counts[group.Status.ToString()] = group.Count;
+
+        return Ok(counts);
     }
 
     // ---- helpers ----
@@ -796,15 +844,49 @@ public class ListingsController(
     }
 
     /// <summary>Мапит сущность в DTO, досчитывая daysUntilArchive и канонический URL по конфигурации.</summary>
-    private ListingResponse ToResponse(Listing l, int contactRevealCount = 0, bool isFavorite = false) =>
-        Map(l, contactRevealCount, isFavorite, DaysUntilArchive(l), CanonicalUrl(l.Slug));
+    private async Task<ListingResponse> ToResponseAsync(
+        Listing l, int contactRevealCount = 0, bool isFavorite = false, CancellationToken ct = default) =>
+        Map(l, await OwnerCodeAsync(l.OwnerId, ct),
+            contactRevealCount, isFavorite, DaysUntilArchive(l), CanonicalUrl(l.Slug),
+            // Причина отклонения — только владельцу. DTO один и для публичной
+            // карточки, и для «моих объявлений», поэтому условие здесь явное.
+            isOwner: CurrentUserId() == l.OwnerId);
 
     private static ListingResponse Map(
-        Listing l, int contactRevealCount, bool isFavorite, int? daysUntilArchive, string? canonicalUrl) => new(
+        Listing l, string ownerPublicCode,
+        int contactRevealCount, bool isFavorite, int? daysUntilArchive, string? canonicalUrl,
+        bool isOwner) => new(
         l.Id, l.Slug, l.Title, l.Description, l.Price, l.PriceType, l.Category,
         l.SubcategoryId, l.City, l.District, l.Condition, l.Status,
-        l.ViewsCount, l.OwnerId, l.CreatedAt, l.PublishedAt, contactRevealCount,
-        l.FavoritesCount, isFavorite, daysUntilArchive, canonicalUrl);
+        l.ViewsCount, ownerPublicCode, l.CreatedAt, l.PublishedAt, contactRevealCount,
+        l.FavoritesCount, isFavorite, daysUntilArchive,
+        // Дальше — только именованные аргументы: хвост DTO состоит из
+        // необязательных параметров, и позиционная передача молча уехала бы
+        // в соседнее поле того же типа (string? рядом с string?).
+        RejectionReasonCode: isOwner ? l.RejectionReasonCode?.ToString() : null,
+        RejectionComment: isOwner ? l.RejectionComment : null,
+        RejectedAt: isOwner ? l.RejectedAt : null,
+        CanonicalUrl: canonicalUrl);
+
+    /// <summary>
+    /// «ID профиля» владельца по его Guid. Кеш — на время запроса (контроллер scoped):
+    /// в списке своих объявлений владелец один, и без кеша это был бы запрос на строку.
+    /// </summary>
+    private readonly Dictionary<Guid, string> _ownerCodes = [];
+
+    private async Task<string> OwnerCodeAsync(Guid ownerId, CancellationToken ct)
+    {
+        if (_ownerCodes.TryGetValue(ownerId, out var cached))
+            return cached;
+
+        var code = await db.Users.AsNoTracking()
+            .Where(u => u.Id == ownerId)
+            .Select(u => u.PublicCode)
+            .FirstAsync(ct);
+
+        _ownerCodes[ownerId] = code;
+        return code;
+    }
 
     /// <summary>Канонический адрес карточки. null, если публичный адрес сайта не настроен.</summary>
     private string? CanonicalUrl(string slug) =>

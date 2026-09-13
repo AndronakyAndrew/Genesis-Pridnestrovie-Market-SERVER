@@ -13,6 +13,13 @@ public interface ICurrentUser
     Guid? UserId { get; }
     UserRole? Role { get; }
     bool IsAuthenticated { get; }
+
+    /// <summary>
+    /// Сессия, которой принадлежит текущий запрос (claim sid). По ней список
+    /// сессий помечает «это устройство» — не по времени последней активности.
+    /// null — токен выпущен до появления claim'а.
+    /// </summary>
+    Guid? SessionId { get; }
 }
 
 public sealed class CurrentUser(IHttpContextAccessor accessor) : ICurrentUser
@@ -26,4 +33,7 @@ public sealed class CurrentUser(IHttpContextAccessor accessor) : ICurrentUser
 
     public UserRole? Role =>
         Enum.TryParse<UserRole>(Principal?.FindFirst("role")?.Value, out var role) ? role : null;
+
+    public Guid? SessionId =>
+        Guid.TryParse(Principal?.FindFirst("sid")?.Value, out var id) ? id : null;
 }

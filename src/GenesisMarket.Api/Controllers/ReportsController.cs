@@ -1,5 +1,6 @@
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
+using GenesisMarket.Api.Profiles;
 using GenesisMarket.Api.Security;
 using GenesisMarket.Api.Trust;
 using GenesisMarket.Domain.Entities;
@@ -24,6 +25,7 @@ namespace GenesisMarket.Api.Controllers;
 public class ReportsController(
     AppDbContext db,
     IIpHasher ipHasher,
+    IPublicCodeResolver publicCodes,
     IOptions<TrustOptions> options,
     ILogger<ReportsController> logger) : ApiControllerBase
 {
@@ -44,18 +46,23 @@ public class ReportsController(
         // Rate-limit приёма жалоб — на встроенном RateLimiter (политика "report"):
         // аноним по IP (5/час), авторизованный по пользователю (20/час).
 
-        if (!await TargetExistsAsync(request.TargetType, request.TargetId, ct))
+        // Цель: у пользователя — «ID профиля», у объявления и отзыва — Guid.
+        var (targetId, targetCode, targetError) = await ResolveTargetAsync(request, ct);
+        if (targetError is not null)
+            return targetError;
+
+        if (!await TargetExistsAsync(request.TargetType, targetId!.Value, ct))
             return Problem(title: "Объект жалобы не найден", statusCode: StatusCodes.Status404NotFound);
 
         // Дедупликация повторной жалобы от того же репортёра на тот же объект.
-        var duplicate = await FindActiveDuplicateAsync(request, userId, ipHash, ct);
+        var duplicate = await FindActiveDuplicateAsync(request.TargetType, targetId.Value, userId, ipHash, ct);
         if (duplicate is not null)
-            return Ok(Map(duplicate));
+            return Ok(Map(duplicate, targetCode));
 
         var report = new Report
         {
             TargetType = request.TargetType,
-            TargetId = request.TargetId,
+            TargetId = targetId.Value,
             ReporterId = userId,
             // IpHash храним только у анонима — для дедупа и подсчёта независимости.
             ReporterIpHash = userId is null ? ipHash : null,
@@ -71,11 +78,53 @@ public class ReportsController(
         // Автоматика — в той же транзакции, что и запись жалобы.
         if (request.TargetType == ReportTargetType.Listing &&
             request.Reason is ReportReason.Fraud or ReportReason.Prohibited)
-            await MaybeAutoFlagListingAsync(request.TargetId, ct);
+            await MaybeAutoFlagListingAsync(targetId.Value, ct);
 
         await tx.CommitAsync(ct);
 
-        return Created((string?)null, Map(report));
+        return Created((string?)null, Map(report, targetCode));
+    }
+
+    /// <summary>
+    /// Приводит цель жалобы к внутреннему Guid. Для пользователя источник —
+    /// «ID профиля»; Guid для него тоже принимается, но наружу мы его больше
+    /// не отдаём, так что новые клиенты шлют код.
+    /// </summary>
+    private async Task<(Guid? Id, string? Code, ObjectResult? Error)> ResolveTargetAsync(
+        CreateReportRequest request, CancellationToken ct)
+    {
+        if (request.TargetType != ReportTargetType.User)
+        {
+            return request.TargetId is { } id
+                ? (id, null, null)
+                : (null, null, Problem(
+                    title: "Не указан объект жалобы", statusCode: StatusCodes.Status400BadRequest));
+        }
+
+        if (request.TargetPublicCode is { Length: > 0 } code)
+        {
+            var resolved = await publicCodes.ResolveAsync(code, ct);
+            return resolved is null
+                ? (null, null, Problem(
+                    title: "Объект жалобы не найден", statusCode: StatusCodes.Status404NotFound))
+                : (resolved, code, null);
+        }
+
+        if (request.TargetId is { } userId)
+        {
+            var existingCode = await db.Users.AsNoTracking()
+                .Where(u => u.Id == userId && !u.IsDeleted)
+                .Select(u => u.PublicCode)
+                .FirstOrDefaultAsync(ct);
+
+            return existingCode is null
+                ? (null, null, Problem(
+                    title: "Объект жалобы не найден", statusCode: StatusCodes.Status404NotFound))
+                : (userId, existingCode, null);
+        }
+
+        return (null, null, Problem(
+            title: "Не указан объект жалобы", statusCode: StatusCodes.Status400BadRequest));
     }
 
     private async Task<bool> TargetExistsAsync(ReportTargetType type, Guid id, CancellationToken ct) => type switch
@@ -88,11 +137,11 @@ public class ReportsController(
     };
 
     private async Task<Report?> FindActiveDuplicateAsync(
-        CreateReportRequest request, Guid? userId, string? ipHash, CancellationToken ct)
+        ReportTargetType targetType, Guid targetId, Guid? userId, string? ipHash, CancellationToken ct)
     {
         var query = db.Reports.AsNoTracking().Where(r =>
-            r.TargetType == request.TargetType &&
-            r.TargetId == request.TargetId &&
+            r.TargetType == targetType &&
+            r.TargetId == targetId &&
             (r.Status == ReportStatus.New || r.Status == ReportStatus.InReview));
 
         if (userId is { } uid)
@@ -148,6 +197,14 @@ public class ReportsController(
                 listingId, independent, _o.AutoFlagThreshold);
     }
 
-    private static ReportResponse Map(Report r) => new(
-        r.Id, r.TargetType, r.TargetId, r.Reason, r.Comment, r.Status, r.CreatedAt);
+    /// <summary>
+    /// Эхо принятой жалобы. Для жалобы на пользователя отдаём «ID профиля», а не Guid:
+    /// иначе ответ вернул бы заявителю ровно тот идентификатор, который мы убрали
+    /// из публичных ответов.
+    /// </summary>
+    private static ReportResponse Map(Report r, string? targetPublicCode) => new(
+        r.Id, r.TargetType,
+        r.TargetType == ReportTargetType.User ? null : r.TargetId,
+        targetPublicCode,
+        r.Reason, r.Comment, r.Status, r.CreatedAt);
 }

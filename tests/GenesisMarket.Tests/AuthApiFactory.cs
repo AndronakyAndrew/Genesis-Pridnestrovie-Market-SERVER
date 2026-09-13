@@ -94,6 +94,14 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             services.AddSingleton<GenesisMarket.Api.Outbox.Telegram.ITelegramClient>(
                 sp => sp.GetRequiredService<CapturingTelegramClient>());
 
+            // Источник публичных кодов подменяем скриптуемым: по умолчанию он
+            // отдаёт ту же криптослучайность, но тест может навязать конкретные
+            // коды и воспроизвести коллизию.
+            services.RemoveAll<IPublicCodeSource>();
+            services.AddSingleton<ScriptedPublicCodeSource>();
+            services.AddSingleton<IPublicCodeSource>(
+                sp => sp.GetRequiredService<ScriptedPublicCodeSource>());
+
             // Resend-клиент подменяем перехватывающим — проверяем письма/устойчивость без сети.
             services.RemoveAll<IResendEmailService>();
             services.AddSingleton<CapturingResendEmailService>();
@@ -114,6 +122,9 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
 
     /// <summary>Перехваченные вызовы Resend для проверок письма-уведомления/подтверждения.</summary>
     public CapturingResendEmailService Resend => Services.GetRequiredService<CapturingResendEmailService>();
+
+    /// <summary>Скриптуемый источник публичных кодов аккаунта (проверка коллизий).</summary>
+    public ScriptedPublicCodeSource PublicCodes => Services.GetRequiredService<ScriptedPublicCodeSource>();
 
     private static void RemoveHostedService<T>(IServiceCollection services)
     {
@@ -140,11 +151,15 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
+        var publicCodes = scope.ServiceProvider.GetRequiredService<IPublicCodeGenerator>();
 
         var user = new User
         {
             Email = email.ToLowerInvariant(),
             PasswordHash = hasher.Hash(password),
+            // Тот же генератор, что и в регистрации: сиды не должны разъезжаться
+            // с боевым правилом уникальности.
+            PublicCode = await publicCodes.NextAsync(default),
             Role = role,
             PhoneE164 = "+37312345678",
             PhoneVerified = phoneVerified,

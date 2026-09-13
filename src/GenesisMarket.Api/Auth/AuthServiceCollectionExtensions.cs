@@ -48,6 +48,13 @@ public static class AuthServiceCollectionExtensions
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
         services.AddScoped<SecurityStampValidator>();
 
+        // Публичный номер аккаунта: источник случайности — синглтон без состояния,
+        // сам генератор scoped (ходит в БД за проверкой занятости).
+        services.AddSingleton<IPublicCodeSource, RandomPublicCodeSource>();
+        services.AddScoped<IPublicCodeGenerator, PublicCodeGenerator>();
+        // Перевод «ID профиля» → Guid: публичные адреса ходят по коду.
+        services.AddScoped<Profiles.IPublicCodeResolver, Profiles.PublicCodeResolver>();
+
         // ---- Подтверждение контактов (почта/телефон) ----
         // Выбор реализации зависит НЕ ТОЛЬКО от конфигурации, но и от окружения:
         // лог-заглушки печатают код подтверждения, телефон и адрес открытым текстом,

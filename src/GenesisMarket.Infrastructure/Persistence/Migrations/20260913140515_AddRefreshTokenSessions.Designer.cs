@@ -4,6 +4,7 @@ using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using NpgsqlTypes;
@@ -13,9 +14,11 @@ using NpgsqlTypes;
 namespace GenesisMarket.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260913140515_AddRefreshTokenSessions")]
+    partial class AddRefreshTokenSessions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -163,9 +166,6 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<DateTimeOffset?>("ApprovedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<DateTimeOffset?>("ArchiveWarningAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -221,21 +221,6 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("PublishedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTimeOffset?>("RejectedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("RejectionComment")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("RejectionReasonCode")
-                        .HasMaxLength(24)
-                        .HasColumnType("character varying(24)");
-
-                    b.Property<DateTimeOffset?>("ReviewQueuedAt")
-                        .HasColumnType("timestamp with time zone");
-
-
                     b.Property<NpgsqlTsVector>("SearchVector")
                         .IsRequired()
                         .ValueGeneratedOnAddOrUpdate()
@@ -286,13 +271,6 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.HasIndex("SubcategoryId");
-
-                    b.HasIndex("ModerationPriority", "ReviewQueuedAt")
-                        .IsDescending(true, false)
-                        .HasFilter("\"ReviewQueuedAt\" IS NOT NULL");
-
-                    b.HasIndex("OwnerId", "ApprovedAt")
-                        .HasFilter("\"ApprovedAt\" IS NOT NULL");
 
                     b.HasIndex("OwnerId", "Status");
 
@@ -1194,11 +1172,6 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<int>("ApprovedListingsCount")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
                     b.Property<double?>("AverageRating")
                         .HasColumnType("double precision");
 
@@ -1223,9 +1196,6 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
-
-                    b.Property<DateTimeOffset?>("LastRejectedAt")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("PasswordHash")
                         .IsRequired()

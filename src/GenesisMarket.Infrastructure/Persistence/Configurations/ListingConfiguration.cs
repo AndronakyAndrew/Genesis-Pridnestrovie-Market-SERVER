@@ -75,6 +75,15 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
         b.Property(l => l.Status).IsRequired();
         b.Property(l => l.PriceType).IsRequired();
 
+        // Причина отклонения: код строкой (native enum-типа под неё не заводим —
+        // набор будет пополняться по мере правил модерации, а ALTER TYPE в
+        // Postgres на каждое новое значение дороже, чем varchar + проверка в коде).
+        b.Property(l => l.RejectionReasonCode)
+            .HasConversion<string>()
+            .HasMaxLength(24);
+
+        b.Property(l => l.RejectionComment).HasMaxLength(500);
+
         b.Property(l => l.ViewsCount).HasDefaultValue(0);
         b.Property(l => l.FavoritesCount).HasDefaultValue(0);
         b.Property(l => l.ModerationPriority).HasDefaultValue(0);

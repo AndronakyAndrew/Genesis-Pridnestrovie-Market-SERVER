@@ -177,7 +177,7 @@ public class ModerationPolicyTests(AuthApiFactory factory) : IClassFixture<AuthA
 
         var mod = await ModeratorClient();
         var resp = await mod.PostAsJsonAsync($"/api/moderation/listings/{listingId}/reject",
-            new { reason = "Prohibited", comment = "Запрещённый товар" });
+            new { reason = "ProhibitedItem", comment = "Запрещённый товар" });
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
 
         var state = await factory.ListingModerationStateAsync(listingId);

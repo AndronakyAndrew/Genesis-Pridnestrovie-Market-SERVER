@@ -143,21 +143,34 @@ public class ProfileTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
         var upload = await client.PostAsync("/api/me/avatar", form);
         Assert.Equal(HttpStatusCode.OK, upload.StatusCode);
 
+        // Адрес аватара строится по «ID профиля»: Guid — это UUID v7, то есть
+        // время регистрации, и в публичной ссылке ему не место.
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var code = await db.Users.AsNoTracking()
+            .Where(u => u.Id == userId).Select(u => u.PublicCode).FirstAsync();
+        var expected = $"/api/users/by-code/{code}/avatar?v=";
+
         var uploadedUrl = (await upload.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("avatarUrl").GetString();
-        Assert.Contains($"/api/users/{userId}/avatar?v=", uploadedUrl);
+        Assert.Contains(expected, uploadedUrl);
+        Assert.DoesNotContain(userId.ToString(), uploadedUrl);
 
         var me = await client.GetFromJsonAsync<JsonElement>("/api/me");
-        Assert.Contains($"/api/users/{userId}/avatar?v=", me.GetProperty("avatarUrl").GetString());
+        Assert.Contains(expected, me.GetProperty("avatarUrl").GetString());
 
         var publicProfile = await factory.CreateClient()
-            .GetFromJsonAsync<JsonElement>($"/api/users/{userId}/public");
-        Assert.Contains($"/api/users/{userId}/avatar?v=", publicProfile.GetProperty("avatarUrl").GetString());
+            .GetFromJsonAsync<JsonElement>($"/api/users/by-code/{code}/public");
+        Assert.Contains(expected, publicProfile.GetProperty("avatarUrl").GetString());
 
-        var avatar = await factory.CreateClient().GetAsync($"/api/users/{userId}/avatar");
+        var avatar = await factory.CreateClient().GetAsync($"/api/users/by-code/{code}/avatar");
         Assert.Equal(HttpStatusCode.OK, avatar.StatusCode);
         // Аватар нормализуется в WebP тем же конвейером, что и фото объявлений.
         Assert.Equal("image/webp", avatar.Content.Headers.ContentType?.MediaType);
+
+        // Legacy-адрес по Guid продолжает работать — по нему уже расшарены ссылки.
+        var legacy = await factory.CreateClient().GetAsync($"/api/users/{userId}/avatar");
+        Assert.Equal(HttpStatusCode.OK, legacy.StatusCode);
     }
 
     /// <summary>
@@ -195,6 +208,105 @@ public class ProfileTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
         Assert.Null(processed.Metadata.XmpProfile);
     }
 
+    /// <summary>
+    /// Удаление аватара: загрузка → удаление → повторное удаление. Второй DELETE
+    /// обязан отдать 204, а не 404: кнопка «Удалить» на фронтенде может отправить
+    /// запрос дважды, и это не ошибка. Объект из хранилища уходит заявкой в outbox
+    /// (как у фото объявлений), поэтому перед проверкой прогоняем диспетчер.
+    /// </summary>
+    [Fact]
+    public async Task Avatar_delete_is_idempotent_and_removes_the_object_from_storage()
+    {
+        var email = Unique("avatar-delete");
+        var userId = await factory.SeedUserAsync(email, Password);
+        var client = await AuthedClient(email);
+
+        using var form = new MultipartFormDataContent();
+        form.Add(new ByteArrayContent(JpegWithGps()), "file", "avatar.jpg");
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/me/avatar", form)).StatusCode);
+
+        var key = await AvatarKeyAsync(userId);
+        Assert.NotNull(key);
+        Assert.True(factory.Storage.Exists(key));
+
+        // Первое удаление.
+        var first = await client.DeleteAsync("/api/me/avatar");
+        Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
+
+        // Ссылка снята сразу, в том же запросе.
+        Assert.Null(await AvatarKeyAsync(userId));
+        var me = await client.GetFromJsonAsync<JsonElement>("/api/me");
+        Assert.Equal(JsonValueKind.Null, me.GetProperty("avatarUrl").ValueKind);
+
+        // Публичный профиль тоже без аватара, а сама выдача файла — 404.
+        var code = me.GetProperty("publicCode").GetString();
+        var publicProfile = await factory.CreateClient()
+            .GetFromJsonAsync<JsonElement>($"/api/users/by-code/{code}/public");
+        Assert.Equal(JsonValueKind.Null, publicProfile.GetProperty("avatarUrl").ValueKind);
+        Assert.Equal(HttpStatusCode.NotFound, (await factory.CreateClient()
+            .GetAsync($"/api/users/by-code/{code}/avatar")).StatusCode);
+
+        // Повторное удаление — тоже 204, без 404.
+        var second = await client.DeleteAsync("/api/me/avatar");
+        Assert.Equal(HttpStatusCode.NoContent, second.StatusCode);
+
+        // После доставки outbox объекта в хранилище больше нет.
+        await factory.RunOutboxAsync();
+        Assert.False(factory.Storage.Exists(key));
+    }
+
+    /// <summary>
+    /// Замена аватара не оставляет сироту в хранилище: прежний объект уходит
+    /// на удаление тем же путём. Раньше каждая повторная загрузка добавляла
+    /// в MinIO файл, на который уже никто не ссылается.
+    /// </summary>
+    [Fact]
+    public async Task Replacing_an_avatar_removes_the_previous_object()
+    {
+        var email = Unique("avatar-replace");
+        var userId = await factory.SeedUserAsync(email, Password);
+        var client = await AuthedClient(email);
+
+        using var first = new MultipartFormDataContent();
+        first.Add(new ByteArrayContent(JpegWithGps()), "file", "avatar.jpg");
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/me/avatar", first)).StatusCode);
+        var oldKey = await AvatarKeyAsync(userId);
+
+        using var second = new MultipartFormDataContent();
+        second.Add(new ByteArrayContent(JpegWithGps()), "file", "avatar.jpg");
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/me/avatar", second)).StatusCode);
+        var newKey = await AvatarKeyAsync(userId);
+
+        Assert.NotNull(oldKey);
+        Assert.NotNull(newKey);
+        Assert.NotEqual(oldKey, newKey);
+
+        await factory.RunOutboxAsync();
+        Assert.False(factory.Storage.Exists(oldKey));
+        Assert.True(factory.Storage.Exists(newKey));   // текущий на месте
+    }
+
+    /// <summary>Удаление аккаунта уносит и файл аватара, а не только ссылку на него.</summary>
+    [Fact]
+    public async Task Deleting_the_account_removes_the_avatar_object()
+    {
+        var email = Unique("avatar-account-delete");
+        var userId = await factory.SeedUserAsync(email, Password);
+        var client = await AuthedClient(email);
+
+        using var form = new MultipartFormDataContent();
+        form.Add(new ByteArrayContent(JpegWithGps()), "file", "avatar.jpg");
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/me/avatar", form)).StatusCode);
+
+        var key = await AvatarKeyAsync(userId);
+        Assert.NotNull(key);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/api/me")).StatusCode);
+
+        await factory.RunOutboxAsync();
+        Assert.False(factory.Storage.Exists(key));
+    }
+
     /// <summary>Не-изображение с «правильным» именем и Content-Type в аватары не проходит.</summary>
     [Fact]
     public async Task Avatar_upload_rejects_content_that_is_not_an_image()
@@ -210,6 +322,106 @@ public class ProfileTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
 
         var resp = await client.PostAsync("/api/me/avatar", form);
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    /// <summary>
+    /// «О себе»: сохраняется нормализованным (пробелы по краям сняты, CRLF → LF,
+    /// 4 переноса подряд → 2), возвращается владельцу в /api/me и любому
+    /// постороннему в публичном профиле. Раньше поле молча терялось: фронт слал
+    /// его в PATCH, сервер не биндил, текст жил только в состоянии React.
+    /// </summary>
+    [Fact]
+    public async Task Description_is_saved_normalized_and_visible_to_owner_and_to_strangers()
+    {
+        var email = Unique("bio");
+        var userId = await factory.SeedUserAsync(email, Password);
+        var client = await AuthedClient(email);
+
+        var patch = await client.PatchAsJsonAsync("/api/me", new
+        {
+            description = "  Чиню телефоны с 2015 года.\r\n\r\n\r\n\r\nПишите в Telegram.  "
+        });
+        Assert.Equal(HttpStatusCode.OK, patch.StatusCode);
+
+        const string expected = "Чиню телефоны с 2015 года.\n\nПишите в Telegram.";
+
+        // Ответ на сам PATCH — уже нормализованный текст, без второго запроса.
+        Assert.Equal(expected, (await patch.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("description").GetString());
+
+        // Владелец: своё описание в приватном профиле.
+        var me = await client.GetFromJsonAsync<JsonElement>("/api/me");
+        Assert.Equal(expected, me.GetProperty("description").GetString());
+
+        // Чужой залогиненный пользователь: через публичный профиль.
+        var strangerEmail = Unique("bio-stranger");
+        await factory.SeedUserAsync(strangerEmail, Password);
+        var stranger = await AuthedClient(strangerEmail);
+        var seenByStranger = await stranger.GetFromJsonAsync<JsonElement>($"/api/users/{userId}/public");
+        Assert.Equal(expected, seenByStranger.GetProperty("description").GetString());
+
+        // И анонимный посетитель — описание публично по замыслу.
+        var seenByAnonymous = await factory.CreateClient()
+            .GetFromJsonAsync<JsonElement>($"/api/users/{userId}/public");
+        Assert.Equal(expected, seenByAnonymous.GetProperty("description").GetString());
+
+        // В БД лежит ровно нормализованный текст, а не то, что пришло по проводу.
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var stored = await db.Profiles.AsNoTracking()
+            .Where(p => p.UserId == userId).Select(p => p.Description).FirstAsync();
+        Assert.Equal(expected, stored);
+    }
+
+    /// <summary>
+    /// Очистка описания: пустая строка (или строка из одних пробелов и переносов)
+    /// после нормализации ложится в БД как NULL, а не как "" — иначе «пусто»
+    /// имело бы два разных представления.
+    /// </summary>
+    [Fact]
+    public async Task Blank_description_is_stored_as_null_not_as_empty_string()
+    {
+        var email = Unique("bio-blank");
+        var userId = await factory.SeedUserAsync(email, Password);
+        var client = await AuthedClient(email);
+
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PatchAsJsonAsync("/api/me", new { description = "Было что рассказать" })).StatusCode);
+
+        var cleared = await client.PatchAsJsonAsync("/api/me", new { description = "   \r\n  \t " });
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+
+        var me = await client.GetFromJsonAsync<JsonElement>("/api/me");
+        Assert.Equal(JsonValueKind.Null, me.GetProperty("description").ValueKind);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var stored = await db.Profiles.AsNoTracking()
+            .Where(p => p.UserId == userId).Select(p => p.Description).FirstAsync();
+        Assert.Null(stored);
+    }
+
+    /// <summary>Граница длины: 300 символов проходят, 301 — 400, в БД ничего не меняется.</summary>
+    [Fact]
+    public async Task Description_longer_than_300_characters_is_rejected()
+    {
+        var email = Unique("bio-long");
+        var userId = await factory.SeedUserAsync(email, Password);
+        var client = await AuthedClient(email);
+
+        var maxLength = new string('я', 300);
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.PatchAsJsonAsync("/api/me", new { description = maxLength })).StatusCode);
+
+        var tooLong = await client.PatchAsJsonAsync("/api/me", new { description = new string('я', 301) });
+        Assert.Equal(HttpStatusCode.BadRequest, tooLong.StatusCode);
+
+        // Отказ не задел уже сохранённое значение.
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var stored = await db.Profiles.AsNoTracking()
+            .Where(p => p.UserId == userId).Select(p => p.Description).FirstAsync();
+        Assert.Equal(maxLength, stored);
     }
 
     // ---- helpers ----
@@ -234,6 +446,15 @@ public class ProfileTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
     }
 
     private static string Unique(string prefix) => $"{prefix}-{Guid.NewGuid():N}@test.io";
+
+    /// <summary>Ключ объекта аватара в хранилище (в БД лежит именно он, не URL).</summary>
+    private async Task<string?> AvatarKeyAsync(Guid userId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.Profiles.AsNoTracking()
+            .Where(p => p.UserId == userId).Select(p => p.AvatarUrl).FirstAsync();
+    }
 
     private async Task<HttpClient> AuthedClient(string email)
     {

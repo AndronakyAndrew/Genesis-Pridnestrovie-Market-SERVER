@@ -28,6 +28,13 @@ public static class RateLimitPolicies
 
     /// <summary>Поиск по каталогу: на IP.</summary>
     public const string Search = "search";
+
+    /// <summary>
+    /// Публичный профиль по «ID профиля»: на IP. Отдельная политика нужна именно
+    /// здесь: код пятизначный, то есть пространство всего в 90 000 значений, и
+    /// без лимита его можно обойти целиком за считанные минуты.
+    /// </summary>
+    public const string ProfileByCode = "profile-by-code";
 }
 
 /// <summary>
@@ -44,6 +51,13 @@ public sealed class RateLimitOptions
 
     /// <summary>Поиск по каталогу, запросов в минуту на IP.</summary>
     public int SearchPerMinute { get; set; } = 60;
+
+    /// <summary>
+    /// Публичный профиль по коду, запросов в минуту на IP. 20 — с запасом для
+    /// живого человека (профиль продавца открывают поштучно) и 75 часов на полный
+    /// обход диапазона для того, кто решит его перечислить.
+    /// </summary>
+    public int ProfileByCodePerMinute { get; set; } = 20;
 
     /// <summary>Чувствительные анонимные POST-ы, запросов в час на IP.</summary>
     public int SensitiveAnonPerHour { get; set; } = 3;
@@ -86,6 +100,10 @@ public static class RateLimitingSetup
             // Поиск по каталогу — на IP.
             options.AddPolicy(RateLimitPolicies.Search, ctx =>
                 FixedByKey($"search:{Ip(ctx)}", rl.SearchPerMinute, TimeSpan.FromMinutes(1)));
+
+            // Публичный профиль по «ID профиля» — на IP.
+            options.AddPolicy(RateLimitPolicies.ProfileByCode, ctx =>
+                FixedByKey($"profile-code:{Ip(ctx)}", rl.ProfileByCodePerMinute, TimeSpan.FromMinutes(1)));
 
             // Чувствительные анонимные POST-ы — на IP.
             options.AddPolicy(RateLimitPolicies.SensitiveAnon, ctx =>
