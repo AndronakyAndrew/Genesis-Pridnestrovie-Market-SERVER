@@ -9,15 +9,23 @@ namespace GenesisMarket.Api.Listings;
 /// </summary>
 public static class ContactLinkBuilder
 {
+    /// <param name="phoneE164">
+    /// Номер, который разрешено показать, или null — продавец номер скрыл (или не задал).
+    /// Без номера Viber и WhatsApp не строятся: <c>wa.me/{digits}</c> и
+    /// <c>viber://chat?number=…</c> несут номер в открытом виде.
+    /// </param>
     public static SellerContactResponse Build(
-        string phoneE164, string? telegramUsername, bool viberEnabled, bool whatsappEnabled)
+        string? phoneE164, string? telegramUsername, bool viberEnabled, bool whatsappEnabled)
     {
-        // wa.me и viber ждут только цифры; «+» кодируется как %2B в viber.
-        var digits = phoneE164.TrimStart('+');
-
         var telegramUrl = string.IsNullOrWhiteSpace(telegramUsername)
             ? null
             : $"https://t.me/{telegramUsername.TrimStart('@')}";
+
+        if (string.IsNullOrEmpty(phoneE164))
+            return new SellerContactResponse(null, telegramUrl, null, null);
+
+        // wa.me и viber ждут только цифры; «+» кодируется как %2B в viber.
+        var digits = phoneE164.TrimStart('+');
 
         var viberUrl = viberEnabled ? $"viber://chat?number=%2B{digits}" : null;
         var whatsappUrl = whatsappEnabled ? $"https://wa.me/{digits}" : null;
