@@ -16,6 +16,7 @@ public static class ListingsServiceCollectionExtensions
         services.AddSingleton<IListingModerationPolicy, ListingModerationPolicy>();
         services.AddScoped<IListingViewCounter, ListingViewCounter>();
         services.AddScoped<IContactRevealService, ContactRevealService>();
+        services.AddScoped<ILinkRedirectService, LinkRedirectService>();
         services.AddValidatorsFromAssemblyContaining<CreateListingRequestValidator>();
         return services;
     }

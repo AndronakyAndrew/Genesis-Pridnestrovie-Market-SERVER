@@ -104,6 +104,16 @@ services:
       # Публичный адрес фронтенда для ссылок в постах канала.
       Telegram__WebBaseUrl: ${TELEGRAM_WEB_BASE_URL}
       # Маршрутизация «категория -> канал» задаётся переменными Telegram__CategoryChannels__<category>.
+      # Служебный бот (обращения пользователей -> админ). Токен тот же, TELEGRAM_BOT_TOKEN.
+      # Без токена или AdminChatId воркер пишет warning и выключается — API работает дальше.
+      # :-0 — пустая строка не число и не биндится в long; 0 значит «не задан».
+      Telegram__AdminChatId: ${TELEGRAM_ADMIN_CHAT_ID:-0}
+      Telegram__ChannelId: ${TELEGRAM_CHANNEL_ID}
+      # Long polling держит только ОДИН процесс на токен: второй получит 409.
+      Telegram__EnableUpdatePolling: ${TELEGRAM_ENABLE_UPDATE_POLLING:-true}
+      # Публикация одобренных объявлений в канал (очередь + воркер). По умолчанию ВЫКЛЮЧЕНА:
+      # включается явно после проверки выката. Очередь наполняется и при выключенном флаге.
+      ChannelPublishing__Enabled: ${TELEGRAM_PUBLISHING_ENABLED:-false}
       # SEO: публичный адрес сайта для канонических ссылок, sitemap, og-тегов и JSON-LD.
       # Пусто -> SEO-эндпоинты отдают 503 (индексировать нечего). Обычно = адресу фронтенда.
       Seo__WebBaseUrl: ${SEO_WEB_BASE_URL}

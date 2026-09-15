@@ -27,6 +27,10 @@ RUN dotnet publish src/GenesisMarket.Api/GenesisMarket.Api.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS final
 WORKDIR /app
 
+# База часовых поясов: в alpine её нет, и TimeZoneInfo не находит Europe/Chisinau —
+# без неё не посчитать окно публикации в канал (ChannelPublishing:WindowStart/WindowEnd).
+RUN apk add --no-cache tzdata
+
 # Непривилегированный пользователь (uid 64198 предопределён в образах .NET).
 USER $APP_UID
 
