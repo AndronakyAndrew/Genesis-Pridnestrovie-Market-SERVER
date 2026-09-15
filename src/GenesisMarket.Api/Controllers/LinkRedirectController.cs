@@ -19,12 +19,16 @@ public class LinkRedirectController(ILinkRedirectService redirects) : ApiControl
     /// <summary>
     /// Активное объявление — запись перехода и 302 на карточку с UTM-метками;
     /// нет или снято — 302 на главную. Ошибка записи перехода редирект не отменяет.
+    /// HEAD (curl -I, чекеры ссылок) получает тот же 302, но переход не пишется: это не человек.
+    /// HEAD обязан быть в списке методов: иначе запрос уходит в служебный endpoint «405»
+    /// без AllowAnonymous, и FallbackPolicy отвечает 401.
     /// </summary>
-    [HttpGet("/r/l/{listingId:guid}")]
+    [AcceptVerbs("GET", "HEAD", Route = "/r/l/{listingId:guid}")]
     public async Task<IActionResult> Listing(
         Guid listingId, [FromQuery(Name = "s")] string? source, CancellationToken ct)
     {
-        var target = await redirects.ResolveListingAsync(listingId, source, ClientIp(), ct);
+        var target = await redirects.ResolveListingAsync(
+            listingId, source, ClientIp(), recordClick: !HttpMethods.IsHead(Request.Method), ct);
 
         // Кешированный редирект (браузер, edge) прошёл бы мимо сервера — и мимо учёта перехода.
         Response.Headers.CacheControl = "no-store";

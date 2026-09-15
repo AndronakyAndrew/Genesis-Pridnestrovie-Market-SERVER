@@ -42,8 +42,11 @@ public static class LinkSources
 /// </summary>
 public interface ILinkRedirectService
 {
-    /// <summary>Абсолютный адрес для 302: карточка активного объявления либо главная.</summary>
-    Task<string> ResolveListingAsync(Guid listingId, string? source, string? ip, CancellationToken ct);
+    /// <summary>
+    /// Абсолютный адрес для 302: карточка активного объявления либо главная.
+    /// <paramref name="recordClick"/> = false — только адрес, без записи перехода (HEAD).
+    /// </summary>
+    Task<string> ResolveListingAsync(Guid listingId, string? source, string? ip, bool recordClick, CancellationToken ct);
 }
 
 public sealed class LinkRedirectService(
@@ -62,7 +65,8 @@ public sealed class LinkRedirectService(
 
     private readonly int _throttleSeconds = options.Value.ClickThrottleSeconds;
 
-    public async Task<string> ResolveListingAsync(Guid listingId, string? source, string? ip, CancellationToken ct)
+    public async Task<string> ResolveListingAsync(
+        Guid listingId, string? source, string? ip, bool recordClick, CancellationToken ct)
     {
         var baseUrl = SiteBaseUrl();
 
@@ -84,7 +88,8 @@ public sealed class LinkRedirectService(
         if (slug is null)
             return SeoUrls.Home(baseUrl);
 
-        await TryRecordClickAsync(listingId, LinkSources.Normalize(source), ip, ct);
+        if (recordClick)
+            await TryRecordClickAsync(listingId, LinkSources.Normalize(source), ip, ct);
 
         // Карточка на фронтенде — /listing/{slug} (см. SeoUrls), а не /listings/{id}: такого маршрута нет.
         return SeoUrls.Listing(baseUrl, slug) + Utm;
