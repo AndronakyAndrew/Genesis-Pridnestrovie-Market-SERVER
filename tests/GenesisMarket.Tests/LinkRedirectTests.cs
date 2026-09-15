@@ -34,6 +34,20 @@ public class LinkRedirectTests(AuthApiFactory factory) : IClassFixture<AuthApiFa
         Assert.Matches("^[0-9A-F]{64}$", click.IpHash);
     }
 
+    [Fact]
+    public async Task Head_redirects_to_card_without_recording_click()
+    {
+        var listingId = await SeedListingAsync("head");
+        var slug = await factory.ListingSlugAsync(listingId);
+
+        var resp = await Client().SendAsync(new HttpRequestMessage(HttpMethod.Head, $"/r/l/{listingId}?s=tg"));
+
+        Assert.Equal(HttpStatusCode.Redirect, resp.StatusCode);
+        Assert.Equal($"/listing/{slug}", resp.Headers.Location!.AbsolutePath);
+        Assert.Equal(Utm, resp.Headers.Location.Query);
+        Assert.Empty(await factory.LinkClicksAsync(listingId));
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("?s=vk")]
@@ -138,6 +152,36 @@ public class LinkRedirectResilienceTests
         var hasher = new HmacIpHasher(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
 
         Assert.Equal(IpHasherExtensions.NoKeyHash, hasher.HashForJournal("203.0.113.7"));
+    }
+
+    /// <summary>
+    /// Страж публичности: /r/l отвечает без токена на оба метода, которыми по ссылке ходят
+    /// (GET — браузер, HEAD — curl -I и чекеры ссылок). Метод вне списка маршрута уходит
+    /// в служебный endpoint «405» без AllowAnonymous, и FallbackPolicy отвечает 401 —
+    /// именно так HEAD ломался на проде, пока GET работал.
+    /// </summary>
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("HEAD")]
+    public async Task Redirect_answers_without_authorization(string method)
+    {
+        using var env = new EnvScope(
+            ("ConnectionStrings__Postgres", "Host=127.0.0.1;Port=1;Database=none;Username=none;Password=none;Timeout=2"),
+            ("Telegram__SiteBaseUrl", "https://market.test/"));
+        await using var app = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(b => b.UseEnvironment("Development"));
+        var client = app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        // Контроль: FallbackPolicy включена и закрывает эндпоинт без [AllowAnonymous] —
+        // без этого 302 ниже ничего бы не доказывал.
+        var closed = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), "/api/me/favorites"));
+        Assert.Equal(HttpStatusCode.Unauthorized, closed.StatusCode);
+
+        var resp = await client.SendAsync(new HttpRequestMessage(new HttpMethod(method), $"/r/l/{Guid.NewGuid()}?s=tg"));
+
+        Assert.Equal(HttpStatusCode.Redirect, resp.StatusCode);
+        Assert.Empty(resp.Headers.WwwAuthenticate);
+        Assert.Equal(new Uri("https://market.test/"), resp.Headers.Location);
     }
 
     [Fact]
