@@ -3,6 +3,7 @@ using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Moderation;
 using GenesisMarket.Api.Outbox.Telegram;
+using GenesisMarket.Api.Telegram.Channel;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
@@ -26,6 +27,7 @@ public class ModerationController(
     IModerationAudit audit,
     IRefreshTokenService refreshTokens,
     SecurityStampValidator securityStamp,
+    IChannelPublisher channelPublisher,
     ILogger<ModerationController> logger) : ApiControllerBase
 {
     private const int DefaultLimit = 20;
@@ -153,8 +155,7 @@ public class ModerationController(
         if (listing.ReviewQueuedAt is null)
             return Problem(title: "Объявление не находится на модерации", statusCode: StatusCodes.Status409Conflict);
 
-        // Постмодерация: объявление уже в каталоге и уже анонсировано в канал —
-        // повторный анонс не нужен, одобрение здесь ничего публично не меняет.
+        // Постмодерация: объявление уже в каталоге — на витрине одобрение ничего не меняет.
         var wasInCatalog = listing.Status == ListingStatus.Active;
         var now = DateTimeOffset.UtcNow;
 
@@ -169,13 +170,10 @@ public class ModerationController(
             Payload = JsonSerializer.Serialize(new { listingId = id })
         });
 
-        // Объявление впервые попало в каталог — анонсируем в публичный Telegram-канал.
-        if (!wasInCatalog)
-            db.OutboxMessages.Add(new OutboxMessage
-            {
-                Type = OutboxMessage.ListingPublished,
-                Payload = JsonSerializer.Serialize(new { listingId = id })
-            });
+        // Одобрение — момент анонса в Telegram-канал, в обоих режимах: при постмодерации объявление
+        // до проверки в канал не уходит. Здесь только строка очереди в этой же транзакции; пост
+        // отправит ChannelPublisherWorker с учётом интервала и рабочего окна.
+        await channelPublisher.EnqueueAsync(id, ct);
 
         audit.Record(ModerationLog.ActionApproveListing, ModerationLog.TargetListing, id,
             payload: new { postModeration = wasInCatalog });

@@ -8,6 +8,7 @@ using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Outbox.Telegram;
 using GenesisMarket.Api.Security;
 using GenesisMarket.Api.Seo;
+using GenesisMarket.Api.Telegram.Channel;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
@@ -34,6 +35,7 @@ public class ListingsController(
     IListingModerationPolicy moderation,
     IListingViewCounter viewCounter,
     IContactRevealService contactReveal,
+    IChannelPublisher channelPublisher,
     IValidator<CreateListingRequest> createValidator,
     IValidator<UpdateListingRequest> updateValidator,
     IMemoryCache cache,
@@ -361,10 +363,9 @@ public class ListingsController(
                 author, request.Title, request.Description, request.Price, request.Category, hasImages: true);
             listing.Publish(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
 
-            // Попало в каталог (Auto или постмодерация) — анонсируем в Telegram-канал
-            // в той же транзакции. При премодерации канал ждёт одобрения.
-            if (listing.Status == ListingStatus.Active)
-                EnqueueChannelPublish(listing.Id);
+            // Доверенный автор (Auto) — объявление одобрено сразу: в очередь канала в той же
+            // транзакции. Пре- и постмодерация ждут решения модератора (см. ModerationController.Approve).
+            await EnqueueChannelPublishAsync(listing, ct);
         }
 
         await SaveNewWithSlugAsync(listing, ct);
@@ -474,9 +475,8 @@ public class ListingsController(
             await HasImagesAsync(listing.Id, ct));
         listing.Publish(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
 
-        // Попало в каталог (Auto или постмодерация) — анонсируем в Telegram-канал.
-        if (listing.Status == ListingStatus.Active)
-            EnqueueChannelPublish(listing.Id);
+        // Доверенный автор (Auto) — одобрено сразу, в очередь канала. Пре- и постмодерация ждут модератора.
+        await EnqueueChannelPublishAsync(listing, ct);
 
         await db.SaveChangesAsync(ct);
 
@@ -581,8 +581,8 @@ public class ListingsController(
                 statusCode: StatusCodes.Status409Conflict);
 
         listing.ReactivateFromSold(DateTimeOffset.UtcNow);
-        // Вернулось в продажу — снимаем пометку «Продано» с поста (обработчик правит подпись).
-        EnqueueChannelPublish(listing.Id);
+        // Вернулось в продажу — пост получает обратно полную подпись и кнопку (правку доставит outbox).
+        await EnqueueChannelPublishAsync(listing, ct);
         await db.SaveChangesAsync(ct);
 
         return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct)));
@@ -629,10 +629,9 @@ public class ListingsController(
             await HasImagesAsync(listing.Id, ct));
         listing.RestoreFromArchive(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
 
-        // Вернулось в каталог (Active) — снимаем пометку «Снято» с поста. При уходе на
-        // повторную премодерацию (PendingReview) канал не трогаем: снова опубликуем при одобрении.
-        if (listing.Status == ListingStatus.Active)
-            EnqueueChannelPublish(listing.Id);
+        // Вернулось в каталог без проверки — снимаем пометку «Снято» с поста (или ставим в очередь,
+        // если поста не было). Ушло на проверку — канал ждёт одобрения модератора.
+        await EnqueueChannelPublishAsync(listing, ct);
 
         await db.SaveChangesAsync(ct);
 
@@ -817,16 +816,15 @@ public class ListingsController(
     }
 
     /// <summary>
-    /// Ставит в outbox пост объявления в Telegram-канал (перешло в Active). Обработчик
-    /// идемпотентен: повторную активацию он превращает в правку подписи, а не в новый пост.
-    /// Пишется в той же транзакции, что и доменное изменение (общий SaveChanges).
+    /// Объявление стало одобренно-активным — в очередь публикации в Telegram-канал; если пост уже
+    /// есть, вместо нового поста ему возвращается чистая подпись. Строки пишутся в текущий DbContext
+    /// и сохраняются общим SaveChanges — в одной транзакции с доменным изменением.
     /// </summary>
-    private void EnqueueChannelPublish(Guid listingId) =>
-        db.OutboxMessages.Add(new OutboxMessage
-        {
-            Type = OutboxMessage.ListingPublished,
-            Payload = JsonSerializer.Serialize(new { listingId })
-        });
+    private async Task EnqueueChannelPublishAsync(Listing listing, CancellationToken ct)
+    {
+        if (ChannelPublisher.IsAnnounceable(listing))
+            await channelPublisher.EnqueueAsync(listing.Id, ct);
+    }
 
     /// <summary>Ставит в outbox правку поста в канале: пометка «Продано»/«Снято с публикации».</summary>
     private void EnqueueChannelMark(Guid listingId, string mark) =>

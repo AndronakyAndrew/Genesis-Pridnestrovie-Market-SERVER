@@ -51,6 +51,13 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         Environment.SetEnvironmentVariable("Telegram__CategoryChannels__home", "test-home");
         Environment.SetEnvironmentVariable("Telegram__WebBaseUrl", "https://market.test");
 
+        // Канал публикации объявлений. Воркер без токена завершается — тики гоняем вручную
+        // через PublishNextChannelPostAsync; клиент бота подменён CapturingBotClient.
+        Environment.SetEnvironmentVariable("Telegram__ChannelId", "@test_channel");
+        Environment.SetEnvironmentVariable("ChannelPublishing__PublicApiBaseUrl", "https://api.test");
+        // Окно считаем в UTC: на Windows при InvariantGlobalization IANA-зоны не находятся.
+        Environment.SetEnvironmentVariable("ChannelPublishing__TimeZoneId", "UTC");
+
         // Публичный адрес сайта для SEO (canonical/sitemap/og/JSON-LD) — иначе эндпоинты отдают 503.
         Environment.SetEnvironmentVariable("Seo__WebBaseUrl", "https://market.test");
 
@@ -93,6 +100,12 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             services.AddSingleton<CapturingTelegramClient>();
             services.AddSingleton<GenesisMarket.Api.Outbox.Telegram.ITelegramClient>(
                 sp => sp.GetRequiredService<CapturingTelegramClient>());
+
+            // Клиент бота (посты канала с HTML и кнопкой) — тоже перехватчик.
+            services.RemoveAll<GenesisMarket.Api.Telegram.ITelegramClient>();
+            services.AddSingleton<CapturingBotClient>();
+            services.AddSingleton<GenesisMarket.Api.Telegram.ITelegramClient>(
+                sp => sp.GetRequiredService<CapturingBotClient>());
 
             // Источник публичных кодов подменяем скриптуемым: по умолчанию он
             // отдаёт ту же криптослучайность, но тест может навязать конкретные
@@ -365,6 +378,71 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return await db.ContactReveals.CountAsync(r => r.ListingId == listingId);
+    }
+
+    /// <summary>Перехваченные посты и правки канала (клиент бота).</summary>
+    public CapturingBotClient Bot => Services.GetRequiredService<CapturingBotClient>();
+
+    /// <summary>Поставить объявление в очередь канала так, как это делает одобрение (с сохранением).</summary>
+    public async Task EnqueueChannelPostAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var publisher = scope.ServiceProvider.GetRequiredService<GenesisMarket.Api.Telegram.Channel.IChannelPublisher>();
+        await publisher.EnqueueAsync(listingId);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Один тик воркера публикации в канал на заданный момент.</summary>
+    public async Task<GenesisMarket.Api.Telegram.Channel.ChannelPublishOutcome> PublishNextChannelPostAsync(DateTimeOffset now)
+    {
+        using var scope = Services.CreateScope();
+        var publisher = scope.ServiceProvider.GetRequiredService<GenesisMarket.Api.Telegram.Channel.IChannelPublisher>();
+        return await publisher.PublishNextAsync(now);
+    }
+
+    /// <summary>Строка очереди канала по объявлению (null — не ставилось).</summary>
+    public async Task<ChannelPostQueue?> ChannelQueueItemAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.ChannelPostQueue.AsNoTracking().FirstOrDefaultAsync(q => q.ListingId == listingId);
+    }
+
+    /// <summary>
+    /// Очистить очередь канала: очередь и пауза между постами общие на всю БД класса тестов,
+    /// без очистки тест видел бы чужие Pending и чужую последнюю публикацию.
+    /// </summary>
+    public async Task ClearChannelQueueAsync()
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.ChannelPostQueue.ExecuteDeleteAsync();
+    }
+
+    /// <summary>Момент публикации объявления в канал (Listing.TelegramPublishedAt).</summary>
+    public async Task<DateTimeOffset?> TelegramPublishedAtAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.Listings.IgnoreQueryFilters().AsNoTracking()
+            .Where(l => l.Id == listingId).Select(l => l.TelegramPublishedAt).FirstAsync();
+    }
+
+    /// <summary>Записанные переходы по коротким ссылкам на объявление.</summary>
+    public async Task<List<LinkClick>> LinkClicksAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.LinkClicks.AsNoTracking().Where(c => c.ListingId == listingId).ToListAsync();
+    }
+
+    /// <summary>Выполнить произвольный SQL в тестовой БД (сценарии отказа хранилища).</summary>
+    public async Task ExecuteSqlAsync(string sql)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Database.ExecuteSqlRawAsync(sql);
     }
 
     /// <summary>Пишет факт раскрытия контактов (гейт для отзыва) напрямую в журнал.</summary>

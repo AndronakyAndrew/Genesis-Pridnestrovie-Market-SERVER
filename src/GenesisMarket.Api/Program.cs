@@ -10,6 +10,8 @@ using GenesisMarket.Api.Outbox;
 using GenesisMarket.Api.SavedSearches;
 using GenesisMarket.Api.Security;
 using GenesisMarket.Api.Seo;
+using GenesisMarket.Api.Telegram;
+using GenesisMarket.Api.Telegram.Channel;
 using GenesisMarket.Api.Trust;
 using GenesisMarket.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -107,6 +109,13 @@ try
     // ---- Транзакционный outbox: доставка уведомлений (email/Telegram) и удаление объектов ----
     builder.Services.AddOutbox(builder.Configuration);
 
+    // ---- Служебный Telegram-бот (обращения пользователей ↔ админ, long polling) ----
+    // Без токена/AdminChatId воркер пишет warning и завершается — старт API от бота не зависит.
+    builder.Services.AddTelegram(builder.Configuration);
+
+    // ---- Публикация одобренных объявлений в Telegram-канал: очередь + воркер (интервал, окно) ----
+    builder.Services.AddChannelPublishing(builder.Configuration);
+
     // ---- Сохранённые поиски: рассылка новых совпадений (Quartz-джоб + сервис) ----
     builder.Services.AddSavedSearchesFeature();
 
@@ -160,6 +169,10 @@ try
     app.UseMiddleware<SessionActivityMiddleware>();
 
     app.MapControllers();
+
+    // Дымовая проверка токена бота (getMe, без отправки) — маршрут существует только в Development.
+    if (app.Environment.IsDevelopment())
+        app.MapTelegramDiagnostics();
 
     // ---- Health checks ----
     // Публичны: FallbackPolicy их бы закрыл, поэтому явно AllowAnonymous.

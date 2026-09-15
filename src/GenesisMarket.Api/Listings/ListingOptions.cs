@@ -16,4 +16,11 @@ public sealed class ListingOptions
 
     /// <summary>Не чаще одного засчитанного просмотра в стольких минутах на (Listing, IpHash).</summary>
     public int ViewThrottleMinutes { get; set; } = 60;
+
+    /// <summary>
+    /// Не чаще одной записи перехода в стольких секундах на (Listing, Source, IpHash).
+    /// Редирект <c>/r/l/{id}</c> выведен из-под rate-limit, и без окна любой повтор запроса
+    /// был бы строкой в <c>link_clicks</c>. 0 — писать каждый переход.
+    /// </summary>
+    public int ClickThrottleSeconds { get; set; } = 60;
 }

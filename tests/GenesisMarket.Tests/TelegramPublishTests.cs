@@ -1,98 +1,199 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GenesisMarket.Api.Outbox.Telegram;
+using GenesisMarket.Api.Telegram.Channel;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using Microsoft.Extensions.Options;
 using Xunit;
+using BotApi = GenesisMarket.Api.Telegram;
 
 namespace GenesisMarket.Tests;
 
 /// <summary>
-/// Публикация объявлений в Telegram-канал (шаг 16): пост при переходе в Active
-/// (sendPhoto/sendMessage, маршрутизация «категория → канал», сохранение message_id),
-/// пометки «Продано»/«Снято» правкой поста, идемпотентность повторной активации,
-/// устойчивость к отсутствующему/удалённому посту.
+/// Публикация объявлений в Telegram-канал через очередь: постановка при одобрении, тик воркера
+/// (фото, подпись, кнопка, message_id), пауза между постами, рабочее окно, ошибки и повторы,
+/// правки поста «Продано»/«Снято»/возврат подписи через outbox. Нужен Docker (PostgreSQL).
 /// </summary>
 public class TelegramPublishTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
 {
     private const string Password = "CorrectHorse7";
 
+    // Окно в тестах считается в UTC (см. AuthApiFactory): полдень — внутри 09:00–21:00.
+    private static readonly DateTimeOffset Noon = new(2026, 9, 15, 12, 0, 0, TimeSpan.Zero);
+
     [Fact]
-    public async Task Publishing_active_listing_posts_to_category_channel_and_saves_message_id()
+    public async Task Moderator_approval_enqueues_post_without_sending_immediately()
     {
-        var ownerId = await factory.SeedUserAsync(Unique("tg-pub"), Password);
-        var title = Title("публикация");
-        var listingId = await factory.SeedListingAsync(
-            ownerId, ListingStatus.Active, title: title, category: Category.Home, subcategoryId: 18);
+        await factory.ClearChannelQueueAsync();
+        var sellerId = await factory.SeedUserAsync(Unique("tg-approve"), Password);
+        var listingId = await factory.SeedListingAsync(sellerId, ListingStatus.PendingReview, title: Title("одобрение"));
 
-        await factory.EnqueueOutboxAsync(
-            OutboxMessage.ListingPublished, JsonSerializer.Serialize(new { listingId }));
-        var result = await factory.RunOutboxAsync();
+        var resp = await (await ModeratorClient()).PostAsync($"/api/moderation/listings/{listingId}/approve", null);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        await factory.RunOutboxAsync();
 
-        Assert.True(result.Delivered >= 1);
+        var item = await factory.ChannelQueueItemAsync(listingId);
+        Assert.NotNull(item);
+        Assert.Equal(ChannelPostStatus.Pending, item.Status);
+        Assert.Empty(factory.Bot.PhotosFor(listingId)); // в канал уходит только воркером
+    }
 
-        var post = Assert.Single(factory.Telegram.Sends, s => s.Text.Contains(title));
-        Assert.Equal("sendMessage", post.Method);          // без изображения — текстом
-        Assert.Equal("test-home", post.ChatId);            // Home → отдельный канал категории
-        Assert.Contains("https://market.test/listing/", post.Text); // абсолютная ссылка
-        Assert.Contains("Дом и сад", post.Text);           // русская подпись категории
+    [Fact]
+    public async Task Post_moderation_listing_is_enqueued_only_after_approval()
+    {
+        await factory.ClearChannelQueueAsync();
+        var sellerId = await factory.SeedUserAsync(Unique("tg-postmod"), Password);
+        var listingId = await factory.SeedListingAsync(sellerId, ListingStatus.Active, title: Title("постмодерация"));
+        await factory.QueueForPostReviewAsync(listingId);
 
-        // message_id и канал сохранены в объявлении для последующих правок.
+        Assert.Null(await factory.ChannelQueueItemAsync(listingId));
+
+        var resp = await (await ModeratorClient()).PostAsync($"/api/moderation/listings/{listingId}/approve", null);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        Assert.Equal(ChannelPostStatus.Pending, (await factory.ChannelQueueItemAsync(listingId))?.Status);
+    }
+
+    [Fact]
+    public async Task Tick_publishes_photo_with_caption_and_redirect_button_and_saves_message_id()
+    {
+        await factory.ClearChannelQueueAsync();
+        var listingId = await SeedPublishableListingAsync("публикация");
+        await factory.EnqueueChannelPostAsync(listingId);
+
+        Assert.Equal(ChannelPublishOutcome.Published, await factory.PublishNextChannelPostAsync(Noon));
+
+        var post = Assert.Single(factory.Bot.PhotosFor(listingId));
+        Assert.Equal("@test_channel", post.ChatId);
+        Assert.StartsWith($"https://api.test/api/images/listings/{listingId}/", post.PhotoUrl);
+        Assert.Equal(ChannelPostFormatter.ButtonText, post.Button!.Text);
+        Assert.Equal($"https://api.test/r/l/{listingId}?s=tg", post.Button.Url);
+        Assert.StartsWith("📦 #объявления #Бендеры", post.Caption);
+        Assert.Contains("💰 3 000 руб.", post.Caption);
+
+        var item = await factory.ChannelQueueItemAsync(listingId);
+        Assert.Equal(ChannelPostStatus.Published, item!.Status);
+        Assert.Equal(Noon, item.PublishedAt);
+
         var (chatId, messageId) = await factory.TelegramPostAsync(listingId);
-        Assert.Equal("test-home", chatId);
+        Assert.Equal("@test_channel", chatId);
         Assert.Equal(post.MessageId, messageId);
+        Assert.Equal(Noon, await factory.TelegramPublishedAtAsync(listingId));
     }
 
     [Fact]
-    public async Task Publishing_with_image_uses_sendPhoto()
+    public async Task Next_post_waits_for_min_interval_and_takes_oldest_first()
     {
-        var ownerId = await factory.SeedUserAsync(Unique("tg-photo"), Password);
-        var title = Title("с фото");
-        var listingId = await factory.SeedListingAsync(ownerId, ListingStatus.Active, title: title);
-        await factory.SeedListingImageAsync(listingId);
+        await factory.ClearChannelQueueAsync();
+        var first = await SeedPublishableListingAsync("первое");
+        var second = await SeedPublishableListingAsync("второе");
+        await factory.EnqueueChannelPostAsync(first);
+        await factory.EnqueueChannelPostAsync(second);
 
-        await factory.EnqueueOutboxAsync(
-            OutboxMessage.ListingPublished, JsonSerializer.Serialize(new { listingId }));
-        await factory.RunOutboxAsync();
+        Assert.Equal(ChannelPublishOutcome.Published, await factory.PublishNextChannelPostAsync(Noon));
+        Assert.Single(factory.Bot.PhotosFor(first));
 
-        var post = Assert.Single(factory.Telegram.Sends, s => s.Text.Contains(title));
-        Assert.Equal("sendPhoto", post.Method);
-        Assert.NotNull(post.PhotoUrl);
-        Assert.Contains("fake-storage.local", post.PhotoUrl!);
+        Assert.Equal(ChannelPublishOutcome.TooSoon, await factory.PublishNextChannelPostAsync(Noon.AddMinutes(19)));
+        Assert.Empty(factory.Bot.PhotosFor(second));
+
+        Assert.Equal(ChannelPublishOutcome.Published, await factory.PublishNextChannelPostAsync(Noon.AddMinutes(20)));
+        Assert.Single(factory.Bot.PhotosFor(second));
     }
 
-    [Fact]
-    public async Task Category_without_dedicated_channel_falls_back_to_broadcast()
+    [Theory]
+    [InlineData(8, 59)]
+    [InlineData(21, 0)]
+    [InlineData(3, 0)]
+    public async Task Nothing_is_sent_outside_window(int hour, int minute)
     {
-        var ownerId = await factory.SeedUserAsync(Unique("tg-fallback"), Password);
-        var title = Title("fallback");
-        var listingId = await factory.SeedListingAsync(
-            ownerId, ListingStatus.Active, title: title, category: Category.Other, subcategoryId: 42);
+        await factory.ClearChannelQueueAsync();
+        var listingId = await SeedPublishableListingAsync($"окно {hour}:{minute}");
+        await factory.EnqueueChannelPostAsync(listingId);
 
-        await factory.EnqueueOutboxAsync(
-            OutboxMessage.ListingPublished, JsonSerializer.Serialize(new { listingId }));
-        await factory.RunOutboxAsync();
+        var at = new DateTimeOffset(2026, 9, 15, hour, minute, 0, TimeSpan.Zero);
+        Assert.Equal(ChannelPublishOutcome.OutsideWindow, await factory.PublishNextChannelPostAsync(at));
 
-        var post = Assert.Single(factory.Telegram.Sends, s => s.Text.Contains(title));
-        Assert.Equal("test-broadcast", post.ChatId); // нет канала категории → общий канал
+        Assert.Equal(ChannelPostStatus.Pending, (await factory.ChannelQueueItemAsync(listingId))!.Status);
+        Assert.Empty(factory.Bot.PhotosFor(listingId));
     }
 
     [Fact]
-    public async Task Mark_sold_edits_channel_post_with_label()
+    public async Task Bad_request_fails_immediately_without_retry()
+    {
+        await factory.ClearChannelQueueAsync();
+        var listingId = await SeedPublishableListingAsync("битое фото");
+        await factory.EnqueueChannelPostAsync(listingId);
+        factory.Bot.FailNextSend(new BotApi.TelegramApiException(400, "Bad Request: wrong type of the web page content"));
+
+        Assert.Equal(ChannelPublishOutcome.Failed, await factory.PublishNextChannelPostAsync(Noon));
+
+        var item = await factory.ChannelQueueItemAsync(listingId);
+        Assert.Equal(ChannelPostStatus.Failed, item!.Status);
+        Assert.Equal(1, item.AttemptCount);
+        Assert.Contains("400", item.LastError);
+    }
+
+    [Fact]
+    public async Task Transient_error_is_retried_and_fails_after_max_attempts()
+    {
+        await factory.ClearChannelQueueAsync();
+        var listingId = await SeedPublishableListingAsync("сеть");
+        await factory.EnqueueChannelPostAsync(listingId);
+        for (var i = 0; i < 3; i++)
+            factory.Bot.FailNextSend(new HttpRequestException("сеть недоступна"));
+
+        Assert.Equal(ChannelPublishOutcome.Retrying, await factory.PublishNextChannelPostAsync(Noon));
+        Assert.Equal(ChannelPublishOutcome.Retrying, await factory.PublishNextChannelPostAsync(Noon.AddMinutes(1)));
+        Assert.Equal(ChannelPublishOutcome.Failed, await factory.PublishNextChannelPostAsync(Noon.AddMinutes(2)));
+
+        var item = await factory.ChannelQueueItemAsync(listingId);
+        Assert.Equal(ChannelPostStatus.Failed, item!.Status);
+        Assert.Equal(3, item.AttemptCount);
+        Assert.Contains("сеть недоступна", item.LastError);
+    }
+
+    [Fact]
+    public async Task Listing_without_photo_is_skipped()
+    {
+        await factory.ClearChannelQueueAsync();
+        var ownerId = await factory.SeedUserAsync(Unique("tg-nophoto"), Password);
+        var listingId = await factory.SeedListingAsync(ownerId, ListingStatus.Active, title: Title("без фото"));
+        await factory.EnqueueChannelPostAsync(listingId);
+
+        Assert.Equal(ChannelPublishOutcome.Skipped, await factory.PublishNextChannelPostAsync(Noon));
+        Assert.Equal(ChannelPostStatus.Skipped, (await factory.ChannelQueueItemAsync(listingId))!.Status);
+    }
+
+    [Fact]
+    public async Task Listing_sold_while_waiting_is_skipped()
+    {
+        await factory.ClearChannelQueueAsync();
+        var listingId = await SeedPublishableListingAsync("продано в очереди");
+        await factory.EnqueueChannelPostAsync(listingId);
+        await factory.SetStatusAsync(listingId, ListingStatus.Sold);
+
+        Assert.Equal(ChannelPublishOutcome.Skipped, await factory.PublishNextChannelPostAsync(Noon));
+        Assert.Empty(factory.Bot.PhotosFor(listingId));
+    }
+
+    [Fact]
+    public async Task Mark_sold_keeps_title_adds_label_and_removes_button()
     {
         var ownerId = await factory.SeedUserAsync(Unique("tg-sold"), Password);
-        var listingId = await factory.SeedListingAsync(ownerId, ListingStatus.Active, title: Title("продано"));
-        await factory.SetTelegramPostAsync(listingId, "test-home", 555);
+        var title = Title("продано <b>&</b>");
+        var listingId = await factory.SeedListingAsync(ownerId, ListingStatus.Active, title: title);
+        await factory.SetTelegramPostAsync(listingId, "@test_channel", 555);
 
         await factory.EnqueueOutboxAsync(
-            OutboxMessage.ListingChannelUpdate,
-            JsonSerializer.Serialize(new { listingId, mark = ChannelMark.Sold }));
+            OutboxMessage.ListingChannelUpdate, JsonSerializer.Serialize(new { listingId, mark = ChannelMark.Sold }));
         await factory.RunOutboxAsync();
 
-        var edit = Assert.Single(factory.Telegram.Edits, e => e.MessageId == 555);
-        Assert.Equal("test-home", edit.ChatId);
-        Assert.Contains("ПРОДАНО", edit.Text);
+        var edit = Assert.Single(factory.Bot.Edits, e => e.MessageId == 555);
+        Assert.Equal("@test_channel", edit.ChatId);
+        Assert.Equal($"{ChannelPostFormatter.EscapeHtml(title)}\n\n✅ ПРОДАНО", edit.Caption);
+        Assert.Null(edit.Button);
     }
 
     [Fact]
@@ -100,60 +201,38 @@ public class TelegramPublishTests(AuthApiFactory factory) : IClassFixture<AuthAp
     {
         var ownerId = await factory.SeedUserAsync(Unique("tg-nopost"), Password);
         var listingId = await factory.SeedListingAsync(ownerId, ListingStatus.Active, title: Title("без поста"));
-
-        var editsBefore = factory.Telegram.Edits.Count;
+        var editsBefore = factory.Bot.Edits.Count;
 
         var id = await factory.EnqueueOutboxAsync(
-            OutboxMessage.ListingChannelUpdate,
-            JsonSerializer.Serialize(new { listingId, mark = ChannelMark.Archived }));
-        var result = await factory.RunOutboxAsync();
+            OutboxMessage.ListingChannelUpdate, JsonSerializer.Serialize(new { listingId, mark = ChannelMark.Archived }));
+        await factory.RunOutboxAsync();
 
-        Assert.True(result.Delivered >= 1);
-        var state = await factory.OutboxStateAsync(id);
-        Assert.Equal(OutboxStatus.Done, state.Status); // не ошибка: поста нет — просто нечего править
-        Assert.Equal(editsBefore, factory.Telegram.Edits.Count);
+        Assert.Equal(OutboxStatus.Done, (await factory.OutboxStateAsync(id)).Status);
+        Assert.Equal(editsBefore, factory.Bot.Edits.Count);
     }
 
     [Fact]
-    public async Task Reactivation_edits_existing_post_instead_of_reposting()
+    public async Task Reannouncing_posted_listing_restores_caption_instead_of_reposting()
     {
-        var ownerId = await factory.SeedUserAsync(Unique("tg-react"), Password);
-        var title = Title("реактивация");
-        var listingId = await factory.SeedListingAsync(ownerId, ListingStatus.Active, title: title);
-        await factory.SetTelegramPostAsync(listingId, "test-home", 777);
+        await factory.ClearChannelQueueAsync();
+        var listingId = await SeedPublishableListingAsync("реактивация");
+        await factory.SetTelegramPostAsync(listingId, "@test_channel", 777);
 
-        var sendsBefore = factory.Telegram.Sends.Count;
-
-        await factory.EnqueueOutboxAsync(
-            OutboxMessage.ListingPublished, JsonSerializer.Serialize(new { listingId }));
+        await factory.EnqueueChannelPostAsync(listingId);
         await factory.RunOutboxAsync();
 
-        // Повторная публикация уже опубликованного — правка, а не новый пост.
-        Assert.Equal(sendsBefore, factory.Telegram.Sends.Count);
-        var edit = Assert.Single(factory.Telegram.Edits, e => e.MessageId == 777);
-        Assert.DoesNotContain("ПРОДАНО", edit.Text);
-        Assert.DoesNotContain("Снято", edit.Text); // чистая подпись
+        Assert.Null(await factory.ChannelQueueItemAsync(listingId)); // второго поста не будет
+        var edit = Assert.Single(factory.Bot.Edits, e => e.MessageId == 777);
+        Assert.DoesNotContain("ПРОДАНО", edit.Caption);
+        Assert.Equal($"https://api.test/r/l/{listingId}?s=tg", edit.Button?.Url);
     }
 
-    [Fact]
-    public async Task Moderator_approval_posts_listing_to_channel()
+    private async Task<Guid> SeedPublishableListingAsync(string tag)
     {
-        // Полный путь перехода в Active через модерацию: approve ⇒ ListingPublished ⇒ пост в канал.
-        var sellerId = await factory.SeedUserAsync(Unique("tg-approve-seller"), Password);
-        var title = Title("одобрение");
-        var listingId = await factory.SeedListingAsync(
-            sellerId, ListingStatus.PendingReview, title: title, category: Category.Home, subcategoryId: 18);
-
-        var mod = await ModeratorClient();
-        var resp = await mod.PostAsync($"/api/moderation/listings/{listingId}/approve", null);
-        Assert.Equal(System.Net.HttpStatusCode.OK, resp.StatusCode);
-
-        await factory.RunOutboxAsync();
-
-        var post = Assert.Single(factory.Telegram.Sends, s => s.Text.Contains(title));
-        Assert.Equal("test-home", post.ChatId);
-        var (_, messageId) = await factory.TelegramPostAsync(listingId);
-        Assert.Equal(post.MessageId, messageId);
+        var ownerId = await factory.SeedUserAsync(Unique($"tg-{Guid.NewGuid():N}"), Password);
+        var listingId = await factory.SeedListingAsync(ownerId, ListingStatus.Active, title: Title(tag));
+        await factory.SeedListingImageAsync(listingId);
+        return listingId;
     }
 
     private async Task<HttpClient> ModeratorClient()

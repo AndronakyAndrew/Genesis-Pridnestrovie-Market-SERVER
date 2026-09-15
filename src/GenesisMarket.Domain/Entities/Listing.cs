@@ -156,17 +156,24 @@ public class Listing : BaseEntity, IOwnedResource
     /// </summary>
     public long? TelegramMessageId { get; set; }
 
+    /// <summary>
+    /// Когда объявление было опубликовано в Telegram-канале (UTC). Заполняется вместе
+    /// с <see cref="TelegramMessageId"/>. null ⇒ в канал ещё не постили.
+    /// </summary>
+    public DateTimeOffset? TelegramPublishedAt { get; set; }
+
     public ICollection<ListingImage> Images { get; set; } = new List<ListingImage>();
 
     /// <summary>
     /// Привязать объявление к опубликованному посту канала. Единственная точка записи
-    /// координат поста (chatId + messageId) — вызывается обработчиком outbox после
-    /// успешного sendPhoto/sendMessage.
+    /// координат поста (chatId + messageId + момент публикации) — вызывается публикатором
+    /// канала после успешного sendPhoto.
     /// </summary>
-    public void AttachChannelPost(string chatId, long messageId)
+    public void AttachChannelPost(string chatId, long messageId, DateTimeOffset publishedAt)
     {
         TelegramChatId = chatId;
         TelegramMessageId = messageId;
+        TelegramPublishedAt = publishedAt;
     }
 
     /// <summary>Единственная точка изменения счётчика просмотров в доменной модели.</summary>

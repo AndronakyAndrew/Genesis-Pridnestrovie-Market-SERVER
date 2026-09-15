@@ -32,11 +32,7 @@ public sealed class ContactRevealService(
 {
     private readonly ContactRevealOptions _options = options.Value;
 
-    // Значение IpHash для журнала, когда ключ хеширования IP не задан (dev без Security:IpHashKey).
-    // Сырой IP при этом всё равно НЕ сохраняется.
-    private const string NoKeyHash = "no-key";
-
-    public string HashIp(string? ip) => ipHasher.Hash(ip) ?? NoKeyHash;
+    public string HashIp(string? ip) => ipHasher.HashForJournal(ip);
 
     public Task DelayAnonymousAsync(CancellationToken ct)
     {

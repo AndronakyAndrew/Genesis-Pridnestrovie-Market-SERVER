@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using GenesisMarket.Api.Feedback;
 using GenesisMarket.Api.Outbox.Telegram;
+using GenesisMarket.Api.Telegram.Channel;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
@@ -147,114 +148,42 @@ public sealed class NewReviewHandler(AppDbContext db, IUserNotifier notifier) : 
 }
 
 /// <summary>
-/// Объявление опубликовано (перешло в Active) → пост в публичный Telegram-канал (шаг 16).
-/// Канал выбирается по категории (с откатом на общий). Идемпотентно: если пост по этому
-/// объявлению уже есть, значит объявление вернулось в продажу/из архива — правим подпись на
-/// «чистую» (снимаем пометки «Продано»/«Снято») вместо повторной публикации. Первое фото —
-/// через sendPhoto, при его отсутствии/сбое — sendMessage. Координаты поста сохраняем в
-/// объявлении для последующих правок.
+/// Объявление стало одобренно-активным → в очередь публикации в канал. Сам пост отправит
+/// <c>ChannelPublisherWorker</c> с учётом интервала и рабочего окна. Строка очереди сохраняется
+/// в транзакции диспетчера. Продюсеры теперь зовут <see cref="IChannelPublisher.EnqueueAsync"/>
+/// напрямую; обработчик остаётся для сообщений, записанных до перехода на очередь.
 /// </summary>
-public sealed class ListingPublishedHandler(
-    AppDbContext db,
-    ITelegramClient telegram,
-    IObjectStorage storage,
-    IOptions<Telegram.TelegramOptions> options) : IOutboxHandler
+public sealed class ListingPublishedHandler(IChannelPublisher channel) : IOutboxHandler
 {
-    // Пресайн-ссылка на фото должна прожить возможные ретраи отправки.
-    private static readonly TimeSpan PhotoUrlTtl = TimeSpan.FromHours(1);
-
     public string Type => OutboxMessage.ListingPublished;
 
     public async Task HandleAsync(OutboxMessage message, CancellationToken ct)
     {
         var p = OutboxPayload.Parse<ListingPublishedPayload>(message.Payload);
-
-        // Трекаем сущность: обработчик пишет в неё координаты поста, диспетчер сохранит в общей транзакции.
-        var listing = await db.Listings.IgnoreQueryFilters()
-            .FirstOrDefaultAsync(l => l.Id == p.ListingId, ct)
-            ?? throw new OutboxPermanentException("Объявление не найдено.");
-
-        var chat = telegram.ResolveChannel(listing.Category)
-            ?? throw new OutboxPermanentException(
-                "Публичный Telegram-канал не сконфигурирован (Telegram:BroadcastChatId / CategoryChannels).");
-
-        var url = TelegramPostFormatter.BuildUrl(options.Value.WebBaseUrl, listing.Slug);
-        var post = TelegramPostFormatter.BuildPost(
-            listing.Title, listing.Price, listing.PriceType, listing.City, listing.Category, url);
-
-        // Пост уже существует ⇒ это повторная активация (Sold/Archived → Active): чистим подпись.
-        if (listing.TelegramMessageId is { } existingId && listing.TelegramChatId is { } existingChat)
-        {
-            await telegram.EditPostAsync(existingChat, existingId, post, ct);
-            return;
-        }
-
-        // Первое изображение (по порядку) — постим с фото; иначе текстом.
-        var photoKey = await db.ListingImages.AsNoTracking()
-            .Where(i => i.ListingId == listing.Id)
-            .OrderBy(i => i.SortOrder)
-            .Select(i => i.ObjectKey)
-            .FirstOrDefaultAsync(ct);
-
-        long messageId;
-        if (photoKey is not null)
-        {
-            var photoUrl = await storage.GetPresignedUrlAsync(photoKey, PhotoUrlTtl, ct);
-            try
-            {
-                messageId = await telegram.SendPhotoAsync(chat, photoUrl, post, ct);
-            }
-            catch (TelegramApiException)
-            {
-                // Telegram не смог обработать картинку (формат/размер/URL) — не теряем анонс,
-                // публикуем текстом.
-                messageId = await telegram.SendMessageAsync(chat, post, ct);
-            }
-        }
-        else
-        {
-            messageId = await telegram.SendMessageAsync(chat, post, ct);
-        }
-
-        listing.AttachChannelPost(chat, messageId);
+        await channel.EnqueueAsync(p.ListingId, ct);
     }
 }
 
 /// <summary>
-/// Правка ранее опубликованного поста: пометка «Продано» (mark-sold) или «Снято с публикации»
-/// (архивация/снятие). Если объявление в канал не постили или пост удалён вручную — обработчик
-/// молча завершается (не ошибка).
+/// Правка ранее опубликованного поста: «Продано», «Снято с публикации» или возврат полной подписи.
+/// Через outbox — чтобы HTTP-запрос не ходил в Telegram и правка не ушла по откатанной транзакции.
+/// Если объявление в канал не постили или пост удалён вручную — завершается без ошибки.
 /// </summary>
-public sealed class ListingChannelUpdateHandler(
-    AppDbContext db,
-    ITelegramClient telegram,
-    IOptions<Telegram.TelegramOptions> options) : IOutboxHandler
+public sealed class ListingChannelUpdateHandler(IChannelPublisher channel) : IOutboxHandler
 {
     public string Type => OutboxMessage.ListingChannelUpdate;
 
-    public async Task HandleAsync(OutboxMessage message, CancellationToken ct)
+    public Task HandleAsync(OutboxMessage message, CancellationToken ct)
     {
         var p = OutboxPayload.Parse<ListingChannelUpdatePayload>(message.Payload);
 
-        var listing = await db.Listings.IgnoreQueryFilters().AsNoTracking()
-            .Where(l => l.Id == p.ListingId)
-            .Select(l => new
-            {
-                l.Title, l.Price, l.PriceType, l.City, l.Category, l.Slug,
-                l.TelegramChatId, l.TelegramMessageId
-            })
-            .FirstOrDefaultAsync(ct);
-
-        // Объявление исчезло или в канал не публиковалось — править нечего.
-        if (listing is null || listing.TelegramMessageId is not { } messageId
-            || string.IsNullOrEmpty(listing.TelegramChatId))
-            return;
-
-        var url = TelegramPostFormatter.BuildUrl(options.Value.WebBaseUrl, listing.Slug);
-        var post = TelegramPostFormatter.BuildPost(
-            listing.Title, listing.Price, listing.PriceType, listing.City, listing.Category, url);
-
-        await telegram.EditPostAsync(listing.TelegramChatId, messageId, TelegramPostFormatter.WithMark(post, p.Mark), ct);
+        return p.Mark switch
+        {
+            ChannelMark.Sold => channel.MarkSoldAsync(p.ListingId, ct),
+            ChannelMark.Archived => channel.MarkRemovedAsync(p.ListingId, ct),
+            ChannelMark.Active => channel.RestoreAsync(p.ListingId, ct),
+            _ => throw new OutboxPermanentException($"Неизвестная пометка поста '{p.Mark}'.")
+        };
     }
 }
 

@@ -176,6 +176,26 @@ public enum OutboxStatus
 }
 
 /// <summary>
+/// Статус публикации объявления в Telegram-канал (<c>ChannelPostQueue</c>). В БД хранится строкой.
+/// Pending → Published; ветки Failed (попытки исчерпаны) и Skipped (публиковать не нужно —
+/// объявление снято, канал для категории не задан и т. п.).
+/// </summary>
+public enum ChannelPostStatus
+{
+    /// <summary>Ждёт публикации.</summary>
+    Pending,
+
+    /// <summary>Пост отправлен в канал. Терминальный статус.</summary>
+    Published,
+
+    /// <summary>Исчерпаны попытки. Терминальный статус; причина — в <c>LastError</c>.</summary>
+    Failed,
+
+    /// <summary>Публикация сознательно не выполнялась. Терминальный статус.</summary>
+    Skipped
+}
+
+/// <summary>
 /// Канал доставки уведомлений пользователю. В БД (настройка профиля) хранится строкой.
 /// </summary>
 public enum NotificationChannel

@@ -185,6 +185,10 @@ Bind-mount в прод-стеке два, оба read-only: `./scripts/create-ap
 | `TELEGRAM_BOT_TOKEN` → `Telegram__BotToken` | токен Telegram-бота | **да** |
 | `TELEGRAM_BROADCAST_CHAT_ID` | общий канал для постов | нет |
 | `TELEGRAM_WEB_BASE_URL` | адрес фронтенда для ссылок в постах | нет |
+| `TELEGRAM_ADMIN_CHAT_ID` → `Telegram__AdminChatId` | личный chat_id админа служебного бота | нет |
+| `TELEGRAM_CHANNEL_ID` → `Telegram__ChannelId` | канал служебного бота | нет |
+| `TELEGRAM_ENABLE_UPDATE_POLLING` → `Telegram__EnableUpdatePolling` | long polling бота (один процесс на токен) | нет |
+| `TELEGRAM_PUBLISHING_ENABLED` → `ChannelPublishing__Enabled` | публикация объявлений в канал (по умолчанию false) | нет |
 | `Telegram__CategoryChannels__<category>` | маршрутизация «категория → канал» | нет |
 | `SEO_WEB_BASE_URL` / `SITE_BASE_URL` | публичный адрес сайта для канонических ссылок | нет |
 | `SEO_SITE_NAME` | название сайта в мета-тегах | нет |

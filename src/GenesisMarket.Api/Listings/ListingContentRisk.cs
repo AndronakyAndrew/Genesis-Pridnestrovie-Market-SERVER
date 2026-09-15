@@ -41,6 +41,37 @@ public static partial class ListingContentRisk
     private static partial Regex PhoneLikeRegex();
 
     /// <summary>
+    /// Контакты для вырезания из текста (пост в канале): почта, ссылка целиком (а не только
+    /// «https://», как достаточно для оценки риска), t.me/wa.me, домен, @ник. Телефоны —
+    /// <see cref="PhoneLikeRegex"/>, та же регулярка, что у модерации.
+    /// </summary>
+    [GeneratedRegex(
+        @"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}|https?://\S+|www\.\S+|\b(?:t|wa)\.me/\S*|\b[a-z0-9][a-z0-9\-]{1,}\.(ru|com|net|org|md|ua|by|kz|info|xyz|top|site|shop|online|store)\b\S*|@[a-z0-9_]{4,}",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    private static partial Regex ContactRedactionRegex();
+
+    /// <summary>
+    /// Текст без контактов: телефоны, ссылки, ники мессенджеров и почта заменяются на «…».
+    /// Модерация пропускает объявление с контактом в тексте (это лишь баллы риска), а в публичный
+    /// канал контакты продавца попадать не должны ни в каком виде. Таймаут регулярки — текст
+    /// не отдаём вовсе: не разобрали, значит, не можем поручиться.
+    /// </summary>
+    public static string RedactContacts(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        try
+        {
+            return PhoneLikeRegex().Replace(ContactRedactionRegex().Replace(text, "…"), "…");
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
     /// Оценка риска объявления. <paramref name="hasImages"/> передаёт вызывающий:
     /// на момент создания черновика фотографий ещё нет, и это не должно штрафоваться.
     /// </summary>
