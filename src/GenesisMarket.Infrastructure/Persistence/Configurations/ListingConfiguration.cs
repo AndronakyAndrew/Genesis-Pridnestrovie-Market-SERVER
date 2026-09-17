@@ -88,6 +88,10 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
         b.Property(l => l.FavoritesCount).HasDefaultValue(0);
         b.Property(l => l.ModerationPriority).HasDefaultValue(0);
 
+        // Демо-объявление. Default на уровне БД — чтобы существующие строки и вставки
+        // мимо EF (ручной SQL) получали false, а не падали на NOT NULL.
+        b.Property(l => l.IsExample).HasDefaultValue(false);
+
         // Координаты поста в Telegram-канале (заполняются обработчиком outbox после отправки).
         // chatId Telegram — до 32 символов (числовой id канала/чата с ведущим -100…).
         b.Property(l => l.TelegramChatId).HasMaxLength(64);

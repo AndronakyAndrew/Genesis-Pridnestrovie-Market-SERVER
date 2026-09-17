@@ -134,6 +134,43 @@ public class ContactRevealTests(AuthApiFactory factory) : IClassFixture<AuthApiF
     }
 
     [Fact]
+    public async Task Contact_for_example_listing_returns_404_and_is_not_journaled()
+    {
+        // Продавцу настроены все каналы: 404 у примера — из-за флага, а не из-за
+        // «показать нечего». Обычное объявление того же продавца — контроль.
+        var ownerId = await factory.SeedUserAsync(Unique("example-owner"), Password);
+        await factory.ConfigureContactAsync(ownerId, showPhone: true,
+            telegram: "seller_ivan", viber: true, whatsapp: true);
+        var example = await factory.SeedListingAsync(ownerId, title: "Пример объявления диван", isExample: true);
+        var regular = await factory.SeedListingAsync(ownerId, title: "Настоящий диван угловой");
+
+        // Авторизованный клиент: лимит на пользователя, анонимный IP-лимит
+        // соседнего теста на 429 не задевается.
+        var viewer = Unique("viewer-example");
+        await factory.SeedUserAsync(viewer, Password);
+        var client = await AuthedClient(viewer);
+
+        for (var i = 0; i < 2; i++)
+        {
+            var resp = await client.GetAsync($"/api/listings/{example}/contact");
+            Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
+            Assert.DoesNotContain(SellerDigits, await resp.Content.ReadAsStringAsync());
+        }
+        Assert.Equal(0, await factory.ContactRevealCountAsync(example));
+
+        // Сама карточка примера открывается и несёт флаг.
+        var detail = await client.GetFromJsonAsync<JsonElement>($"/api/listings/{example}");
+        Assert.True(detail.GetProperty("isExample").GetBoolean());
+
+        // Обычное объявление — как раньше: 200, телефон, одна запись в журнале.
+        var ok = await client.GetAsync($"/api/listings/{regular}/contact");
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        var body = await ok.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(SellerPhone, body.GetProperty("phone").GetString());
+        Assert.Equal(1, await factory.ContactRevealCountAsync(regular));
+    }
+
+    [Fact]
     public async Task Anonymous_rate_limit_exceeded_returns_429()
     {
         var ownerId = await factory.SeedUserAsync(Unique("rl-owner"), Password);
