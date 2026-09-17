@@ -40,6 +40,7 @@ public sealed record CatalogRow(
     string? FirstImageUrl,
     DateTimeOffset? PublishedAt,
     DateTimeOffset? BumpedAt,
+    DateTimeOffset? ApprovedAt,
     DateTimeOffset CreatedAt,
     int ViewsCount,
     int FavoritesCount,
@@ -48,10 +49,14 @@ public sealed record CatalogRow(
     /// <summary>Ключ сортировки по умолчанию: последнее поднятие с откатом на публикацию/создание.</summary>
     public DateTimeOffset BumpKey => BumpedAt ?? PublishedAt ?? CreatedAt;
 
-    // «Поднято» = объявление хотя бы раз поднимали после публикации (BumpedAt позже PublishedAt).
+    // «Поднято» = объявление поднимали по-настоящему: BumpedAt позже и публикации,
+    // и одобрения. Сравнения с одним PublishedAt недостаточно: при премодерации
+    // Publish оставляет BumpedAt пустым, а Approve ставит BumpedAt = ApprovedAt
+    // (Listing.Approve) — и каждое проверенное модератором объявление выглядело бы
+    // продвинутым, хотя владелец ничего не поднимал.
     public ListingCardResponse ToCard() => new(
         Id, Slug, Title, Price, PriceType, City, Category, FirstImageUrl, PublishedAt,
-        IsBumped: BumpedAt is { } b && PublishedAt is { } p && b > p,
+        IsBumped: BumpedAt is { } b && PublishedAt is { } p && b > p && b > (ApprovedAt ?? p),
         FavoritesCount: FavoritesCount);
 }
 
@@ -170,7 +175,7 @@ public static class CatalogQueryBuilder
         query.Select(l => new CatalogRow(
             l.Id, l.Slug, l.Title, l.Price, l.PriceType, l.City, l.Category,
             l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
-            l.PublishedAt, l.BumpedAt, l.CreatedAt, l.ViewsCount, l.FavoritesCount,
+            l.PublishedAt, l.BumpedAt, l.ApprovedAt, l.CreatedAt, l.ViewsCount, l.FavoritesCount,
             EF.Property<NpgsqlTsVector>(l, "SearchVector").RankCoverDensity(EF.Functions.WebSearchToTsQuery(Config, text))));
 
     /// <summary>Проекция строки без релевантности (rank = 0): обычный каталог и fallback.</summary>
@@ -178,7 +183,7 @@ public static class CatalogQueryBuilder
         query.Select(l => new CatalogRow(
             l.Id, l.Slug, l.Title, l.Price, l.PriceType, l.City, l.Category,
             l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
-            l.PublishedAt, l.BumpedAt, l.CreatedAt, l.ViewsCount, l.FavoritesCount, 0f));
+            l.PublishedAt, l.BumpedAt, l.ApprovedAt, l.CreatedAt, l.ViewsCount, l.FavoritesCount, 0f));
 
     /// <summary>
     /// Фильтры каталога. Только Active — Sold/Archived/PendingReview/Rejected и черновики
