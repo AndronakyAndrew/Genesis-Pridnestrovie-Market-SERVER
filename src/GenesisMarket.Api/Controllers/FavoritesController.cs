@@ -133,6 +133,7 @@ public class FavoritesController(AppDbContext db) : ApiControllerBase
                 f.Listing.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
                 f.Listing.PublishedAt,
                 f.Listing.FavoritesCount,
+                f.Listing.IsExample,
                 f.Listing.Status != ListingStatus.Active || f.Listing.DeletedAt != null))
             .ToListAsync(ct);
 
@@ -142,7 +143,8 @@ public class FavoritesController(AppDbContext db) : ApiControllerBase
         var items = page.Select(r => new ListingCardResponse(
             r.Id, r.Slug, r.Title, r.Price, r.PriceType, r.City, r.Category,
             r.FirstImageUrl, r.PublishedAt, IsBumped: false,
-            FavoritesCount: r.FavoritesCount, IsFavorite: true, IsUnavailable: r.IsUnavailable)).ToList();
+            FavoritesCount: r.FavoritesCount, IsFavorite: true, IsUnavailable: r.IsUnavailable,
+            IsExample: r.IsExample)).ToList();
 
         var nextCursor = hasMore
             ? CatalogCursor.Encode(CursorToken,
@@ -171,5 +173,6 @@ public class FavoritesController(AppDbContext db) : ApiControllerBase
         string? FirstImageUrl,
         DateTimeOffset? PublishedAt,
         int FavoritesCount,
+        bool IsExample,
         bool IsUnavailable);
 }

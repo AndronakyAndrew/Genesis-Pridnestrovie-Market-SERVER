@@ -184,6 +184,49 @@ public class CatalogTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
     }
 
     [Fact]
+    public async Task Example_flag_is_exposed_and_example_is_never_shown_bumped()
+    {
+        var owner = await factory.SeedUserAsync(Unique("cat-example"), Password);
+        var example = await factory.SeedListingAsync(owner, title: "Пример объявления кресло", isExample: true);
+        var regular = await factory.SeedListingAsync(owner, title: "Настоящее кресло мягкое");
+
+        // Оба «подняты по-настоящему»: BumpedAt позже и публикации, и одобрения.
+        var bumpedAt = DateTimeOffset.UtcNow.AddSeconds(1);
+        await factory.SetBumpTimestampsAsync(example, bumpedAt, bumpedAt.AddDays(-2));
+        await factory.SetBumpTimestampsAsync(regular, bumpedAt, bumpedAt.AddDays(-2));
+
+        var client = factory.CreateClient();
+        var detail = await client.GetFromJsonAsync<JsonElement>($"/api/listings/{regular}");
+        Assert.False(detail.GetProperty("isExample").GetBoolean());
+
+        // Изоляция от соседних тестов — лента продавца (?seller=).
+        var code = detail.GetProperty("ownerPublicCode").GetString();
+        var page = await client.GetFromJsonAsync<JsonElement>($"/api/listings?seller={code}&limit=50");
+        var cards = page.GetProperty("items").EnumerateArray()
+            .ToDictionary(i => i.GetProperty("id").GetGuid());
+
+        Assert.True(cards[example].GetProperty("isExample").GetBoolean());
+        Assert.False(cards[example].GetProperty("isBumped").GetBoolean());
+        Assert.False(cards[regular].GetProperty("isExample").GetBoolean());
+        Assert.True(cards[regular].GetProperty("isBumped").GetBoolean());
+
+        // Поиск (q) — та же карточка через FTS-проекцию.
+        var search = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/listings?seller={code}&q={Uri.EscapeDataString("пример кресло")}");
+        var found = Assert.Single(search.GetProperty("items").EnumerateArray());
+        Assert.True(found.GetProperty("isExample").GetBoolean());
+        Assert.False(found.GetProperty("isBumped").GetBoolean());
+
+        // Избранное — отдельная проекция карточки.
+        var buyerEmail = Unique("cat-example-buyer");
+        await factory.SeedUserAsync(buyerEmail, Password);
+        var buyer = await AuthedClient(buyerEmail);
+        Assert.Equal(HttpStatusCode.OK, (await buyer.PostAsync($"/api/listings/{example}/favorite", null)).StatusCode);
+        var favorites = await buyer.GetFromJsonAsync<JsonElement>("/api/me/favorites");
+        Assert.True(favorites.GetProperty("items")[0].GetProperty("isExample").GetBoolean());
+    }
+
+    [Fact]
     public async Task Limit_above_max_is_clamped_not_rejected()
     {
         var owner = await factory.SeedUserAsync(Unique("cat-clamp"), Password);

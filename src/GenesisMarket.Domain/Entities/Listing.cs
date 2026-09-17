@@ -117,6 +117,14 @@ public class Listing : BaseEntity, IOwnedResource
     /// </summary>
     public DateTimeOffset? ArchiveWarningAt { get; private set; }
 
+    /// <summary>
+    /// Демонстрационное объявление: пример, выложенный с аккаунта модератора, чтобы
+    /// каталог не был пустым. Настоящей сделки за ним нет, поэтому контакты по нему
+    /// не раскрываются (404), а на витрине оно не показывается «продвинутым».
+    /// Через API не редактируется — ни в Create, ни в Update его нет.
+    /// </summary>
+    public bool IsExample { get; set; }
+
     /// <summary>Метка мягкого удаления. Заполнена ⇒ объявление скрыто query-фильтром.</summary>
     public DateTimeOffset? DeletedAt { get; set; }
 

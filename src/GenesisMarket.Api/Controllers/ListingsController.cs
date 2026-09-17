@@ -285,6 +285,7 @@ public class ListingsController(
     /// при скрытом номере остаётся Telegram (строится из username, номер не раскрывает).
     /// Если показать нечего — единый 404 без объяснения причины. Телефон нигде больше в API не отдаётся.
     /// Анти-скрейпинг: rate-limit по (IpHash, UserId), задержка анонимам, журнал раскрытий.
+    /// Демонстрационное объявление (IsExample) — сразу 404: без задержки и без записи в журнал.
     /// </summary>
     [AllowAnonymous]
     [EnableRateLimiting(RateLimitPolicies.Contact)]
@@ -292,20 +293,18 @@ public class ListingsController(
     public async Task<ActionResult<SellerContactResponse>> GetContact(Guid id, CancellationToken ct)
     {
         var userId = CurrentUserId();
-        var ipHash = contactReveal.HashIp(ClientIp());
 
         // Rate-limit раскрытия — на встроенном RateLimiter (политика "contact"): аноним по IP,
-        // авторизованный по пользователю. Здесь остаётся только анти-скрейпинг задержка/журнал.
-
-        // Анонимов намеренно замедляем — массовый обход дороже единичного просмотра.
-        if (userId is null)
-            await contactReveal.DelayAnonymousAsync(ct);
+        // авторизованный по пользователю. Middleware отрабатывает ДО экшена, поэтому
+        // запрос к примеру квоту всё же расходует. Здесь — задержка и журнал.
 
         // Телефон/username продавца читаются ТОЛЬКО здесь и только для построения ссылок.
+        // Запрос стоит до задержки: признак примера нужен раньше всей анти-скрейпинг логики.
         var seller = await db.Listings.AsNoTracking()
             .Where(l => l.Id == id && l.Status == ListingStatus.Active)
             .Select(l => new
             {
+                l.IsExample,
                 l.Owner!.IsBanned,
                 l.Owner.PhoneE164,
                 ShowPhone = l.Owner.Profile!.ShowPhoneInListing,
@@ -314,6 +313,16 @@ public class ListingsController(
                 l.Owner.Profile.WhatsappEnabled
             })
             .FirstOrDefaultAsync(ct);
+
+        // Пример: настоящего продавца за ним нет. Тот же 404, что и для отсутствующего
+        // объявления, и никакой записи в ContactReveals — пример не набирает раскрытий
+        // и не открывает гейт отзывов (ReviewsController требует раскрытия).
+        if (seller is { IsExample: true })
+            return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
+
+        // Анонимов намеренно замедляем — массовый обход дороже единичного просмотра.
+        if (userId is null)
+            await contactReveal.DelayAnonymousAsync(ct);
 
         if (seller is null || seller.IsBanned)
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
@@ -329,7 +338,7 @@ public class ListingsController(
         if (contact.Phone is null && contact.TelegramUrl is null)
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
 
-        await contactReveal.RecordAsync(id, userId, ipHash, ct);
+        await contactReveal.RecordAsync(id, userId, contactReveal.HashIp(ClientIp()), ct);
 
         return Ok(contact);
     }
@@ -908,7 +917,8 @@ public class ListingsController(
         RejectionReasonCode: isOwner ? l.RejectionReasonCode?.ToString() : null,
         RejectionComment: isOwner ? l.RejectionComment : null,
         RejectedAt: isOwner ? l.RejectedAt : null,
-        CanonicalUrl: canonicalUrl);
+        CanonicalUrl: canonicalUrl,
+        IsExample: l.IsExample);
 
     /// <summary>
     /// «ID профиля» владельца по его Guid. Кеш — на время запроса (контроллер scoped):

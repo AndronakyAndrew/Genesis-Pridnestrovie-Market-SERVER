@@ -195,7 +195,8 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         decimal? price = 3000,
         PriceType priceType = PriceType.Fixed,
         City city = City.Bendery,
-        string? description = null)
+        string? description = null,
+        bool isExample = false)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -214,6 +215,7 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             Condition = Condition.Used,
             Status = status,
             PublishedAt = published ? DateTimeOffset.UtcNow : null,
+            IsExample = isExample,
             OwnerId = ownerId
         };
         db.Listings.Add(listing);

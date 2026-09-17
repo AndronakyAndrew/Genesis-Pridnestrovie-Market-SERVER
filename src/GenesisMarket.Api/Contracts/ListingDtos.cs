@@ -50,7 +50,12 @@ public record ListingResponse(
     /// Канонический публичный адрес карточки (<c>/obyavlenie/{slug}</c>) — для &lt;link rel=canonical&gt;
     /// и шеринга. null, если публичный адрес сайта не настроен (<c>Seo:WebBaseUrl</c>).
     /// </summary>
-    string? CanonicalUrl = null);
+    string? CanonicalUrl = null,
+    /// <summary>
+    /// Демонстрационное объявление (пример от модератора). Контакты по нему не
+    /// раскрываются. Поле добавлено в конец: старый клиент его просто не читает.
+    /// </summary>
+    bool IsExample = false);
 
 /// <summary>
 /// Создание объявления. Валидируется FluentValidation (см. CreateListingRequestValidator).

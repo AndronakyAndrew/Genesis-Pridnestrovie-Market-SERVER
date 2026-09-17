@@ -75,7 +75,12 @@ public record ListingCardResponse(
     /// (там только Active); в «моём избранном» — true, если объявление уже не Active:
     /// карточка не исчезает молча, а помечается этим флагом.
     /// </summary>
-    bool IsUnavailable = false);
+    bool IsUnavailable = false,
+    /// <summary>
+    /// Демонстрационное объявление (пример от модератора). У примера <see cref="IsBumped"/>
+    /// всегда false: витрина не показывает его «продвинутым».
+    /// </summary>
+    bool IsExample = false);
 
 /// <summary>Страница каталога с курсорной пагинацией.</summary>
 public record CatalogPageResponse(
