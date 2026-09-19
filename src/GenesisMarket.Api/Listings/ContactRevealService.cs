@@ -20,6 +20,12 @@ public interface IContactRevealService
     /// <summary>Задержка ответа анонимам (случайная), чтобы массовый обход был дороже.</summary>
     Task DelayAnonymousAsync(CancellationToken ct);
 
+    /// <summary>
+    /// Исчерпал ли аккаунт часовую квоту раскрытий. null — нет, можно раскрывать;
+    /// иначе сколько секунд ждать (для <c>Retry-After</c>).
+    /// </summary>
+    Task<int?> QuotaRetryAfterAsync(Guid viewerUserId, CancellationToken ct);
+
     /// <summary>Пишет факт раскрытия в журнал и поднимает алерт при аномалии по IpHash.</summary>
     Task RecordAsync(Guid listingId, Guid? viewerUserId, string ipHash, CancellationToken ct);
 }
@@ -39,6 +45,40 @@ public sealed class ContactRevealService(
         var (min, max) = (_options.MinDelayMs, Math.Max(_options.MinDelayMs, _options.MaxDelayMs));
         var ms = Random.Shared.Next(min, max + 1);
         return Task.Delay(ms, ct);
+    }
+
+    /// <summary>
+    /// Квота аккаунта — по журналу в БД, а не по счётчику в памяти процесса.
+    /// Встроенный RateLimiter обнуляется при каждом рестарте контейнера (деплой,
+    /// OOM, `up -d api`), то есть суточного потолка у него нет вовсе: достаточно
+    /// дождаться перезапуска. Журнал рестарт переживает.
+    ///
+    /// Окно скользящее (последние 60 минут), а не календарный час: у фиксированного
+    /// окна на стыке проходит двойной всплеск.
+    ///
+    /// Анонимы намеренно остались на middleware-лимитере: их ключ — IP, который
+    /// меняется бесплатно (мобильный интернет, VPN), так что персистентность ничего
+    /// не добавляет. Аккаунт же после обязательного подтверждения почты — ресурс
+    /// дорогой, и именно его квоту имеет смысл считать честно.
+    /// </summary>
+    public async Task<int?> QuotaRetryAfterAsync(Guid viewerUserId, CancellationToken ct)
+    {
+        var window = TimeSpan.FromHours(1);
+        var since = DateTimeOffset.UtcNow - window;
+
+        var recent = db.ContactReveals
+            .AsNoTracking()
+            .Where(r => r.ViewerUserId == viewerUserId && r.CreatedAt >= since);
+
+        if (await recent.CountAsync(ct) < _options.UserPerHour)
+            return null;
+
+        // Ждать до истечения самого старого раскрытия в окне — тогда освободится
+        // ровно один слот. Пустой выборки здесь быть не может (счётчик уже >= лимита),
+        // но на всякий случай откатываемся на полное окно.
+        var oldest = await recent.MinAsync(r => (DateTimeOffset?)r.CreatedAt, ct);
+        var retryAfter = oldest is { } o ? o + window - DateTimeOffset.UtcNow : window;
+        return (int)Math.Max(1, Math.Ceiling(retryAfter.TotalSeconds));
     }
 
     public async Task RecordAsync(Guid listingId, Guid? viewerUserId, string ipHash, CancellationToken ct)

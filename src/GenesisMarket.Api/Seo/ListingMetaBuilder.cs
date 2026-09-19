@@ -63,7 +63,7 @@ public static class ListingMetaBuilder
     /// <summary>meta description: текст объявления, схлопнутые пробелы, обрезка по границе слова.</summary>
     private static string BuildDescription(string raw, string title, string cityLabel, string priceLabel)
     {
-        var text = CollapseWhitespace(raw);
+        var text = CollapseWhitespace(PublicText(raw));
         if (string.IsNullOrEmpty(text))
             // Пустое описание (теоретически невозможно из-за валидации) — собираем осмысленный фоллбек.
             text = $"{title}. {priceLabel}. {cityLabel}.";
@@ -112,7 +112,7 @@ public static class ListingMetaBuilder
     /// <summary>Описание для JSON-LD: текст объявления + пояснение валюты (когда цена есть).</summary>
     private static string JsonLdDescription(MetaInput listing)
     {
-        var text = CollapseWhitespace(listing.Description);
+        var text = CollapseWhitespace(PublicText(listing.Description));
         if (string.IsNullOrEmpty(text))
             text = listing.Title;
         text = Truncate(text, 480);
@@ -148,6 +148,14 @@ public static class ListingMetaBuilder
         Condition.Used => "https://schema.org/UsedCondition",
         _ => null
     };
+
+    /// <summary>
+    /// Текст объявления для публичной выдачи: без телефонов, ников и ссылок.
+    /// Мета уходит в поисковый индекс и в превью мессенджеров, то есть это самая
+    /// публичная копия описания — контакты в ней обходили бы и лимит раскрытия,
+    /// и настройку «не показывать телефон».
+    /// </summary>
+    private static string PublicText(string raw) => ListingContentRisk.RedactContacts(raw);
 
     private static string CollapseWhitespace(string text) =>
         string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));

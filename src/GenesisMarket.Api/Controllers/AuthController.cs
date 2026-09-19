@@ -29,6 +29,8 @@ public class AuthController(
     SecurityStampValidator securityStamp,
     PasswordResetService passwordReset,
     IPublicCodeGenerator publicCodes,
+    VerificationService verification,
+    ILogger<AuthController> logger,
     IOptions<PhoneOptions> phoneOptions) : ApiControllerBase
 {
     // Один и тот же текст на неверный email и неверный пароль (анти-перечисление).
@@ -70,11 +72,12 @@ public class AuthController(
             };
             db.Users.Add(user);
             await SaveWithFreshPublicCodeAsync(user, ct);
+            await SendEmailCodeAsync(user.Id, ct);
         }
 
         // Ответ идентичен и для свободного, и для занятого email.
         return Ok(new MessageResponse(
-            "Если адрес свободен, аккаунт создан. Теперь вы можете войти."));
+            "Если адрес свободен, аккаунт создан — мы отправили на почту код подтверждения."));
     }
 
     [AllowAnonymous]
@@ -261,7 +264,32 @@ public class AuthController(
         u.Profile?.City ?? default,
         u.PhoneE164,
         u.PhoneVerified,
-        u.CreatedAt);
+        u.CreatedAt,
+        u.EmailVerified);
+
+    /// <summary>
+    /// Отправляет код подтверждения почты сразу после регистрации: почта обязательна
+    /// для раскрытия контактов и публикации, и заставлять человека отдельно нажимать
+    /// «отправить код» незачем.
+    ///
+    /// Сбой отправки регистрацию НЕ отменяет: аккаунт уже сохранён, а код
+    /// перезапрашивается из профиля (<c>POST /api/me/email/send-code</c>). Иначе
+    /// недоступный на минуту SMTP означал бы 500 на регистрации и потерю аккаунта.
+    /// </summary>
+    private async Task SendEmailCodeAsync(Guid userId, CancellationToken ct)
+    {
+        try
+        {
+            var result = await verification.SendAsync(userId, VerificationChannel.Email, ct);
+            if (result.Status != SendStatus.Ok)
+                logger.LogWarning(
+                    "Код подтверждения почты при регистрации не отправлен: {Status}.", result.Status);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Не удалось отправить код подтверждения почты при регистрации.");
+        }
+    }
 
     /// <summary>
     /// Сохраняет нового пользователя, переигрывая публичный код при гонке.

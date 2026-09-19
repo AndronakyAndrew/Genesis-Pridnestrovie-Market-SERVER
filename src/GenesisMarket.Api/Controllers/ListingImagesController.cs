@@ -1,5 +1,6 @@
 using System.Text.Json;
 using GenesisMarket.Api.Contracts;
+using GenesisMarket.Api.Listings;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Infrastructure.Imaging;
 using GenesisMarket.Infrastructure.Persistence;
@@ -29,13 +30,24 @@ public class ListingImagesController(
     // Тот же лимит на уровне запроса/multipart + небольшой запас на обёртку формы.
     private const long MaxRequestBytes = MaxImageBytes + 1024 * 1024;
 
-    /// <summary>Список изображений объявления по порядку. Публично (для карточки объявления).</summary>
+    /// <summary>
+    /// Список изображений объявления по порядку. Публично (для карточки объявления),
+    /// но с той же видимостью, что и сама карточка: фотографии неопубликованного
+    /// объявления — не публичные данные, и отдавать их, пока карточка закрыта,
+    /// значило бы закрыть её только на словах.
+    /// </summary>
     [AllowAnonymous]
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ListingImageResponse>>> GetImages(
         Guid listingId, CancellationToken ct)
     {
-        if (!await db.Listings.AnyAsync(l => l.Id == listingId, ct))
+        var listing = await db.Listings.AsNoTracking()
+            .Where(l => l.Id == listingId)
+            .Select(l => new { l.Status, l.OwnerId })
+            .FirstOrDefaultAsync(ct);
+
+        if (listing is null ||
+            !ListingVisibility.CanSee(listing.Status, listing.OwnerId, CurrentUserId(), CurrentUser.Role))
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
 
         var images = await db.ListingImages

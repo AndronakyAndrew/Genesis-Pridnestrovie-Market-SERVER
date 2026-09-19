@@ -19,5 +19,9 @@ public class ContactRevealConfiguration : IEntityTypeConfiguration<ContactReveal
 
         // Порог алерта: сколько раскрытий с одного IpHash за час.
         b.HasIndex(r => new { r.IpHash, r.CreatedAt });
+
+        // Квота аккаунта: сколько раскрытий у пользователя за последний час.
+        // Считается на каждом раскрытии, поэтому нужен индекс, а не seq scan.
+        b.HasIndex(r => new { r.ViewerUserId, r.CreatedAt });
     }
 }

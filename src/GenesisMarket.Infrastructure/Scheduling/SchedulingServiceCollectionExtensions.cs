@@ -19,9 +19,11 @@ public static class SchedulingServiceCollectionExtensions
         services.Configure<CatalogHygieneOptions>(configuration.GetSection(CatalogHygieneOptions.Section));
         services.Configure<OutboxOptions>(configuration.GetSection(OutboxOptions.Section));
         services.Configure<SavedSearchOptions>(configuration.GetSection(SavedSearchOptions.Section));
+        services.Configure<JournalRetentionOptions>(configuration.GetSection(JournalRetentionOptions.Section));
 
         // Сервис-логика доступна всегда (в т.ч. когда планировщик выключен — для тестов/ручного прогона).
         services.AddScoped<ICatalogHygieneService, CatalogHygieneService>();
+        services.AddScoped<IJournalRetentionService, JournalRetentionService>();
 
         var enabled = configuration.GetValue($"{SchedulingSection}:Enabled", defaultValue: true);
         if (!enabled)
@@ -34,6 +36,12 @@ public static class SchedulingServiceCollectionExtensions
 
         var outbox = configuration.GetSection(OutboxOptions.Section).Get<OutboxOptions>() ?? new OutboxOptions();
         var dispatchInterval = Math.Max(1, outbox.DispatchIntervalSeconds);
+
+        var retention = configuration.GetSection(JournalRetentionOptions.Section).Get<JournalRetentionOptions>()
+                        ?? new JournalRetentionOptions();
+        var retentionCron = string.IsNullOrWhiteSpace(retention.CleanupCron)
+            ? "0 30 3 * * ?"
+            : retention.CleanupCron;
 
         var savedSearch = configuration.GetSection(SavedSearchOptions.Section).Get<SavedSearchOptions>()
                           ?? new SavedSearchOptions();
@@ -90,6 +98,17 @@ public static class SchedulingServiceCollectionExtensions
                 .ForJob(OutboxCleanupJob.Key)
                 .WithIdentity("outbox-cleanup-daily")
                 .WithCronSchedule(outbox.CleanupCron, x => x.WithMisfireHandlingInstructionDoNothing()));
+
+            // ---- Журналы с псевдонимизированным IP: снятие IpHash и удаление старых переходов ----
+            q.AddJob<JournalRetentionJob>(j => j
+                .WithIdentity(JournalRetentionJob.Key)
+                .StoreDurably()
+                .WithDescription("Снятие IpHash с раскрытий контактов и удаление старых переходов по ссылкам"));
+
+            q.AddTrigger(t => t
+                .ForJob(JournalRetentionJob.Key)
+                .WithIdentity("journal-retention-daily")
+                .WithCronSchedule(retentionCron, x => x.WithMisfireHandlingInstructionDoNothing()));
 
             // ---- Сохранённые поиски: рассылка новых совпадений (по умолчанию раз в 15 минут) ----
             q.AddJob<SavedSearchNotificationJob>(j => j

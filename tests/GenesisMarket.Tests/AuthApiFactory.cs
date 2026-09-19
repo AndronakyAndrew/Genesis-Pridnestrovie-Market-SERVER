@@ -158,7 +158,11 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
     /// <summary>Прямое создание пользователя в БД (в обход register) для сценариев тестов.</summary>
     public async Task<Guid> SeedUserAsync(
         string email, string password,
-        bool banned = false, bool phoneVerified = true, bool emailVerified = false,
+        // emailVerified по умолчанию true: сид изображает обычный рабочий аккаунт, а
+        // подтверждённая почта теперь нужна и для публикации, и для раскрытия контактов
+        // (существующим аккаунтам она выдана амнистией). Тесты, которые проверяют именно
+        // неподтверждённый путь, передают false явно.
+        bool banned = false, bool phoneVerified = true, bool emailVerified = true,
         UserRole role = UserRole.User)
     {
         using var scope = Services.CreateScope();
@@ -380,6 +384,72 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return await db.ContactReveals.CountAsync(r => r.ListingId == listingId);
+    }
+
+    /// <summary>
+    /// Записывает раскрытия прямо в журнал, задавая возраст записи. Нужно, чтобы
+    /// проверять квоту, не делая 30 HTTP-запросов, и чтобы отличить квоту по БД от
+    /// счётчика в памяти процесса: при таком засеве в памяти не учтено ничего.
+    /// </summary>
+    public async Task SeedContactRevealsAsync(
+        Guid listingId, Guid? viewerUserId, int count, TimeSpan? age = null, string ipHash = "seeded-hash")
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var createdAt = DateTimeOffset.UtcNow - (age ?? TimeSpan.Zero);
+        for (var i = 0; i < count; i++)
+            db.ContactReveals.Add(new ContactReveal
+            {
+                ListingId = listingId,
+                ViewerUserId = viewerUserId,
+                IpHash = ipHash,
+                CreatedAt = createdAt
+            });
+
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>IpHash'и раскрытий по объявлению — для проверки уборки журналов.</summary>
+    public async Task<List<string>> ContactRevealHashesAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.ContactReveals
+            .Where(r => r.ListingId == listingId)
+            .Select(r => r.IpHash)
+            .ToListAsync();
+    }
+
+    /// <summary>Записывает переход по ссылке заданного возраста (для проверки уборки).</summary>
+    public async Task SeedLinkClickAsync(Guid listingId, TimeSpan age)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.LinkClicks.Add(new LinkClick
+        {
+            ListingId = listingId,
+            Source = "tg",
+            IpHash = "seeded-hash",
+            CreatedAt = DateTimeOffset.UtcNow - age
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Число переходов по объявлению.</summary>
+    public async Task<int> LinkClickCountAsync(Guid listingId)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.LinkClicks.CountAsync(c => c.ListingId == listingId);
+    }
+
+    /// <summary>Прогон уборки журналов напрямую, без планировщика.</summary>
+    public async Task<JournalRetentionResult> RunJournalRetentionAsync()
+    {
+        using var scope = Services.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<IJournalRetentionService>();
+        return await service.RunAsync(default);
     }
 
     /// <summary>Перехваченные посты и правки канала (клиент бота).</summary>

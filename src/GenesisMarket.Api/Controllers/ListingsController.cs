@@ -49,6 +49,7 @@ public class ListingsController(
     private static readonly ListingStatus[] InCirculation =
         [ListingStatus.Active, ListingStatus.PendingReview];
 
+
     private const int DefaultLimit = 20;
     private const int MaxLimit = 50;
     private static readonly TimeSpan CountCacheTtl = TimeSpan.FromSeconds(60);
@@ -256,7 +257,7 @@ public class ListingsController(
     public async Task<ActionResult<ListingResponse>> GetById(Guid id, CancellationToken ct)
     {
         var listing = await db.Listings.AsNoTracking().FirstOrDefaultAsync(l => l.Id == id, ct);
-        if (listing is null)
+        if (listing is null || !CanSee(listing))
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
 
         if (listing.Status == ListingStatus.Active)
@@ -270,7 +271,7 @@ public class ListingsController(
     public async Task<ActionResult<ListingResponse>> GetBySlug(string slug, CancellationToken ct)
     {
         var listing = await db.Listings.AsNoTracking().FirstOrDefaultAsync(l => l.Slug == slug, ct);
-        if (listing is null)
+        if (listing is null || !CanSee(listing))
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
 
         if (listing.Status == ListingStatus.Active)
@@ -284,8 +285,18 @@ public class ListingsController(
     /// Телефон и привязанные к нему Viber/WhatsApp отдаются, только если ShowPhoneInListing = true;
     /// при скрытом номере остаётся Telegram (строится из username, номер не раскрывает).
     /// Если показать нечего — единый 404 без объяснения причины. Телефон нигде больше в API не отдаётся.
-    /// Анти-скрейпинг: rate-limit по (IpHash, UserId), задержка анонимам, журнал раскрытий.
     /// Демонстрационное объявление (IsExample) — сразу 404: без задержки и без записи в журнал.
+    ///
+    /// Анти-скрейпинг, по возрастанию цены обхода:
+    /// <list type="number">
+    /// <item>подтверждённая почта у авторизованного — иначе одноразовый аккаунт
+    /// (регистрация ничего не проверяет) стоил бы ноль, а давал 30 контактов в час;</item>
+    /// <item>rate-limit в памяти процесса (политика "contact"): аноним по IP, авторизованный
+    /// по пользователю — дешёвая защита от всплеска;</item>
+    /// <item>квота аккаунта по журналу в БД — она, в отличие от предыдущей, переживает
+    /// рестарт контейнера и считает скользящее окно;</item>
+    /// <item>задержка анонимам и журнал раскрытий с алертом по IpHash.</item>
+    /// </list>
     /// </summary>
     [AllowAnonymous]
     [EnableRateLimiting(RateLimitPolicies.Contact)]
@@ -294,9 +305,19 @@ public class ListingsController(
     {
         var userId = CurrentUserId();
 
-        // Rate-limit раскрытия — на встроенном RateLimiter (политика "contact"): аноним по IP,
+        // Подтверждённая почта обязательна: регистрация ничего не проверяет, поэтому
+        // без этого условия одноразовый аккаунт давал бы 30 контактов в час, а завести
+        // их можно пачками. Проверка стоит первой — она о том, КТО спрашивает, и потому
+        // не зависит от судьбы объявления и ничего о нём не сообщает.
+        if (userId is { } viewerId && !await IsEmailVerifiedAsync(viewerId, ct))
+            return Problem(
+                title: "Подтвердите электронную почту, чтобы увидеть контакты продавца",
+                statusCode: StatusCodes.Status403Forbidden);
+
+        // Первый лимит — на встроенном RateLimiter (политика "contact"): аноним по IP,
         // авторизованный по пользователю. Middleware отрабатывает ДО экшена, поэтому
-        // запрос к примеру квоту всё же расходует. Здесь — задержка и журнал.
+        // запрос к примеру квоту всё же расходует. Здесь — квота по журналу, задержка
+        // анонимам и сама запись в журнал.
 
         // Телефон/username продавца читаются ТОЛЬКО здесь и только для построения ссылок.
         // Запрос стоит до задержки: признак примера нужен раньше всей анти-скрейпинг логики.
@@ -326,6 +347,13 @@ public class ListingsController(
 
         if (seller is null || seller.IsBanned)
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
+
+        // Квота аккаунта — по журналу в БД (переживает рестарт), в дополнение к
+        // счётчику в памяти. Стоит до сборки ссылок: исчерпанная квота решается
+        // по тому, КТО спрашивает, и контактов при этом касаться незачем.
+        if (userId is { } quotaUserId &&
+            await contactReveal.QuotaRetryAfterAsync(quotaUserId, ct) is { } retryAfter)
+            return TooManyRequests(retryAfter);
 
         // Скрытый номер в построитель не попадает вовсе — вместе с ним отпадают
         // Viber и WhatsApp, чьи ссылки содержат номер.
@@ -901,13 +929,22 @@ public class ListingsController(
             contactRevealCount, isFavorite, DaysUntilArchive(l), CanonicalUrl(l.Slug),
             // Причина отклонения — только владельцу. DTO один и для публичной
             // карточки, и для «моих объявлений», поэтому условие здесь явное.
-            isOwner: CurrentUserId() == l.OwnerId);
+            isOwner: CurrentUserId() == l.OwnerId,
+            // Свой текст владелец видит как написал; модератору он нужен целиком,
+            // чтобы решать по существу. Всем остальным — без контактов.
+            showRawText: CurrentUserId() == l.OwnerId
+                         || CurrentUser.Role is UserRole.Moderator or UserRole.Admin);
 
     private static ListingResponse Map(
         Listing l, string ownerPublicCode,
         int contactRevealCount, bool isFavorite, int? daysUntilArchive, string? canonicalUrl,
-        bool isOwner) => new(
-        l.Id, l.Slug, l.Title, l.Description, l.Price, l.PriceType, l.Category,
+        bool isOwner, bool showRawText) => new(
+        l.Id, l.Slug, l.Title,
+        // Телефон, ник и ссылка из описания вырезаются той же функцией, что и для
+        // поста в канале: иначе раскрытие контактов с его лимитом и журналом
+        // обходится чтением карточки, где ни лимита, ни журнала нет.
+        showRawText ? l.Description : ListingContentRisk.RedactContacts(l.Description),
+        l.Price, l.PriceType, l.Category,
         l.SubcategoryId, l.City, l.District, l.Condition, l.Status,
         l.ViewsCount, ownerPublicCode, l.CreatedAt, l.PublishedAt, contactRevealCount,
         l.FavoritesCount, isFavorite, daysUntilArchive,
@@ -958,6 +995,21 @@ public class ListingsController(
     // Факт свежего отказа больше не собирается джойном по журналу модерации: он
     // денормализован в users.LastRejectedAt (триггер listings_trust_sync) и читается
     // политикой из уже загруженной строки автора.
+
+    /// <summary>Вправе ли текущий запрос видеть карточку (см. <see cref="ListingVisibility"/>).</summary>
+    private bool CanSee(Listing listing) =>
+        ListingVisibility.CanSee(listing.Status, listing.OwnerId, CurrentUserId(), CurrentUser.Role);
+
+    /// <summary>
+    /// Подтверждена ли почта у текущего пользователя. Читается из БД, а не из claim'а
+    /// токена: иначе подтвердившему пришлось бы ждать перевыпуска access-токена,
+    /// чтобы увидеть контакты.
+    /// </summary>
+    private Task<bool> IsEmailVerifiedAsync(Guid userId, CancellationToken ct) =>
+        db.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.EmailVerified)
+            .FirstOrDefaultAsync(ct);
 
     /// <summary>Число раскрытий контактов по объявлению — отдельным запросом (не N+1).</summary>
     private Task<int> RevealCountAsync(Guid listingId, CancellationToken ct) =>
