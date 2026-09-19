@@ -130,6 +130,14 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
             .IsDescending(true, false)
             .HasFilter("\"ReviewQueuedAt\" IS NOT NULL");
 
+        // Вкладка «На доработке» очереди модератора: только возвращённые черновики.
+        b.HasIndex(l => l.RevisionRequestedAt)
+            .HasFilter("\"RevisionRequestedAt\" IS NOT NULL");
+
+        // «Только мои» в очереди: назначенные модератору.
+        b.HasIndex(l => l.ReviewAssigneeId)
+            .HasFilter("\"ReviewAssigneeId\" IS NOT NULL");
+
         // Счётчик доверия автора (users.ApprovedListingsCount) — бэкфилл и пересборка.
         b.HasIndex(l => new { l.OwnerId, l.ApprovedAt })
             .HasFilter("\"ApprovedAt\" IS NOT NULL");

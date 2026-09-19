@@ -62,7 +62,12 @@ public record ListingResponse(
     /// </summary>
     bool SellerIsVerifiedBusiness = false,
     /// <summary>Название магазина. Заполнено только при <see cref="SellerIsVerifiedBusiness"/>.</summary>
-    string? SellerShopName = null);
+    string? SellerShopName = null,
+    /// <summary>
+    /// Модератор вернул объявление на доработку (черновик с причиной в RejectionReasonCode/
+    /// RejectionComment). Видимость — как у RejectionReasonCode: только владельцу.
+    /// </summary>
+    DateTimeOffset? RevisionRequestedAt = null);
 
 /// <summary>
 /// Создание объявления. Валидируется FluentValidation (см. CreateListingRequestValidator).

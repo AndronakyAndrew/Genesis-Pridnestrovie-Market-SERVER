@@ -44,6 +44,7 @@ public static class OutboxServiceCollectionExtensions
         // Обработчики типов сообщений. Scoped — читают БД.
         services.AddScoped<IOutboxHandler, ListingApprovedHandler>();
         services.AddScoped<IOutboxHandler, ListingRejectedHandler>();
+        services.AddScoped<IOutboxHandler, ListingRevisionRequestedHandler>();
         services.AddScoped<IOutboxHandler, ListingExpiringSoonHandler>();
         services.AddScoped<IOutboxHandler, NewReviewHandler>();
         services.AddScoped<IOutboxHandler, ListingPublishedHandler>();

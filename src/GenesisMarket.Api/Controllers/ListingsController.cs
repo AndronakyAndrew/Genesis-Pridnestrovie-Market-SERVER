@@ -958,7 +958,8 @@ public class ListingsController(
         CanonicalUrl: canonicalUrl,
         IsExample: l.IsExample,
         SellerIsVerifiedBusiness: seller.IsVerifiedBusiness,
-        SellerShopName: seller.ShopName);
+        SellerShopName: seller.ShopName,
+        RevisionRequestedAt: isOwner ? l.RevisionRequestedAt : null);
 
     /// <summary>
     /// «ID профиля» владельца и бейдж бизнеса по его Guid — одним запросом. Кеш — на время

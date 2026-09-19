@@ -78,7 +78,7 @@ public sealed class ListingRejectedHandler(AppDbContext db, IUserNotifier notifi
     /// но старые значения <see cref="ReportReason"/> тоже понимаются: в очереди
     /// outbox могут лежать сообщения, записанные до смены набора кодов.
     /// </summary>
-    private static string ReasonText(string reason)
+    internal static string ReasonText(string reason)
     {
         if (Enum.TryParse<RejectionReasonCode>(reason, out var code))
             return code switch
@@ -102,6 +102,33 @@ public sealed class ListingRejectedHandler(AppDbContext db, IUserNotifier notifi
             ReportReason.PriceViolation => "нарушение в цене",
             _ => "нарушение правил"
         } : "нарушение правил";
+    }
+}
+
+/// <summary>
+/// Возвращено на доработку → автору: что исправить и что объявление ждёт его в черновиках.
+/// Payload тот же, что у отказа; тексты причин — общие с <see cref="ListingRejectedHandler"/>.
+/// </summary>
+public sealed class ListingRevisionRequestedHandler(AppDbContext db, IUserNotifier notifier) : IOutboxHandler
+{
+    public string Type => OutboxMessage.ListingRevisionRequested;
+
+    public async Task HandleAsync(OutboxMessage message, CancellationToken ct)
+    {
+        var p = OutboxPayload.Parse<ListingRejectedPayload>(message.Payload);
+        var listing = await db.Listings.IgnoreQueryFilters().AsNoTracking()
+            .Where(l => l.Id == p.ListingId)
+            .Select(l => new { l.OwnerId, l.Title })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new OutboxPermanentException("Объявление не найдено.");
+
+        var body = $"Модератор вернул объявление «{listing.Title}» на доработку. " +
+                   $"Что исправить: {ListingRejectedHandler.ReasonText(p.Reason)}.";
+        if (!string.IsNullOrWhiteSpace(p.Comment))
+            body += $"\nКомментарий модератора: {p.Comment}";
+        body += "\nОбъявление лежит в черновиках: исправьте его и опубликуйте снова.";
+
+        await notifier.NotifyAsync(listing.OwnerId, "Объявление нужно доработать", body, ct);
     }
 }
 

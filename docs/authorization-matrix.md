@@ -69,7 +69,8 @@ User → 403. Каждое действие пишется в `moderation_logs` 
 
 | Эндпоинт | Что | Где обеспечено |
 |---|---|---|
-| `GET queue`, `GET listings/{id}`, `POST listings/{id}/{approve,reject}` | Очередь и решения по объявлениям | `ModerationController` |
+| `GET queue`, `GET listings/{id}`, `POST listings/{id}/{approve,reject,revise}` | Очередь и решения по объявлениям (через `IListingDecisions`) | `ModerationController` |
+| `GET listings`, `GET listings/counts`, `POST listings/{id}/{assign,unassign}`, `POST listings/bulk/{approve,reject,revise,assign}` | Таблица очереди, назначение, пакеты ≤ 50 одной транзакцией | `ModerationQueueController` |
 | `POST reports/{id}/resolve`, `POST users/{id}/{ban,unban}`, `GET stats` | Жалобы, баны, счётчики | `ModerationController` |
 | `GET users/{id}`, `GET users/by-code/{code}` | **Контакты** (email/телефон). Единственные ручки с контактами; каждый вызов журналируется | `ModerationController.UserContactsAsync` |
 | `GET logs`, `GET logs/summary`, `GET logs/actors` | Журнал действий (только чтение) | `ModerationJournalController` |

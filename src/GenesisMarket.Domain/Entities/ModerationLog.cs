@@ -54,6 +54,12 @@ public class ModerationLog
     /// от отказа, не фиксирует <c>users.LastRejectedAt</c> и не закрывает автопубликацию.
     /// </summary>
     public const string ActionReviseListing = "listing.revise";
+
+    /// <summary>Объявление в очереди назначено модератору («Назначить на меня»).</summary>
+    public const string ActionAssignListing = "listing.assign";
+
+    /// <summary>Назначение снято — объявление вернулось в общую очередь.</summary>
+    public const string ActionUnassignListing = "listing.unassign";
     public const string ActionResolveReport = "report.resolve";
 
     /// <summary>Модератор взял жалобу в работу (New → InReview, назначен на себя).</summary>

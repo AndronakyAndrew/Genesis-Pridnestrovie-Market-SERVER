@@ -59,6 +59,12 @@ public class OutboxMessage
     /// <summary>Объявление отклонено модератором → уведомление автору. Payload: <c>{ listingId, reason, comment }</c>.</summary>
     public const string ListingRejected = "listing-rejected";
 
+    /// <summary>
+    /// Объявление возвращено автору на доработку → уведомление автору.
+    /// Payload: <c>{ listingId, reason, comment }</c> (как у отказа).
+    /// </summary>
+    public const string ListingRevisionRequested = "listing-revision-requested";
+
     /// <summary>Скоро автоархивация → уведомление автору. Payload: <c>{ listingId, archiveAt }</c>.</summary>
     public const string ListingExpiringSoon = "listing-expiring-soon";
 

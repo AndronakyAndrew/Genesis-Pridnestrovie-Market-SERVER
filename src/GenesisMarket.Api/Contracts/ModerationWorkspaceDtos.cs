@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using GenesisMarket.Domain.Enums;
 
@@ -337,3 +338,111 @@ public record ModerationReportDetail(
     ReportedReview? Review,
     /// <summary>Сколько ещё открытых жалоб на тот же объект.</summary>
     int OtherOpenReportsOnTarget);
+
+// ---- очередь объявлений ----
+
+/// <summary>Вкладки очереди объявлений.</summary>
+public enum ModerationListingsTab
+{
+    /// <summary>Ждут решения (ReviewQueuedAt заполнен) — пре- и постмодерация.</summary>
+    Review,
+    /// <summary>Возвращены автору на доработку и ещё не переопубликованы.</summary>
+    Revision,
+    /// <summary>Отклонены за последние Moderation:RejectedTabDays дней.</summary>
+    Rejected,
+    /// <summary>Все три вкладки вместе.</summary>
+    All
+}
+
+public enum ModerationListingsSort
+{
+    /// <summary>Сначала автофлаги и рисковые, внутри — FIFO. Порядок очереди.</summary>
+    Priority,
+    Oldest,
+    Newest
+}
+
+public record ModerationListingsQuery
+{
+    public ModerationListingsTab? Tab { get; init; }
+    public Category? Category { get; init; }
+    public City? City { get; init; }
+
+    /// <summary>GUID объявления, «ID профиля» автора или подстрока заголовка.</summary>
+    public string? Q { get; init; }
+
+    public ModerationListingsSort? Sort { get; init; }
+
+    /// <summary>Только назначенные на текущего модератора.</summary>
+    public bool? Mine { get; init; }
+
+    public string? Cursor { get; init; }
+
+    /// <summary>По умолчанию 25, максимум 100.</summary>
+    public int? Limit { get; init; }
+}
+
+/// <summary>Автор в строке очереди — ровно то, что нужно для быстрого решения.</summary>
+public record QueueOwner(
+    Guid Id, string PublicCode, string DisplayName, DateTimeOffset CreatedAt, bool PhoneVerified,
+    int ApprovedListings, int RejectedListings, DateTimeOffset? LastRejectedAt, bool IsVerifiedBusiness);
+
+/// <summary>Строка очереди объявлений.</summary>
+public record ModerationListingRow(
+    Guid Id,
+    string Slug,
+    string Title,
+    decimal? Price,
+    PriceType PriceType,
+    Category Category,
+    int SubcategoryId,
+    City City,
+    ListingStatus Status,
+    int Priority,
+    /// <summary>Момент, по которому строка стоит в очереди: постановка, возврат или отказ.</summary>
+    DateTimeOffset QueuedAt,
+    DateTimeOffset? ReviewQueuedAt,
+    DateTimeOffset? RevisionRequestedAt,
+    DateTimeOffset? RejectedAt,
+    RejectionReasonCode? RejectionReasonCode,
+    DateTimeOffset CreatedAt,
+    string? ThumbKey,
+    int ImagesCount,
+    int OpenReports,
+    QueueOwner Owner,
+    ModerationActor? Assignee,
+    DateTimeOffset? AssignedAt,
+    /// <summary>Ждёт дольше норматива Moderation:ReviewSlaMinutes (только для вкладки Review).</summary>
+    bool Overdue);
+
+public record ModerationListingsPage(IReadOnlyList<ModerationListingRow> Items, string? NextCursor, bool HasMore);
+
+/// <summary>Счётчики вкладок очереди.</summary>
+public record ModerationListingsCounts(
+    int Review,
+    int Revision,
+    int Rejected,
+    int All,
+    /// <summary>Назначены на текущего модератора (в очереди).</summary>
+    int Mine,
+    int Overdue,
+    DateTimeOffset? OldestQueuedAt,
+    int ReviewSlaMinutes);
+
+/// <summary>
+/// Пакетное действие над объявлениями. Лимит (50 id) проверяет контроллер — единым
+/// текстом ошибки для всех пакетных ручек.
+/// </summary>
+public record BulkListingsRequest([Required] IReadOnlyList<Guid> Ids);
+
+/// <summary>Пакетное отклонение / возврат на доработку — одна причина на весь пакет.</summary>
+public record BulkRejectRequest(
+    [Required] IReadOnlyList<Guid> Ids,
+    [Required] RejectionReasonCode Reason,
+    [MaxLength(500)] string? Comment);
+
+/// <summary>Почему элемент пакета не обработан.</summary>
+public record BulkFailure(Guid Id, string Error);
+
+/// <summary>Итог пакета: что сделано и что пропущено (пакет не падает целиком из-за одного id).</summary>
+public record BulkResult(IReadOnlyList<Guid> Succeeded, IReadOnlyList<BulkFailure> Failed);
