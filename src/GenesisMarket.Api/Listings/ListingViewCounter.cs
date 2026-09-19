@@ -26,7 +26,11 @@ public sealed class ListingViewCounter(
 
     public async Task RegisterAsync(Guid listingId, string? ip, CancellationToken ct)
     {
-        var ipHash = ipHasher.Hash(ip) ?? ip ?? "unknown";
+        // Без ключа хеширования кладём общий литерал, а НЕ сырой адрес: в Production
+        // ключ обязателен (старт падает без него), так что там поведение не меняется,
+        // а в dev незачем держать IP даже в ключе кэша в памяти. Цена — на время окна
+        // просмотры всех анонимов в dev считаются за один.
+        var ipHash = ipHasher.Hash(ip) ?? IpHasherExtensions.NoKeyHash;
         var key = $"view:{listingId}:{ipHash}";
 
         // В пределах окна повторный просмотр не засчитываем.

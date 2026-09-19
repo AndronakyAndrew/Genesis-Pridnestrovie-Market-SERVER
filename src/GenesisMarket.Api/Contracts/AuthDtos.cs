@@ -48,7 +48,14 @@ public record UserResponse(
     City City,
     string? PhoneE164,
     bool PhoneVerified,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    /// <summary>
+    /// Подтверждена ли почта. Уходит вместе с сессией по той же причине, что и
+    /// <see cref="PublicCode"/>: от неё зависит доступность раскрытия контактов и
+    /// публикации, и без неё интерфейс узнавал бы о запрете только по 403 в ответ
+    /// на действие пользователя. Поле добавлено в конец: старый клиент его не читает.
+    /// </summary>
+    bool EmailVerified = false);
 
 public record AuthResponse(
     string AccessToken,

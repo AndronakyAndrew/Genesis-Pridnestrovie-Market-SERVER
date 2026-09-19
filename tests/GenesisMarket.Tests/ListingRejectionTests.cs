@@ -45,9 +45,15 @@ public class ListingRejectionTests(AuthApiFactory factory) : IClassFixture<AuthA
     }
 
     /// <summary>
-    /// Посторонний не видит ни кода, ни комментария. Проверка не формальная:
-    /// GET /api/listings/{id} отдаёт объявление любому и в любом статусе, то есть
-    /// без явного условия комментарий модератора стал бы публичным.
+    /// Посторонний не видит отклонённое объявление вовсе, а тот, кто его видеть
+    /// вправе, но не владелец (модератор), не получает ни кода, ни комментария
+    /// в публичном DTO.
+    ///
+    /// Защит здесь две, и обе проверяются намеренно: видимость по статусу
+    /// (<c>ListingVisibility</c>) и явное условие <c>isOwner</c> в <c>Map</c>.
+    /// Вторая нужна и сама по себе — DTO один и для публичной карточки, и для
+    /// «моих объявлений», а полагаться на одну лишь видимость значит оставить
+    /// комментарий модератора в одном условии от публичности.
     /// </summary>
     [Fact]
     public async Task Rejection_reason_is_hidden_from_everyone_but_the_owner()
@@ -57,25 +63,31 @@ public class ListingRejectionTests(AuthApiFactory factory) : IClassFixture<AuthA
 
         await RejectAsync(listingId, RejectionReasonCode.ContactsInText, Comment);
 
-        // Аноним.
+        // Аноним: отклонённого объявления для него не существует.
         var anonymous = factory.CreateClient();
-        var raw = await anonymous.GetStringAsync($"/api/listings/{listingId}");
-        Assert.DoesNotContain(Comment, raw, StringComparison.Ordinal);
-        Assert.DoesNotContain("ContactsInText", raw, StringComparison.Ordinal);
+        var anonResp = await anonymous.GetAsync($"/api/listings/{listingId}");
+        Assert.Equal(HttpStatusCode.NotFound, anonResp.StatusCode);
 
-        var card = JsonDocument.Parse(raw).RootElement;
-        Assert.Equal(JsonValueKind.Null, card.GetProperty("rejectionReasonCode").ValueKind);
-        Assert.Equal(JsonValueKind.Null, card.GetProperty("rejectionComment").ValueKind);
-        Assert.Equal(JsonValueKind.Null, card.GetProperty("rejectedAt").ValueKind);
+        var anonRaw = await anonResp.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(Comment, anonRaw, StringComparison.Ordinal);
+        Assert.DoesNotContain("ContactsInText", anonRaw, StringComparison.Ordinal);
 
         // Другой авторизованный пользователь — тоже посторонний.
         var strangerEmail = Unique("reject-stranger");
         await factory.SeedUserAsync(strangerEmail, Password);
         var stranger = await AuthedClient(strangerEmail);
 
-        var seenByStranger = await stranger.GetFromJsonAsync<JsonElement>($"/api/listings/{listingId}");
-        Assert.Equal(JsonValueKind.Null, seenByStranger.GetProperty("rejectionReasonCode").ValueKind);
-        Assert.Equal(JsonValueKind.Null, seenByStranger.GetProperty("rejectionComment").ValueKind);
+        var strangerResp = await stranger.GetAsync($"/api/listings/{listingId}");
+        Assert.Equal(HttpStatusCode.NotFound, strangerResp.StatusCode);
+
+        // Модератор карточку видит (ему можно), но причину отказа публичный DTO
+        // ему не отдаёт: для разбора есть /api/moderation/listings/{id}.
+        var mod = await Moderator();
+        var seenByModerator = await mod.GetFromJsonAsync<JsonElement>($"/api/listings/{listingId}");
+        Assert.Equal("Rejected", seenByModerator.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, seenByModerator.GetProperty("rejectionReasonCode").ValueKind);
+        Assert.Equal(JsonValueKind.Null, seenByModerator.GetProperty("rejectionComment").ValueKind);
+        Assert.Equal(JsonValueKind.Null, seenByModerator.GetProperty("rejectedAt").ValueKind);
     }
 
     /// <summary>

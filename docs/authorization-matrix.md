@@ -29,7 +29,10 @@
 | Операция | Аноним | User (не владелец) | Владелец | Moderator/Admin | Где обеспечено |
 |---|---|---|---|---|---|
 | Читать каталог `GET /api/listings` | 🌐 200 | 🌐 200 | 🌐 200 | 🌐 200 | `ListingsController.cs:24` `[AllowAnonymous]` |
-| Читать карточку `GET /api/listings/{id}` | 🌐 200 | 🌐 200 | 🌐 200 | 🌐 200 | `ListingsController.cs:38` `[AllowAnonymous]` |
+| Читать карточку `GET /api/listings/{id}` (опубликованное, в т.ч. Sold/Archived) | 🌐 200 | 🌐 200 | 🌐 200 | 🌐 200 | `ListingsController.cs` `[AllowAnonymous]` |
+| Читать карточку неопубликованного (Draft/PendingReview/Rejected) | **404** | **404** | 👤 200 | 🛡 200 | `ListingsController.CanSee` (+ то же для `by-slug`) |
+| Видеть контакты в тексте описания | редактируется | редактируется | 👤 как написал | 🛡 как написал | `ListingsController.Map` → `ListingContentRisk.RedactContacts` |
+| Раскрыть контакты `GET /api/listings/{id}/contact` | 🌐 200, 10/час на IP | 🔒 200 при подтверждённой почте, 30/час на аккаунт; иначе **403** | то же | то же | `ListingsController.GetContact` + `ContactRevealService.QuotaRetryAfterAsync` |
 | Создать `POST /api/listings` | 401 | 🔒 201 (если контакт подтверждён) | 🔒 201 | 🔒 201 | `ListingsController.cs:51` `[Authorize]` + `:68` `IPublishingPolicy` |
 | Удалить `DELETE /api/listings/{id}` | 401 | **403** | 👤 204 | 🛡 204 | `ListingsController.cs:107` `[Authorize]` + `:116` `AuthorizeAsync(ResourceOwner)` |
 | Изменить (PATCH) | — | — | 👤 | 🛡 | *эндпоинта пока нет; при добавлении — `ResourceOwner`* |
