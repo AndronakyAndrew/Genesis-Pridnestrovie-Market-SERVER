@@ -157,6 +157,7 @@ public class ModerationController(
 
         // Постмодерация: объявление уже в каталоге — на витрине одобрение ничего не меняет.
         var wasInCatalog = listing.Status == ListingStatus.Active;
+        var queuedAt = listing.ReviewQueuedAt;
         var now = DateTimeOffset.UtcNow;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -176,7 +177,7 @@ public class ModerationController(
         await channelPublisher.EnqueueAsync(id, ct);
 
         audit.Record(ModerationLog.ActionApproveListing, ModerationLog.TargetListing, id,
-            payload: new { postModeration = wasInCatalog });
+            payload: new { postModeration = wasInCatalog }, waitSince: queuedAt);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
@@ -214,6 +215,7 @@ public class ModerationController(
             return Problem(title: "Объявление не находится на модерации", statusCode: StatusCodes.Status409Conflict);
 
         var wasInCatalog = listing.Status == ListingStatus.Active;
+        var queuedAt = listing.ReviewQueuedAt;
         var now = DateTimeOffset.UtcNow;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -243,7 +245,8 @@ public class ModerationController(
 
         audit.Record(ModerationLog.ActionRejectListing, ModerationLog.TargetListing, id,
             reason: comment,
-            payload: new { reason = request.Reason.ToString(), comment, postModeration = wasInCatalog });
+            payload: new { reason = request.Reason.ToString(), comment, postModeration = wasInCatalog },
+            waitSince: queuedAt);
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -290,7 +293,8 @@ public class ModerationController(
                 resolution,
                 targetType = report.TargetType.ToString(),
                 targetId = report.TargetId
-            });
+            },
+            waitSince: report.CreatedAt);
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);

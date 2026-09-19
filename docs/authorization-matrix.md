@@ -61,9 +61,27 @@
 |---|---|---|
 | `GET /health/live`, `/health/ready` | 🌐 аноним | `Program.cs` (`.AllowAnonymous()` на MapHealthChecks) |
 
+### Модерация (`/api/moderation/*`)
+
+Все ручки — 🛡 `[Authorize(Policy = "Moderator")]` на уровне контроллера; аноним → 401,
+User → 403. Каждое действие пишется в `moderation_logs` в той же транзакции
+(`Api/Moderation/ModerationAudit.cs`).
+
+| Эндпоинт | Что | Где обеспечено |
+|---|---|---|
+| `GET queue`, `GET listings/{id}`, `POST listings/{id}/{approve,reject}` | Очередь и решения по объявлениям | `ModerationController` |
+| `POST reports/{id}/resolve`, `POST users/{id}/{ban,unban}`, `GET stats` | Жалобы, баны, счётчики | `ModerationController` |
+| `GET users/{id}`, `GET users/by-code/{code}` | **Контакты** (email/телефон). Единственные ручки с контактами; каждый вызов журналируется | `ModerationController.UserContactsAsync` |
+| `GET logs`, `GET logs/summary`, `GET logs/actors` | Журнал действий (только чтение) | `ModerationJournalController` |
+| `GET users`, `GET users/summary`, `GET users/{id}/dossier` | Реестр и досье **без контактов**; email в поиске не участвует | `ModerationUsersController` |
+| `GET reports`, `GET reports/summary`, `GET reports/{id}`, `POST reports/{id}/take` | Экран жалоб; «взять» — условный UPDATE, чужую только `?force=true` | `ModerationReportsController` |
+| `GET business`, `POST business/{userId}/{approve,reject}` | Заявки бизнеса; решение — compare-and-set по `submittedAt` | `BusinessModerationController` |
+
+Сетевой сигнал в досье — совпадение HMAC адреса входа (`refresh_tokens.CreatedByIpHash`);
+сырой IP не хранится и модератору не показывается, только два октета (`IpPrefix`).
+
 ## Планируемое (эндпоинтов пока нет)
 
-- **Модерация** — под политикой `Moderator`/`Admin` (уже зарегистрированы). Когда появится `ModerationController`, повесить `[Authorize(Policy = "Moderator")]`.
 - **Review, SavedSearch** — приватные владельческие ресурсы: сущностям достаточно реализовать
   `IOwnedResource` (`Domain/Common/IOwnedResource.cs`) — тот же `ResourceOwnerHandler` начнёт их
   покрывать без нового кода. Для них «чужой» и «нет объекта» → **404** (существование не публично).

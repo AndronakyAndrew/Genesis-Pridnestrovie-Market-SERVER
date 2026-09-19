@@ -30,6 +30,14 @@ public class ModerationLog
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Сколько объект ждал решения, секунд: для объявления — от постановки в очередь,
+    /// для жалобы — от подачи. Заполняется только у решений (approve/reject/revise/
+    /// resolve), по нему считается среднее время реакции. null у прочих действий и
+    /// у записей, сделанных до появления поля.
+    /// </summary>
+    public int? WaitSeconds { get; set; }
+
     // ---- Коды действий (Action) ----
     public const string TargetListing = "listing";
     public const string TargetUser = "user";
@@ -40,9 +48,21 @@ public class ModerationLog
 
     public const string ActionApproveListing = "listing.approve";
     public const string ActionRejectListing = "listing.reject";
+
+    /// <summary>
+    /// Вернуть автору на доработку: объявление уходит в черновик с причиной. В отличие
+    /// от отказа, не фиксирует <c>users.LastRejectedAt</c> и не закрывает автопубликацию.
+    /// </summary>
+    public const string ActionReviseListing = "listing.revise";
     public const string ActionResolveReport = "report.resolve";
+
+    /// <summary>Модератор взял жалобу в работу (New → InReview, назначен на себя).</summary>
+    public const string ActionTakeReport = "report.take";
     public const string ActionBanUser = "user.ban";
     public const string ActionUnbanUser = "user.unban";
+
+    /// <summary>Предупреждение пользователю — санкция без бана.</summary>
+    public const string ActionWarnUser = "user.warn";
     public const string ActionApproveBusiness = "business.approve";
     public const string ActionRejectBusiness = "business.reject";
 
