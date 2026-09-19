@@ -38,4 +38,13 @@ public class Report : BaseEntity
 
     /// <summary>Итог разбора модератором (свободный текст).</summary>
     public string? Resolution { get; set; }
+
+    /// <summary>
+    /// Модератор, взявший жалобу в работу (New → InReview). null — жалоба ничья.
+    /// Не путать с <see cref="ResolvedByUserId"/>: закрыть может и другой модератор.
+    /// </summary>
+    public Guid? AssignedToUserId { get; set; }
+
+    /// <summary>Когда жалобу взяли в работу.</summary>
+    public DateTimeOffset? AssignedAt { get; set; }
 }

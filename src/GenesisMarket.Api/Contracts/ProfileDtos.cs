@@ -109,4 +109,11 @@ public record PublicProfileResponse(
     int ActiveListingsCount,
     double? AverageRating,
     int ReviewsCount,
-    bool PhoneVerified);
+    bool PhoneVerified,
+    /// <summary>Подтверждённый бизнес — основание для бейджа (то же условие, что в карточке объявления).</summary>
+    bool IsVerifiedBusiness = false,
+    /// <summary>
+    /// Название магазина и реквизиты. Только у подтверждённого бизнеса; иначе null —
+    /// непроверенные реквизиты частного лица публичными не становятся.
+    /// </summary>
+    PublicBusinessInfo? Business = null);

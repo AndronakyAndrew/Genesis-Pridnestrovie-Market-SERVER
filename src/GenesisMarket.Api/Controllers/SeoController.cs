@@ -2,7 +2,6 @@ using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Seo;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
-using GenesisMarket.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,7 +17,6 @@ namespace GenesisMarket.Api.Controllers;
 [Route("api")]
 public class SeoController(
     AppDbContext db,
-    IObjectStorage storage,
     IOptions<SeoOptions> options) : ApiControllerBase
 {
     private readonly SeoOptions _seo = options.Value;
@@ -53,7 +51,11 @@ public class SeoController(
                 l.Status,
                 l.DeletedAt,
                 SellerName = l.Owner!.Profile!.DisplayName,
-                FirstImageKey = l.Images.OrderBy(i => i.SortOrder).Select(i => i.ObjectKey).FirstOrDefault()
+                // Ключ и размеры первого фото: размеры уходят в og:image:width/height —
+                // с ними соцсети и мессенджеры верстают превью, не дожидаясь загрузки файла.
+                FirstImage = l.Images.OrderBy(i => i.SortOrder)
+                    .Select(i => new { i.ObjectKey, i.Width, i.Height })
+                    .FirstOrDefault()
             })
             .FirstOrDefaultAsync(ct);
 
@@ -69,16 +71,19 @@ public class SeoController(
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
 
         var canonicalUrl = SeoUrls.Listing(baseUrl, row.Slug);
-        var ogImage = row.FirstImageKey is null
+        // Публичный адрес картинки на домене сайта, а НЕ presigned-ссылка на MinIO:
+        // подпись содержит внутренний хост и ключ доступа, снаружи не открывается
+        // (в мессенджерах не было превью) и раскрывает устройство хранилища.
+        var ogImage = row.FirstImage is null
             ? null
-            : await storage.GetPresignedUrlAsync(
-                row.FirstImageKey, TimeSpan.FromDays(_seo.OgImageTtlDays), ct);
+            : SeoUrls.ListingImage(baseUrl, row.FirstImage.ObjectKey);
 
         var meta = ListingMetaBuilder.Build(
             new ListingMetaBuilder.MetaInput(
                 row.Title, row.Description, row.Price, row.PriceType, row.Category,
                 row.City, row.Condition, row.Status, row.SellerName),
-            canonicalUrl, ogImage, _seo.SiteName);
+            canonicalUrl, ogImage, _seo.SiteName,
+            row.FirstImage?.Width, row.FirstImage?.Height);
 
         return Ok(meta);
     }

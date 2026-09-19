@@ -25,6 +25,10 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
 
         // Поиск по хешу токена при refresh/logout — по нему же уникальность.
         b.HasIndex(t => t.TokenHash).IsUnique();
+
+        // Сетевой сигнал для модератора: другие аккаунты, входившие с того же адреса.
+        // Сравнение по HMAC — сырой IP не хранится и для сигнала не нужен.
+        b.HasIndex(t => t.CreatedByIpHash);
         b.HasIndex(t => t.UserId);
 
         // Список сессий и отзыв по SessionId: выборка всегда в пределах владельца.

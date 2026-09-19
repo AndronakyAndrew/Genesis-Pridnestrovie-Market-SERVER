@@ -30,16 +30,53 @@ public class ModerationLog
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Сколько объект ждал решения, секунд: для объявления — от постановки в очередь,
+    /// для жалобы — от подачи. Заполняется только у решений (approve/reject/revise/
+    /// resolve), по нему считается среднее время реакции. null у прочих действий и
+    /// у записей, сделанных до появления поля.
+    /// </summary>
+    public int? WaitSeconds { get; set; }
+
     // ---- Коды действий (Action) ----
     public const string TargetListing = "listing";
     public const string TargetUser = "user";
     public const string TargetReport = "report";
 
+    /// <summary>Заявка на подтверждение бизнеса. TargetId — Id пользователя (PK business_profiles).</summary>
+    public const string TargetBusiness = "business";
+
     public const string ActionApproveListing = "listing.approve";
     public const string ActionRejectListing = "listing.reject";
+
+    /// <summary>
+    /// Вернуть автору на доработку: объявление уходит в черновик с причиной. В отличие
+    /// от отказа, не фиксирует <c>users.LastRejectedAt</c> и не закрывает автопубликацию.
+    /// </summary>
+    public const string ActionReviseListing = "listing.revise";
+
+    /// <summary>Объявление в очереди назначено модератору («Назначить на меня»).</summary>
+    public const string ActionAssignListing = "listing.assign";
+
+    /// <summary>Назначение снято — объявление вернулось в общую очередь.</summary>
+    public const string ActionUnassignListing = "listing.unassign";
     public const string ActionResolveReport = "report.resolve";
+
+    /// <summary>Модератор взял жалобу в работу (New → InReview, назначен на себя).</summary>
+    public const string ActionTakeReport = "report.take";
     public const string ActionBanUser = "user.ban";
     public const string ActionUnbanUser = "user.unban";
+
+    /// <summary>Предупреждение пользователю — санкция без бана.</summary>
+    public const string ActionWarnUser = "user.warn";
+
+    /// <summary>Запись чёрного списка карт. TargetId — Id записи (номера в журнале нет).</summary>
+    public const string TargetCard = "card";
+
+    public const string ActionBlockCard = "card.block";
+    public const string ActionUnblockCard = "card.unblock";
+    public const string ActionApproveBusiness = "business.approve";
+    public const string ActionRejectBusiness = "business.reject";
 
     /// <summary>Просмотр контактных данных пользователя (email/телефон) — чувствительное чтение.</summary>
     public const string ActionViewUserContacts = "user.view_contacts";

@@ -36,5 +36,8 @@ public class ReportConfiguration : IEntityTypeConfiguration<Report>
 
         // Дедуп жалобы авторизованного репортёра на конкретный объект.
         b.HasIndex(r => new { r.ReporterId, r.TargetType, r.TargetId });
+
+        // «Мои жалобы в работе» на экране жалоб модератора.
+        b.HasIndex(r => new { r.AssignedToUserId, r.Status });
     }
 }

@@ -255,3 +255,49 @@ public enum PublishMode
     /// <summary>Премодерация: в каталог не попадает до одобрения модератором.</summary>
     PreReview
 }
+
+/// <summary>
+/// Тип аккаунта. В БД (<c>business_profiles.AccountType</c>) хранится строкой.
+/// Отдельной регистрации для бизнеса нет: это режим обычного пользователя,
+/// включается сохранением реквизитов (<c>PUT /api/account/business</c>).
+/// Нет строки в <c>business_profiles</c> ⇒ <see cref="Private"/>.
+/// </summary>
+public enum AccountType
+{
+    Private,
+    Business
+}
+
+/// <summary>Организационно-правовая форма бизнеса. В БД хранится строкой.</summary>
+public enum LegalForm
+{
+    /// <summary>Индивидуальный предприниматель (ЕГРИП).</summary>
+    IndividualEntrepreneur,
+
+    /// <summary>Общество с ограниченной ответственностью (ЕГРЮЛ).</summary>
+    LimitedLiabilityCompany,
+
+    /// <summary>Иная форма (ЗАО, ГУП, КФХ и т. п.).</summary>
+    Other
+}
+
+/// <summary>
+/// Статус проверки бизнес-реквизитов. В БД хранится строкой.
+/// None → Pending (подача пользователем) → Verified | Rejected (решение модератора);
+/// Rejected → Pending (повторная подача после исправления).
+/// Verified и Rejected выставляет ТОЛЬКО модератор — публичного пути к ним нет.
+/// </summary>
+public enum BusinessVerificationStatus
+{
+    /// <summary>Реквизиты не подавались на проверку либо проверка снята (правка/возврат в Private).</summary>
+    None,
+
+    /// <summary>Заявка ждёт модератора. Реквизиты только на чтение.</summary>
+    Pending,
+
+    /// <summary>Подтверждено модератором — даёт бейдж «подтверждённый бизнес».</summary>
+    Verified,
+
+    /// <summary>Отклонено модератором с причиной. Можно исправить и подать повторно.</summary>
+    Rejected
+}

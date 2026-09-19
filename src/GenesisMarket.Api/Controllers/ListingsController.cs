@@ -3,8 +3,10 @@ using System.Text.Json;
 using FluentValidation;
 using FluentValidation.Results;
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Business;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
+using GenesisMarket.Api.Moderation;
 using GenesisMarket.Api.Outbox.Telegram;
 using GenesisMarket.Api.Profiles;
 using GenesisMarket.Api.Security;
@@ -34,6 +36,7 @@ public class ListingsController(
     IPublishingPolicy publishing,
     IAuthorizationService authorization,
     IListingModerationPolicy moderation,
+    ICardBlocklist cardBlocklist,
     IListingViewCounter viewCounter,
     IContactRevealService contactReveal,
     IPublicCodeResolver publicCodes,
@@ -416,8 +419,10 @@ public class ListingsController(
             // грузятся следующим — на этот момент их не может быть физически ни у кого,
             // и штраф «нет фото» ударил бы по всем без разбора. На редактировании и
             // восстановлении из архива признак уже считается по факту.
-            var decision = moderation.Resolve(
-                author, request.Title, request.Description, request.Price, request.Category, hasImages: true);
+            var decision = await cardBlocklist.EnforceAsync(
+                moderation.Resolve(author, request.Title, request.Description, request.Price, request.Category,
+                    hasImages: true),
+                request.Title, request.Description, ct);
             listing.Publish(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
 
             // Доверенный автор (Auto) — объявление одобрено сразу: в очередь канала в той же
@@ -471,9 +476,7 @@ public class ListingsController(
         if (substantial && listing.Status is ListingStatus.Active or ListingStatus.PendingReview)
         {
             var author = await db.Users.FirstAsync(u => u.Id == userId, ct);
-            var decision = moderation.Resolve(
-                author, listing.Title, listing.Description, listing.Price, listing.Category,
-                await HasImagesAsync(listing.Id, ct));
+            var decision = await ResolvePublishAsync(author, listing, ct);
 
             var wasInCatalog = listing.Status == ListingStatus.Active;
             listing.SendToReview(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
@@ -527,9 +530,7 @@ public class ListingsController(
         if (guard is not null)
             return guard;
 
-        var decision = moderation.Resolve(
-            author, listing.Title, listing.Description, listing.Price, listing.Category,
-            await HasImagesAsync(listing.Id, ct));
+        var decision = await ResolvePublishAsync(author, listing, ct);
         listing.Publish(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
 
         // Доверенный автор (Auto) — одобрено сразу, в очередь канала. Пре- и постмодерация ждут модератора.
@@ -681,9 +682,7 @@ public class ListingsController(
         // И та же политика модерации: свежий отказ модератора или рисковый текст
         // (объявление могли отредактировать, пока оно лежало в архиве) снова уводят
         // объявление на проверку.
-        var decision = moderation.Resolve(
-            author, listing.Title, listing.Description, listing.Price, listing.Category,
-            await HasImagesAsync(listing.Id, ct));
+        var decision = await ResolvePublishAsync(author, listing, ct);
         listing.RestoreFromArchive(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
 
         // Вернулось в каталог без проверки — снимаем пометку «Снято» с поста (или ставим в очередь,
@@ -849,6 +848,16 @@ public class ListingsController(
         db.ListingImages.AnyAsync(i => i.ListingId == listingId, ct);
 
     /// <summary>
+    /// Решение о проверке для уже существующего объявления: политика модерации плюс
+    /// чёрный список карт поверх неё (жёсткое правило, сильнее доверия автора).
+    /// </summary>
+    private async Task<PublishDecision> ResolvePublishAsync(User author, Listing listing, CancellationToken ct) =>
+        await cardBlocklist.EnforceAsync(
+            moderation.Resolve(author, listing.Title, listing.Description, listing.Price, listing.Category,
+                await HasImagesAsync(listing.Id, ct)),
+            listing.Title, listing.Description, ct);
+
+    /// <summary>
     /// Существенная ли правка — то есть меняет ли она то, что оценивала модерация:
     /// текст, цену и категорию. Город, район и состояние на решение не влияют,
     /// и гонять объявление по очереди из-за смены района незачем.
@@ -925,7 +934,7 @@ public class ListingsController(
     /// <summary>Мапит сущность в DTO, досчитывая daysUntilArchive и канонический URL по конфигурации.</summary>
     private async Task<ListingResponse> ToResponseAsync(
         Listing l, int contactRevealCount = 0, bool isFavorite = false, CancellationToken ct = default) =>
-        Map(l, await OwnerCodeAsync(l.OwnerId, ct),
+        Map(l, await SellerAsync(l.OwnerId, ct),
             contactRevealCount, isFavorite, DaysUntilArchive(l), CanonicalUrl(l.Slug),
             // Причина отклонения — только владельцу. DTO один и для публичной
             // карточки, и для «моих объявлений», поэтому условие здесь явное.
@@ -936,7 +945,7 @@ public class ListingsController(
                          || CurrentUser.Role is UserRole.Moderator or UserRole.Admin);
 
     private static ListingResponse Map(
-        Listing l, string ownerPublicCode,
+        Listing l, SellerBadge seller,
         int contactRevealCount, bool isFavorite, int? daysUntilArchive, string? canonicalUrl,
         bool isOwner, bool showRawText) => new(
         l.Id, l.Slug, l.Title,
@@ -946,7 +955,7 @@ public class ListingsController(
         showRawText ? l.Description : ListingContentRisk.RedactContacts(l.Description),
         l.Price, l.PriceType, l.Category,
         l.SubcategoryId, l.City, l.District, l.Condition, l.Status,
-        l.ViewsCount, ownerPublicCode, l.CreatedAt, l.PublishedAt, contactRevealCount,
+        l.ViewsCount, seller.PublicCode, l.CreatedAt, l.PublishedAt, contactRevealCount,
         l.FavoritesCount, isFavorite, daysUntilArchive,
         // Дальше — только именованные аргументы: хвост DTO состоит из
         // необязательных параметров, и позиционная передача молча уехала бы
@@ -955,26 +964,30 @@ public class ListingsController(
         RejectionComment: isOwner ? l.RejectionComment : null,
         RejectedAt: isOwner ? l.RejectedAt : null,
         CanonicalUrl: canonicalUrl,
-        IsExample: l.IsExample);
+        IsExample: l.IsExample,
+        SellerIsVerifiedBusiness: seller.IsVerifiedBusiness,
+        SellerShopName: seller.ShopName,
+        RevisionRequestedAt: isOwner ? l.RevisionRequestedAt : null);
 
     /// <summary>
-    /// «ID профиля» владельца по его Guid. Кеш — на время запроса (контроллер scoped):
-    /// в списке своих объявлений владелец один, и без кеша это был бы запрос на строку.
+    /// «ID профиля» владельца и бейдж бизнеса по его Guid — одним запросом. Кеш — на время
+    /// запроса (контроллер scoped): в списке своих объявлений владелец один, и без кеша
+    /// это был бы запрос на строку.
     /// </summary>
-    private readonly Dictionary<Guid, string> _ownerCodes = [];
+    private readonly Dictionary<Guid, SellerBadge> _sellers = [];
 
-    private async Task<string> OwnerCodeAsync(Guid ownerId, CancellationToken ct)
+    private async Task<SellerBadge> SellerAsync(Guid ownerId, CancellationToken ct)
     {
-        if (_ownerCodes.TryGetValue(ownerId, out var cached))
+        if (_sellers.TryGetValue(ownerId, out var cached))
             return cached;
 
-        var code = await db.Users.AsNoTracking()
+        var seller = await db.Users.AsNoTracking()
             .Where(u => u.Id == ownerId)
-            .Select(u => u.PublicCode)
+            .Select(SellerBadge.FromUser)
             .FirstAsync(ct);
 
-        _ownerCodes[ownerId] = code;
-        return code;
+        _sellers[ownerId] = seller;
+        return seller;
     }
 
     /// <summary>Канонический адрес карточки. null, если публичный адрес сайта не настроен.</summary>

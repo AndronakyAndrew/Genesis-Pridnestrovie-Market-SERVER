@@ -19,11 +19,8 @@ public sealed class SeoOptions
     /// <summary>Название площадки для суффикса &lt;title&gt; и поля seller/publisher в JSON-LD.</summary>
     public string SiteName { get; set; } = "Местная площадка Genesis";
 
-    /// <summary>
-    /// Срок жизни presigned-ссылки на og:image превью. Длинный намеренно: og-картинку
-    /// кэшируют соцсети/поисковики, короткий TTL давал бы «битые» превью в выдаче.
-    /// </summary>
-    public int OgImageTtlDays { get; set; } = 7;
+    // OgImageTtlDays удалён вместе с presigned-ссылкой в og:image: превью отдаётся
+    // публичным адресом {WebBaseUrl}/api/img/..., у которого нет срока годности.
 
     /// <summary>
     /// Порог, при превышении которого <c>/sitemap.xml</c> становится sitemap-index

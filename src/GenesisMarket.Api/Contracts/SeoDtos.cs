@@ -15,8 +15,16 @@ public record ListingMetaResponse(
     string CanonicalUrl,
     string OgTitle,
     string OgDescription,
-    /// <summary>Абсолютный URL превью для og:image. null — у объявления нет фото.</summary>
+    /// <summary>
+    /// Абсолютный публичный URL превью для og:image (<c>{сайт}/api/img/...</c>).
+    /// null — у объявления нет фото. Presigned-ссылки на бакет сюда не попадают:
+    /// внутренний хост и ключ доступа наружу не отдаём (см. <see cref="Seo.SeoUrls.ListingImage"/>).
+    /// </summary>
     string? OgImage,
+    /// <summary>Ширина og:image в пикселях. null — фото нет или размер неизвестен.</summary>
+    int? OgImageWidth,
+    /// <summary>Высота og:image в пикселях. null — фото нет или размер неизвестен.</summary>
+    int? OgImageHeight,
     /// <summary>
     /// true ⇒ страница снята с публикации (архив/продано): фронт обязан поставить
     /// &lt;meta name=robots content=noindex&gt;. Продублировано явным <see cref="NoIndex"/>.

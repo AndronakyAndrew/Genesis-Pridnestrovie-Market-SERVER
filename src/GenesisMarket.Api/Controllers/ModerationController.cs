@@ -1,15 +1,14 @@
-using System.Text.Json;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
+using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Moderation;
-using GenesisMarket.Api.Outbox.Telegram;
-using GenesisMarket.Api.Telegram.Channel;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace GenesisMarket.Api.Controllers;
 
@@ -27,7 +26,8 @@ public class ModerationController(
     IModerationAudit audit,
     IRefreshTokenService refreshTokens,
     SecurityStampValidator securityStamp,
-    IChannelPublisher channelPublisher,
+    IListingDecisions decisions,
+    IOptions<ModerationOptions> moderationOptions,
     ILogger<ModerationController> logger) : ApiControllerBase
 {
     private const int DefaultLimit = 20;
@@ -105,6 +105,8 @@ public class ModerationController(
                 x.SubcategoryId, x.City, x.District, x.Condition, x.Status, x.ViewsCount,
                 x.FavoritesCount, x.ModerationPriority, x.CreatedAt, x.PublishedAt, x.DeletedAt,
                 x.ReviewQueuedAt, x.ApprovedAt,
+                x.ReviewAssigneeId, x.ReviewAssignedAt, x.RevisionRequestedAt,
+                x.RejectionReasonCode, x.RejectionComment,
                 x.OwnerId,
                 OwnerCode = x.Owner!.PublicCode,
                 OwnerName = x.Owner.Profile!.DisplayName,
@@ -129,12 +131,28 @@ public class ModerationController(
                 r.CreatedAt))
             .ToListAsync(ct);
 
+        var owner = await ModerationReadModels.LoadUserAsync(db, Request, l.OwnerId, ct);
+        var assignee = l.ReviewAssigneeId is { } assigneeId
+            ? (await ModerationReadModels.LoadActorsAsync(db, [assigneeId], ct)).GetValueOrDefault(assigneeId)
+            : null;
+        var options = moderationOptions.Value;
+        var market = await MarketPrice.EstimateAsync(db, l.SubcategoryId, l.Id, options, ct);
+
         return Ok(new ModerationListingCard(
             l.Id, l.Slug, l.Title, l.Description, l.Price, l.PriceType, l.Category,
             l.SubcategoryId, l.City, l.District, l.Condition, l.Status, l.ViewsCount,
             l.FavoritesCount, l.ModerationPriority, l.CreatedAt, l.PublishedAt, l.DeletedAt,
             l.OwnerId, l.OwnerCode, l.OwnerName, l.OwnerBanned, reports,
-            l.ReviewQueuedAt, l.ApprovedAt, l.OwnerApprovedListings, l.OwnerLastRejectedAt));
+            l.ReviewQueuedAt, l.ApprovedAt, l.OwnerApprovedListings, l.OwnerLastRejectedAt,
+            Owner: owner,
+            Assignee: assignee,
+            ReviewAssignedAt: l.ReviewAssignedAt,
+            RevisionRequestedAt: l.RevisionRequestedAt,
+            RejectionReasonCode: l.RejectionReasonCode,
+            RejectionComment: l.RejectionComment,
+            MarketMedianPrice: market.Median,
+            MarketSampleSize: market.Sample,
+            ReviewSlaMinutes: options.ReviewSlaMinutes));
     }
 
     /// <summary>
@@ -145,45 +163,8 @@ public class ModerationController(
     /// объявление идёт в зачёт доверия автора (триггер listings_trust_sync).
     /// </summary>
     [HttpPost("listings/{id:guid}/approve")]
-    public async Task<ActionResult<ModerationActionResult>> Approve(Guid id, CancellationToken ct)
-    {
-        var listing = await db.Listings.IgnoreQueryFilters()
-            .FirstOrDefaultAsync(l => l.Id == id, ct);
-
-        if (listing is null)
-            return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
-        if (listing.ReviewQueuedAt is null)
-            return Problem(title: "Объявление не находится на модерации", statusCode: StatusCodes.Status409Conflict);
-
-        // Постмодерация: объявление уже в каталоге — на витрине одобрение ничего не меняет.
-        var wasInCatalog = listing.Status == ListingStatus.Active;
-        var now = DateTimeOffset.UtcNow;
-
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-
-        listing.Approve(now);
-
-        // Уведомление автора об одобрении — через outbox в той же транзакции.
-        db.OutboxMessages.Add(new OutboxMessage
-        {
-            Type = OutboxMessage.ListingApproved,
-            Payload = JsonSerializer.Serialize(new { listingId = id })
-        });
-
-        // Одобрение — момент анонса в Telegram-канал, в обоих режимах: при постмодерации объявление
-        // до проверки в канал не уходит. Здесь только строка очереди в этой же транзакции; пост
-        // отправит ChannelPublisherWorker с учётом интервала и рабочего окна.
-        await channelPublisher.EnqueueAsync(id, ct);
-
-        audit.Record(ModerationLog.ActionApproveListing, ModerationLog.TargetListing, id,
-            payload: new { postModeration = wasInCatalog });
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-
-        return Ok(new ModerationActionResult(wasInCatalog
-            ? "Объявление проверено и оставлено в каталоге."
-            : "Объявление одобрено и опубликовано."));
-    }
+    public Task<ActionResult<ModerationActionResult>> Approve(Guid id, CancellationToken ct) =>
+        DecideAsync(id, ListingDecision.Approve, reason: null, comment: null, ct);
 
     /// <summary>
     /// Отклонить объявление: → Rejected. Работает в обоих режимах; при постмодерации
@@ -193,17 +174,26 @@ public class ModerationController(
     /// <c>CatalogHygiene:RejectLookbackDays</c> закрывает автору автопубликацию.
     /// </summary>
     [HttpPost("listings/{id:guid}/reject")]
-    public async Task<ActionResult<ModerationActionResult>> Reject(
-        Guid id, RejectListingRequest request, CancellationToken ct)
-    {
-        var comment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim();
+    public Task<ActionResult<ModerationActionResult>> Reject(
+        Guid id, RejectListingRequest request, CancellationToken ct) =>
+        DecideAsync(id, ListingDecision.Reject, request.Reason, request.Comment, ct);
 
-        // Код Other ничего не объясняет сам по себе — без комментария автор
-        // останется ровно в том же положении, что и с общим «отклонено».
-        if (request.Reason == RejectionReasonCode.Other && comment is null)
-            return Problem(
-                title: "При причине «Другое» комментарий обязателен",
-                statusCode: StatusCodes.Status400BadRequest);
+    /// <summary>
+    /// Вернуть автору на доработку: объявление уходит в черновик с причиной. В отличие
+    /// от отказа, <c>users.LastRejectedAt</c> не фиксируется и автопубликация автору не
+    /// закрывается: исправил — публикует снова по обычным правилам.
+    /// </summary>
+    [HttpPost("listings/{id:guid}/revise")]
+    public Task<ActionResult<ModerationActionResult>> Revise(
+        Guid id, RejectListingRequest request, CancellationToken ct) =>
+        DecideAsync(id, ListingDecision.Revise, request.Reason, request.Comment, ct);
+
+    /// <summary>Одиночное решение: валидация причины, транзакция, решение, журнал — одним коммитом.</summary>
+    private async Task<ActionResult<ModerationActionResult>> DecideAsync(
+        Guid id, ListingDecision decision, RejectionReasonCode? reason, string? comment, CancellationToken ct)
+    {
+        if (IListingDecisions.ValidateReason(decision, reason, comment) is { } error)
+            return Problem(title: error, statusCode: StatusCodes.Status400BadRequest);
 
         var listing = await db.Listings.IgnoreQueryFilters()
             .FirstOrDefaultAsync(l => l.Id == id, ct);
@@ -213,44 +203,12 @@ public class ModerationController(
         if (listing.ReviewQueuedAt is null)
             return Problem(title: "Объявление не находится на модерации", statusCode: StatusCodes.Status409Conflict);
 
-        var wasInCatalog = listing.Status == ListingStatus.Active;
-        var now = DateTimeOffset.UtcNow;
-
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-
-        listing.Reject(request.Reason, comment, now);
-
-        // Уведомление автора — через outbox (в той же транзакции). Только идентификаторы
-        // и причина: текст письма/сообщения соберёт обработчик по типу.
-        db.OutboxMessages.Add(new OutboxMessage
-        {
-            Type = OutboxMessage.ListingRejected,
-            Payload = JsonSerializer.Serialize(new
-            {
-                listingId = id,
-                reason = request.Reason.ToString(),
-                comment
-            })
-        });
-
-        // Постмодерация: пост в канале уже висит — помечаем его снятым.
-        if (wasInCatalog)
-            db.OutboxMessages.Add(new OutboxMessage
-            {
-                Type = OutboxMessage.ListingChannelUpdate,
-                Payload = JsonSerializer.Serialize(new { listingId = id, mark = ChannelMark.Archived })
-            });
-
-        audit.Record(ModerationLog.ActionRejectListing, ModerationLog.TargetListing, id,
-            reason: comment,
-            payload: new { reason = request.Reason.ToString(), comment, postModeration = wasInCatalog });
-
+        var message = await decisions.ApplyAsync(listing, decision, reason, comment, ct);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        return Ok(new ModerationActionResult(wasInCatalog
-            ? "Объявление отклонено и снято с публикации, автор уведомлён."
-            : "Объявление отклонено, автор уведомлён."));
+        return Ok(new ModerationActionResult(message));
     }
 
     /// <summary>
@@ -290,7 +248,8 @@ public class ModerationController(
                 resolution,
                 targetType = report.TargetType.ToString(),
                 targetId = report.TargetId
-            });
+            },
+            waitSince: report.CreatedAt);
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -445,9 +404,73 @@ public class ModerationController(
         var bansToday = await db.ModerationLogs.CountAsync(
             m => m.Action == ModerationLog.ActionBanUser && m.CreatedAt >= todayStart, ct);
 
+        // ---- дашборд рабочего места ----
+        var now = DateTimeOffset.UtcNow;
+        var sla = moderationOptions.Value.ReviewSlaMinutes;
+        var overdueSince = now.AddMinutes(-sla);
+        var yesterdayStart = todayStart.AddDays(-1);
+
+        var revisionListings = await db.Listings.CountAsync(
+            l => l.RevisionRequestedAt != null && l.Status == ListingStatus.Draft, ct);
+        var inReviewReports = await db.Reports.CountAsync(r => r.Status == ReportStatus.InReview, ct);
+        var oldestQueuedAt = await db.Listings
+            .Where(l => l.ReviewQueuedAt != null)
+            .MinAsync(l => l.ReviewQueuedAt, ct);
+        var overdue = await db.Listings.CountAsync(
+            l => l.ReviewQueuedAt != null && l.ReviewQueuedAt < overdueSince, ct);
+        var actionsYesterday = await db.ModerationLogs.CountAsync(
+            m => m.CreatedAt >= yesterdayStart && m.CreatedAt < todayStart, ct);
+        var activeBans = await db.Users.CountAsync(
+            u => !u.IsDeleted && u.IsBanned && (u.BannedUntil == null || u.BannedUntil > now), ct);
+        var pendingBusiness = await db.BusinessProfiles.CountAsync(
+            b => b.Status == BusinessVerificationStatus.Pending, ct);
+
+        string[] listingDecisions =
+        [
+            ModerationLog.ActionApproveListing, ModerationLog.ActionRejectListing,
+            ModerationLog.ActionReviseListing
+        ];
+
+        // Решения за сутки — в память: их немного, а из них собираются и счётчики за
+        // сегодня, и SLA, и почасовая лента (разбивать это на пять запросов незачем).
+        var since = todayStart < now.AddHours(-12) ? todayStart : now.AddHours(-12);
+        var recent = await db.ModerationLogs.AsNoTracking()
+            .Where(m => m.CreatedAt >= since && listingDecisions.Contains(m.Action))
+            .Select(m => new { m.Action, m.CreatedAt, m.WaitSeconds })
+            .ToListAsync(ct);
+
+        var today = recent.Where(m => m.CreatedAt >= todayStart).ToList();
+        var measured = today.Where(m => m.WaitSeconds != null).ToList();
+        double? avgWait = measured.Count == 0 ? null : Math.Round(measured.Average(m => m.WaitSeconds!.Value), 1);
+        double? slaPercent = measured.Count == 0
+            ? null
+            : Math.Round(100.0 * measured.Count(m => m.WaitSeconds <= sla * 60) / measured.Count, 1);
+
+        var hourly = new int[12];
+        foreach (var m in recent)
+        {
+            var hoursAgo = (int)Math.Floor((now - m.CreatedAt).TotalHours);
+            if (hoursAgo is >= 0 and < 12)
+                hourly[11 - hoursAgo]++;
+        }
+
         return Ok(new ModerationStats(
             pendingListings, openReports, pendingListings + postReviewListings + openReports,
-            actionsToday, actionsThisWeek, bansToday, postReviewListings));
+            actionsToday, actionsThisWeek, bansToday, postReviewListings,
+            RevisionListings: revisionListings,
+            InReviewReports: inReviewReports,
+            ApprovalsToday: today.Count(m => m.Action == ModerationLog.ActionApproveListing),
+            RejectionsToday: today.Count(m => m.Action == ModerationLog.ActionRejectListing),
+            RevisionsToday: today.Count(m => m.Action == ModerationLog.ActionReviseListing),
+            ActionsYesterday: actionsYesterday,
+            ActiveBans: activeBans,
+            PendingBusinessApplications: pendingBusiness,
+            OldestQueuedAt: oldestQueuedAt,
+            OverdueListings: overdue,
+            ReviewSlaMinutes: sla,
+            AvgWaitSecondsToday: avgWait,
+            SlaPercentToday: slaPercent,
+            DecisionsLast12h: hourly));
     }
 
     // ---- queue helpers ----

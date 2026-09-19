@@ -145,6 +145,27 @@ public class Listing : BaseEntity, IOwnedResource
     /// <summary>Когда отклонили. null ⇒ объявление не отклоняли (либо отказ снят).</summary>
     public DateTimeOffset? RejectedAt { get; private set; }
 
+    /// <summary>
+    /// Когда модератор вернул объявление автору на доработку (<see cref="RequestRevision"/>).
+    /// Заполнено вместе с <see cref="RejectionReasonCode"/> у черновика: причина та же,
+    /// но это не отказ — <see cref="RejectedAt"/> пуст, и триггер доверия автора
+    /// (<c>listings_trust_sync</c>, реагирует на переход в rejected) не срабатывает.
+    /// Снимается вместе с причиной при повторной публикации.
+    /// </summary>
+    public DateTimeOffset? RevisionRequestedAt { get; private set; }
+
+    // ---- Назначение модератору ----
+
+    /// <summary>
+    /// Модератор, взявший объявление из очереди на себя («Назначить на меня»).
+    /// Только организационная метка: решать может любой модератор. Снимается любым
+    /// решением — объявление уходит из очереди.
+    /// </summary>
+    public Guid? ReviewAssigneeId { get; private set; }
+
+    /// <summary>Когда объявление назначено модератору.</summary>
+    public DateTimeOffset? ReviewAssignedAt { get; private set; }
+
     // Владелец. Проверяется на сервере в каждом мутирующем эндпоинте.
     public Guid OwnerId { get; set; }
     public User? Owner { get; set; }
@@ -264,6 +285,7 @@ public class Listing : BaseEntity, IOwnedResource
         ReviewQueuedAt = null;
         ModerationPriority = 0;
         ArchiveWarningAt = null;
+        ClearAssignment();
         // Одобрение снимает прошлый отказ: иначе у активного объявления
         // осталась бы висеть причина, по которой его когда-то отклонили.
         ClearRejection();
@@ -289,9 +311,56 @@ public class Listing : BaseEntity, IOwnedResource
         RejectionReasonCode = reason;
         RejectionComment = string.IsNullOrWhiteSpace(comment) ? null : comment.Trim();
         RejectedAt = now;
+        RevisionRequestedAt = null;
         ReviewQueuedAt = null;
         ModerationPriority = 0;
+        ClearAssignment();
         UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Вернуть автору на доработку: снимает с очереди и переводит в черновик с причиной.
+    /// Отличие от <see cref="Reject"/> — это не отказ: статус Draft, а не Rejected, поэтому
+    /// триггер доверия не фиксирует автору <c>LastRejectedAt</c> и автопубликация ему не
+    /// закрывается. Автор правит черновик и публикует заново; <see cref="Publish"/> снимет
+    /// причину. Пост в канале (если объявление было в каталоге) снимает вызывающий.
+    /// </summary>
+    public void RequestRevision(RejectionReasonCode reason, string? comment, DateTimeOffset now)
+    {
+        if (ReviewQueuedAt is null)
+            throw new InvalidOperationException("Объявление не находится в очереди модерации.");
+
+        Status = ListingStatus.Draft;
+        RejectionReasonCode = reason;
+        RejectionComment = string.IsNullOrWhiteSpace(comment) ? null : comment.Trim();
+        RejectedAt = null;
+        RevisionRequestedAt = now;
+        ReviewQueuedAt = null;
+        ModerationPriority = 0;
+        ClearAssignment();
+        UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Назначить объявление в очереди модератору. Повторное назначение перезаписывает —
+    /// проверку «не перехватывать чужое» делает вызывающий (он же знает про force).
+    /// </summary>
+    public void AssignReview(Guid moderatorId, DateTimeOffset now)
+    {
+        if (ReviewQueuedAt is null)
+            throw new InvalidOperationException("Объявление не находится в очереди модерации.");
+
+        ReviewAssigneeId = moderatorId;
+        ReviewAssignedAt = now;
+    }
+
+    /// <summary>Снять назначение (вернуть объявление в общую очередь).</summary>
+    public void UnassignReview() => ClearAssignment();
+
+    private void ClearAssignment()
+    {
+        ReviewAssigneeId = null;
+        ReviewAssignedAt = null;
     }
 
     /// <summary>
@@ -403,5 +472,6 @@ public class Listing : BaseEntity, IOwnedResource
         RejectionReasonCode = null;
         RejectionComment = null;
         RejectedAt = null;
+        RevisionRequestedAt = null;
     }
 }

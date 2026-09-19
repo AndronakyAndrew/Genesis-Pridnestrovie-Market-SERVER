@@ -102,7 +102,25 @@ public record ModerationListingCard(
     /// <summary>Сколько объявлений автора уже одобрено — контекст для решения модератора.</summary>
     int OwnerApprovedListings = 0,
     /// <summary>Когда автор последний раз получал отказ. null — отказов не было.</summary>
-    DateTimeOffset? OwnerLastRejectedAt = null);
+    DateTimeOffset? OwnerLastRejectedAt = null,
+    /// <summary>Досье автора одной строкой (без контактов) — со счётчиками и сетевым сигналом.</summary>
+    ModerationUserItem? Owner = null,
+    /// <summary>Модератор, на которого назначено объявление в очереди.</summary>
+    ModerationActor? Assignee = null,
+    DateTimeOffset? ReviewAssignedAt = null,
+    /// <summary>Возвращено на доработку (черновик с причиной). null — не возвращалось.</summary>
+    DateTimeOffset? RevisionRequestedAt = null,
+    /// <summary>Причина последнего отказа или доработки — модератору видна всегда.</summary>
+    RejectionReasonCode? RejectionReasonCode = null,
+    string? RejectionComment = null,
+    /// <summary>
+    /// Медиана фиксированных цен подкатегории за окно Moderation:MarketWindowDays.
+    /// null — выборка меньше Moderation:MarketMinSample. Подсказка, не правило.
+    /// </summary>
+    decimal? MarketMedianPrice = null,
+    int MarketSampleSize = 0,
+    /// <summary>Норматив ожидания в очереди, минут (для «просрочено SLA»).</summary>
+    int ReviewSlaMinutes = 0);
 
 /// <summary>Открытая жалоба в карточке объявления.</summary>
 public record ModerationReportItem(
@@ -165,7 +183,32 @@ public record ModerationStats(
     int ActionsThisWeek,
     int BansToday,
     /// <summary>Постмодерация: объявления уже в каталоге, но ждут выборочной проверки.</summary>
-    int PostReviewListings = 0);
+    int PostReviewListings = 0,
+    // ---- дашборд рабочего места (добавлены в конец: старый клиент их не читает) ----
+    /// <summary>Возвращены автору на доработку и ещё не переопубликованы.</summary>
+    int RevisionListings = 0,
+    /// <summary>Жалобы, взятые в работу (InReview).</summary>
+    int InReviewReports = 0,
+    int ApprovalsToday = 0,
+    int RejectionsToday = 0,
+    int RevisionsToday = 0,
+    int ActionsYesterday = 0,
+    int ActiveBans = 0,
+    int PendingBusinessApplications = 0,
+    /// <summary>Самое старое объявление в очереди — момент постановки. null — очередь пуста.</summary>
+    DateTimeOffset? OldestQueuedAt = null,
+    /// <summary>Объявлений в очереди дольше норматива <see cref="ReviewSlaMinutes"/>.</summary>
+    int OverdueListings = 0,
+    int ReviewSlaMinutes = 0,
+    /// <summary>Среднее ожидание решения сегодня, секунд. null — решений с замером не было.</summary>
+    double? AvgWaitSecondsToday = null,
+    /// <summary>Доля решений сегодня в пределах норматива, %. null — решений не было.</summary>
+    double? SlaPercentToday = null,
+    /// <summary>
+    /// Решения по объявлениям за последние 12 часов по часам: [0] — 12 часов назад,
+    /// [11] — текущий час. Не привязано к часовому поясу — «последние N часов».
+    /// </summary>
+    IReadOnlyList<int>? DecisionsLast12h = null);
 
 /// <summary>Результат простого действия модератора (approve/resolve/ban/unban).</summary>
 public record ModerationActionResult(string Message);

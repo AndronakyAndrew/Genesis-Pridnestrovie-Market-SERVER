@@ -30,6 +30,130 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "pg_trgm");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.BlockedCard", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CardHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Last4")
+                        .IsRequired()
+                        .HasMaxLength(4)
+                        .HasColumnType("character varying(4)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("SourceReportId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CardHash")
+                        .IsUnique();
+
+                    b.HasIndex("CreatedAt");
+
+                    b.ToTable("blocked_cards", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_blocked_cards_last4", "\"Last4\" ~ '^[0-9]{4}$'");
+
+                            t.HasCheckConstraint("ck_blocked_cards_reason_length", "char_length(\"Reason\") <= 500");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.BusinessProfile", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccountType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LegalForm")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("PickupAddress")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("RegistrationNumber")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<int>("RejectionCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RejectionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReviewedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ShopName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("Status")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTimeOffset?>("SubmittedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId");
+
+                    b.HasIndex("RegistrationNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ux_business_profiles_verified_registration_number")
+                        .HasFilter("\"Status\" = 'Verified'");
+
+                    b.HasIndex("Status", "SubmittedAt");
+
+                    b.ToTable("business_profiles", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_business_profiles_decision_attributed", "\"Status\" NOT IN ('Verified', 'Rejected') OR (\"ReviewedAt\" IS NOT NULL AND \"ReviewedByUserId\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_business_profiles_pending_submitted", "\"Status\" <> 'Pending' OR \"SubmittedAt\" IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_business_profiles_rejection_reason", "\"Status\" <> 'Rejected' OR \"RejectionReason\" IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_business_profiles_status_requires_business", "\"Status\" IN ('None', 'Rejected') OR \"AccountType\" = 'Business'");
+                        });
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.ChannelPostQueue", b =>
                 {
                     b.Property<Guid>("Id")
@@ -312,7 +436,16 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .HasMaxLength(24)
                         .HasColumnType("character varying(24)");
 
+                    b.Property<DateTimeOffset?>("ReviewAssignedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReviewAssigneeId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTimeOffset?>("ReviewQueuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("RevisionRequestedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<NpgsqlTsVector>("SearchVector")
@@ -359,6 +492,12 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(0);
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ReviewAssigneeId")
+                        .HasFilter("\"ReviewAssigneeId\" IS NOT NULL");
+
+                    b.HasIndex("RevisionRequestedAt")
+                        .HasFilter("\"RevisionRequestedAt\" IS NOT NULL");
 
                     b.HasIndex("SearchVector");
 
@@ -510,6 +649,9 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<int?>("WaitSeconds")
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 
@@ -733,6 +875,8 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CreatedByIpHash");
+
                     b.HasIndex("TokenHash")
                         .IsUnique();
 
@@ -747,6 +891,12 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("AssignedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("AssignedToUserId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Comment")
@@ -797,6 +947,8 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AssignedToUserId", "Status");
 
                     b.HasIndex("Status", "CreatedAt");
 
@@ -1309,6 +1461,9 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LastRejectedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTimeOffset?>("LastWarnedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -1345,6 +1500,9 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("WarningsCount")
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 
@@ -1397,6 +1555,17 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.HasIndex("UserId", "Channel", "CreatedAt");
 
                     b.ToTable("verification_codes", (string)null);
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.BusinessProfile", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.User", "User")
+                        .WithOne("BusinessProfile")
+                        .HasForeignKey("GenesisMarket.Domain.Entities.BusinessProfile", "UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.ChannelPostQueue", b =>
@@ -1602,6 +1771,8 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.User", b =>
                 {
+                    b.Navigation("BusinessProfile");
+
                     b.Navigation("Favorites");
 
                     b.Navigation("Listings");
