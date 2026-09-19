@@ -288,6 +288,14 @@ public class MeController(
 
         await db.SaveChangesAsync(ct);
 
+        // Бизнес-реквизиты (адрес точки, регистрационный номер ИП) — данные о человеке:
+        // при удалении аккаунта строка стирается целиком, а не анонимизируется.
+        // История решений модератора остаётся в moderation_logs: там Id, причина отказа
+        // и публичное название магазина — без номера и адреса.
+        await db.BusinessProfiles
+            .Where(b => b.UserId == userId)
+            .ExecuteDeleteAsync(ct);
+
         await db.Listings
             .Where(l => l.OwnerId == userId && l.Status == ListingStatus.Active)
             .ExecuteUpdateAsync(s => s

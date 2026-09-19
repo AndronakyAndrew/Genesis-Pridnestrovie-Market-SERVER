@@ -35,6 +35,13 @@ public static class RateLimitPolicies
     /// без лимита его можно обойти целиком за считанные минуты.
     /// </summary>
     public const string ProfileByCode = "profile-by-code";
+
+    /// <summary>
+    /// Подача бизнес-заявки на проверку: на пользователя. Грубая защита от долбёжки;
+    /// настоящее правило частоты — пауза после отказа по данным заявки в БД
+    /// (BusinessAccountService), её рестарт контейнера не обнуляет.
+    /// </summary>
+    public const string BusinessSubmit = "business-submit";
 }
 
 /// <summary>
@@ -70,6 +77,9 @@ public sealed class RateLimitOptions
 
     /// <summary>Форма обратной связи, запросов в час на пользователя (авторизован).</summary>
     public int FeedbackUserPerHour { get; set; } = 20;
+
+    /// <summary>Подача бизнес-заявки на проверку, запросов в час на пользователя.</summary>
+    public int BusinessSubmitPerHour { get; set; } = 5;
 }
 
 public static class RateLimitingSetup
@@ -112,6 +122,10 @@ public static class RateLimitingSetup
             // Создание объявления — на пользователя (эндпоинт требует аутентификации).
             options.AddPolicy(RateLimitPolicies.CreateListing, ctx =>
                 FixedByKey($"listing:u:{UserOrIp(ctx)}", rl.CreateListingPerHour, TimeSpan.FromHours(1)));
+
+            // Подача бизнес-заявки — на пользователя (эндпоинт требует аутентификации).
+            options.AddPolicy(RateLimitPolicies.BusinessSubmit, ctx =>
+                FixedByKey($"business-submit:u:{UserOrIp(ctx)}", rl.BusinessSubmitPerHour, TimeSpan.FromHours(1)));
 
             // Раскрытие контактов: авторизованный — на пользователя (30), аноним — на IP (10).
             options.AddPolicy(RateLimitPolicies.Contact, ctx => UserId(ctx) is { } uid

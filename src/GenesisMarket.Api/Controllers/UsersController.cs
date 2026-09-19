@@ -70,6 +70,7 @@ public class UsersController(
         var user = await db.Users
             .AsNoTracking()
             .Include(u => u.Profile)
+            .Include(u => u.BusinessProfile)
             .FirstOrDefaultAsync(u => u.Id == id, ct);
 
         if (user is null || user.IsDeleted || user.Profile is null)
@@ -80,6 +81,12 @@ public class UsersController(
 
         // Дата регистрации — только месяц и год (первое число месяца).
         var registeredAt = new DateOnly(user.CreatedAt.Year, user.CreatedAt.Month, 1);
+
+        // Реквизиты — только подтверждённого бизнеса. Вернувшийся в Private или
+        // не прошедший проверку ничего из них публично не показывает.
+        var business = user.BusinessProfile is { IsVerifiedBusiness: true } b
+            ? new PublicBusinessInfo(b.ShopName, b.LegalForm, b.RegistrationNumber, b.PickupAddress)
+            : null;
 
         return Ok(new PublicProfileResponse(
             // «ID профиля» — то, чем продавца называют в переписке и в поддержке.
@@ -96,7 +103,9 @@ public class UsersController(
             // Денормализованный агрегат отзывов (поддерживается триггером reviews_rating_sync).
             AverageRating: user.AverageRating,
             ReviewsCount: user.ReviewsCount,
-            user.PhoneVerified));
+            user.PhoneVerified,
+            IsVerifiedBusiness: business is not null,
+            Business: business));
     }
 
     private async Task<IActionResult> AvatarAsync(Expression<Func<Profile, bool>> match, CancellationToken ct)

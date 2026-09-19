@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Business;
 using GenesisMarket.Api.Configuration;
 using GenesisMarket.Api.Feedback;
 using GenesisMarket.Api.Listings;
@@ -102,6 +103,9 @@ try
 
     // ---- Инструменты модератора: очередь, действия, аудит-журнал ----
     builder.Services.AddModerationFeature();
+
+    // ---- Бизнес-режим аккаунта: реквизиты, подача на проверку, решения модератора ----
+    builder.Services.AddBusinessFeature(builder.Configuration);
 
     // ---- Форма обратной связи: письма через Resend (уведомление на служебный адрес) ----
     builder.Services.AddFeedbackFeature(builder.Configuration, builder.Environment);

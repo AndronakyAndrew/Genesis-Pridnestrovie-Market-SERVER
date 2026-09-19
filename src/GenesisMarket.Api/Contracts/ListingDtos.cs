@@ -55,7 +55,14 @@ public record ListingResponse(
     /// Демонстрационное объявление (пример от модератора). Контакты по нему не
     /// раскрываются. Поле добавлено в конец: старый клиент его просто не читает.
     /// </summary>
-    bool IsExample = false);
+    bool IsExample = false,
+    /// <summary>
+    /// Продавец — подтверждённый бизнес (режим Business + проверка модератором).
+    /// Основание для бейджа. Реквизиты в карточку не попадают — только в публичный профиль.
+    /// </summary>
+    bool SellerIsVerifiedBusiness = false,
+    /// <summary>Название магазина. Заполнено только при <see cref="SellerIsVerifiedBusiness"/>.</summary>
+    string? SellerShopName = null);
 
 /// <summary>
 /// Создание объявления. Валидируется FluentValidation (см. CreateListingRequestValidator).

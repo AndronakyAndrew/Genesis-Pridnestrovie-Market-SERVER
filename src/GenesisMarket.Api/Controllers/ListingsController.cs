@@ -3,6 +3,7 @@ using System.Text.Json;
 using FluentValidation;
 using FluentValidation.Results;
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Business;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Outbox.Telegram;
@@ -925,7 +926,7 @@ public class ListingsController(
     /// <summary>Мапит сущность в DTO, досчитывая daysUntilArchive и канонический URL по конфигурации.</summary>
     private async Task<ListingResponse> ToResponseAsync(
         Listing l, int contactRevealCount = 0, bool isFavorite = false, CancellationToken ct = default) =>
-        Map(l, await OwnerCodeAsync(l.OwnerId, ct),
+        Map(l, await SellerAsync(l.OwnerId, ct),
             contactRevealCount, isFavorite, DaysUntilArchive(l), CanonicalUrl(l.Slug),
             // Причина отклонения — только владельцу. DTO один и для публичной
             // карточки, и для «моих объявлений», поэтому условие здесь явное.
@@ -936,7 +937,7 @@ public class ListingsController(
                          || CurrentUser.Role is UserRole.Moderator or UserRole.Admin);
 
     private static ListingResponse Map(
-        Listing l, string ownerPublicCode,
+        Listing l, SellerBadge seller,
         int contactRevealCount, bool isFavorite, int? daysUntilArchive, string? canonicalUrl,
         bool isOwner, bool showRawText) => new(
         l.Id, l.Slug, l.Title,
@@ -946,7 +947,7 @@ public class ListingsController(
         showRawText ? l.Description : ListingContentRisk.RedactContacts(l.Description),
         l.Price, l.PriceType, l.Category,
         l.SubcategoryId, l.City, l.District, l.Condition, l.Status,
-        l.ViewsCount, ownerPublicCode, l.CreatedAt, l.PublishedAt, contactRevealCount,
+        l.ViewsCount, seller.PublicCode, l.CreatedAt, l.PublishedAt, contactRevealCount,
         l.FavoritesCount, isFavorite, daysUntilArchive,
         // Дальше — только именованные аргументы: хвост DTO состоит из
         // необязательных параметров, и позиционная передача молча уехала бы
@@ -955,26 +956,29 @@ public class ListingsController(
         RejectionComment: isOwner ? l.RejectionComment : null,
         RejectedAt: isOwner ? l.RejectedAt : null,
         CanonicalUrl: canonicalUrl,
-        IsExample: l.IsExample);
+        IsExample: l.IsExample,
+        SellerIsVerifiedBusiness: seller.IsVerifiedBusiness,
+        SellerShopName: seller.ShopName);
 
     /// <summary>
-    /// «ID профиля» владельца по его Guid. Кеш — на время запроса (контроллер scoped):
-    /// в списке своих объявлений владелец один, и без кеша это был бы запрос на строку.
+    /// «ID профиля» владельца и бейдж бизнеса по его Guid — одним запросом. Кеш — на время
+    /// запроса (контроллер scoped): в списке своих объявлений владелец один, и без кеша
+    /// это был бы запрос на строку.
     /// </summary>
-    private readonly Dictionary<Guid, string> _ownerCodes = [];
+    private readonly Dictionary<Guid, SellerBadge> _sellers = [];
 
-    private async Task<string> OwnerCodeAsync(Guid ownerId, CancellationToken ct)
+    private async Task<SellerBadge> SellerAsync(Guid ownerId, CancellationToken ct)
     {
-        if (_ownerCodes.TryGetValue(ownerId, out var cached))
+        if (_sellers.TryGetValue(ownerId, out var cached))
             return cached;
 
-        var code = await db.Users.AsNoTracking()
+        var seller = await db.Users.AsNoTracking()
             .Where(u => u.Id == ownerId)
-            .Select(u => u.PublicCode)
+            .Select(SellerBadge.FromUser)
             .FirstAsync(ct);
 
-        _ownerCodes[ownerId] = code;
-        return code;
+        _sellers[ownerId] = seller;
+        return seller;
     }
 
     /// <summary>Канонический адрес карточки. null, если публичный адрес сайта не настроен.</summary>

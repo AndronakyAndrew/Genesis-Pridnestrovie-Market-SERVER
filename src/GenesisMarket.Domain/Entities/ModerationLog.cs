@@ -35,11 +35,16 @@ public class ModerationLog
     public const string TargetUser = "user";
     public const string TargetReport = "report";
 
+    /// <summary>Заявка на подтверждение бизнеса. TargetId — Id пользователя (PK business_profiles).</summary>
+    public const string TargetBusiness = "business";
+
     public const string ActionApproveListing = "listing.approve";
     public const string ActionRejectListing = "listing.reject";
     public const string ActionResolveReport = "report.resolve";
     public const string ActionBanUser = "user.ban";
     public const string ActionUnbanUser = "user.unban";
+    public const string ActionApproveBusiness = "business.approve";
+    public const string ActionRejectBusiness = "business.reject";
 
     /// <summary>Просмотр контактных данных пользователя (email/телефон) — чувствительное чтение.</summary>
     public const string ActionViewUserContacts = "user.view_contacts";

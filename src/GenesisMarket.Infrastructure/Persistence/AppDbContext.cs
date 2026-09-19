@@ -11,6 +11,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 {
     public DbSet<User> Users => Set<User>();
     public DbSet<Profile> Profiles => Set<Profile>();
+    public DbSet<BusinessProfile> BusinessProfiles => Set<BusinessProfile>();
     public DbSet<Listing> Listings => Set<Listing>();
     public DbSet<Subcategory> Subcategories => Set<Subcategory>();
     public DbSet<ListingImage> ListingImages => Set<ListingImage>();
