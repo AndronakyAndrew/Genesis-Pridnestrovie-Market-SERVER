@@ -69,6 +69,12 @@ public class ModerationLog
 
     /// <summary>Предупреждение пользователю — санкция без бана.</summary>
     public const string ActionWarnUser = "user.warn";
+
+    /// <summary>Запись чёрного списка карт. TargetId — Id записи (номера в журнале нет).</summary>
+    public const string TargetCard = "card";
+
+    public const string ActionBlockCard = "card.block";
+    public const string ActionUnblockCard = "card.unblock";
     public const string ActionApproveBusiness = "business.approve";
     public const string ActionRejectBusiness = "business.reject";
 

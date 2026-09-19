@@ -10,6 +10,10 @@ public static class ModerationServiceCollectionExtensions
 
         // Решения по объявлениям — одно место для одиночных и пакетных ручек.
         services.AddScoped<IListingDecisions, ListingDecisions>();
+
+        // Чёрный список карт: хеш номера и применение к публикации.
+        services.AddSingleton<ICardHasher, HmacCardHasher>();
+        services.AddScoped<ICardBlocklist, CardBlocklist>();
         return services;
     }
 }

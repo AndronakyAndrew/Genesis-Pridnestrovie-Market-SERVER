@@ -23,7 +23,8 @@ public static class ModerationReadModels
         City City, UserRole Role, DateTimeOffset CreatedAt, bool EmailVerified, bool PhoneVerified,
         bool IsBanned, DateTimeOffset? BannedUntil, int ActiveListings, int ApprovedListings,
         double? AverageRating, int ReviewsCount, int OpenReports, DateTimeOffset? LastRejectedAt,
-        bool IsVerifiedBusiness, string? ShopName, DateTimeOffset? LastSeenAt, string? LastIpPrefix);
+        bool IsVerifiedBusiness, string? ShopName, DateTimeOffset? LastSeenAt, string? LastIpPrefix,
+        int WarningsCount, DateTimeOffset? LastWarnedAt);
 
     /// <summary>
     /// Проекция пользователей в строку реестра. Счётчики — коррелированные подзапросы:
@@ -66,7 +67,9 @@ public static class ModerationReadModels
             db.RefreshTokens.Where(t => t.UserId == u.Id)
                 .OrderByDescending(t => t.CreatedAt)
                 .Select(t => t.IpPrefix)
-                .FirstOrDefault()));
+                .FirstOrDefault(),
+            u.WarningsCount,
+            u.LastWarnedAt));
 
     public static ModerationUserItem ToItem(this UserRow r, HttpRequest request, int? sharedNetwork = null) => new(
         r.Id, r.PublicCode, r.DisplayName,
@@ -74,7 +77,9 @@ public static class ModerationReadModels
         r.City, r.Role, r.CreatedAt, r.EmailVerified, r.PhoneVerified, r.IsBanned, r.BannedUntil,
         r.ActiveListings, r.ApprovedListings, r.AverageRating, r.ReviewsCount, r.OpenReports,
         r.LastRejectedAt, r.IsVerifiedBusiness, r.ShopName, r.LastSeenAt, r.LastIpPrefix,
-        SharedNetworkAccounts: sharedNetwork);
+        SharedNetworkAccounts: sharedNetwork,
+        WarningsCount: r.WarningsCount,
+        LastWarnedAt: r.LastWarnedAt);
 
     /// <summary>Строка одного пользователя (для карточек) — вместе с сетевым сигналом.</summary>
     public static async Task<ModerationUserItem?> LoadUserAsync(
@@ -208,6 +213,18 @@ public static class ModerationReadModels
             foreach (var r in rows)
                 result[(TargetReview, r.Id)] = new ModerationTargetRef(
                     TargetReview, r.Id, Snippet(r.Text, 80), r.AuthorCode);
+        }
+
+        var cardIds = IdsOf(all, ModerationLog.TargetCard);
+        if (cardIds.Count > 0)
+        {
+            var rows = await db.BlockedCards.AsNoTracking()
+                .Where(c => cardIds.Contains(c.Id))
+                .Select(c => new { c.Id, c.Last4 })
+                .ToListAsync(ct);
+            foreach (var c in rows)
+                result[(ModerationLog.TargetCard, c.Id)] = new ModerationTargetRef(
+                    ModerationLog.TargetCard, c.Id, "…" + c.Last4);
         }
 
         // Всё, что не нашлось, — ссылка-заглушка: строка журнала не должна пропадать.

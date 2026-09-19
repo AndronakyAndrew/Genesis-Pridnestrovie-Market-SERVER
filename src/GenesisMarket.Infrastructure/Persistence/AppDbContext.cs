@@ -27,6 +27,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Review> Reviews => Set<Review>();
     public DbSet<Report> Reports => Set<Report>();
     public DbSet<ModerationLog> ModerationLogs => Set<ModerationLog>();
+    public DbSet<BlockedCard> BlockedCards => Set<BlockedCard>();
     public DbSet<SavedSearch> SavedSearches => Set<SavedSearch>();
     public DbSet<FeedbackMessage> FeedbackMessages => Set<FeedbackMessage>();
     public DbSet<ChannelPostQueue> ChannelPostQueue => Set<ChannelPostQueue>();

@@ -135,7 +135,9 @@ public enum ModerationUsersTab
     /// <summary>Модераторы и администраторы.</summary>
     Staff,
     /// <summary>Подтверждённый бизнес.</summary>
-    Business
+    Business,
+    /// <summary>Есть хотя бы одно предупреждение.</summary>
+    Warned
 }
 
 public record ModerationUsersQuery
@@ -185,7 +187,10 @@ public record ModerationUserItem(
     /// а не доказательство: общий NAT оператора связи даёт совпадения честным людям.
     /// null — в списке не считается (дорого), только в карточке.
     /// </summary>
-    int? SharedNetworkAccounts = null);
+    int? SharedNetworkAccounts = null,
+    /// <summary>Сколько предупреждений вынесено (санкция без бана).</summary>
+    int WarningsCount = 0,
+    DateTimeOffset? LastWarnedAt = null);
 
 public record ModerationUsersPage(IReadOnlyList<ModerationUserItem> Items, string? NextCursor, bool HasMore);
 
@@ -446,3 +451,24 @@ public record BulkFailure(Guid Id, string Error);
 
 /// <summary>Итог пакета: что сделано и что пропущено (пакет не падает целиком из-за одного id).</summary>
 public record BulkResult(IReadOnlyList<Guid> Succeeded, IReadOnlyList<BulkFailure> Failed);
+
+// ---- санкции ----
+
+/// <summary>Предупреждение пользователю. Причина обязательна — она уходит в журнал и в досье.</summary>
+public record WarnUserRequest([Required][MaxLength(500)] string Reason);
+
+/// <summary>
+/// Внести карту в чёрный список. Номер принимается один раз и сразу превращается в
+/// HMAC + последние 4 цифры; в ответах и журнале его нет.
+/// </summary>
+public record BlockCardRequest(
+    [Required][MaxLength(40)] string CardNumber,
+    [Required][MaxLength(500)] string Reason,
+    /// <summary>Жалоба, по которой карту вносят (для истории). Необязательно.</summary>
+    Guid? SourceReportId);
+
+/// <summary>Запись чёрного списка карт — без номера.</summary>
+public record BlockedCardItem(
+    Guid Id, string Last4, string Reason, Guid? SourceReportId, ModerationActor CreatedBy, DateTimeOffset CreatedAt);
+
+public record BlockedCardsPage(IReadOnlyList<BlockedCardItem> Items, string? NextCursor, bool HasMore);

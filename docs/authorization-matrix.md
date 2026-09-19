@@ -74,7 +74,8 @@ User → 403. Каждое действие пишется в `moderation_logs` 
 | `POST reports/{id}/resolve`, `POST users/{id}/{ban,unban}`, `GET stats` | Жалобы, баны, счётчики | `ModerationController` |
 | `GET users/{id}`, `GET users/by-code/{code}` | **Контакты** (email/телефон). Единственные ручки с контактами; каждый вызов журналируется | `ModerationController.UserContactsAsync` |
 | `GET logs`, `GET logs/summary`, `GET logs/actors` | Журнал действий (только чтение) | `ModerationJournalController` |
-| `GET users`, `GET users/summary`, `GET users/{id}/dossier` | Реестр и досье **без контактов**; email в поиске не участвует | `ModerationUsersController` |
+| `GET users`, `GET users/summary`, `GET users/{id}/dossier`, `POST users/{id}/warn` | Реестр и досье **без контактов**; email в поиске не участвует. Предупреждение — не себе и не администратору | `ModerationUsersController` |
+| `GET blocked-cards`, `POST blocked-cards`, `DELETE blocked-cards/{id}` | Чёрный список карт: номер → HMAC + последние 4 цифры, открыто не хранится нигде | `ModerationBlockedCardsController` |
 | `GET reports`, `GET reports/summary`, `GET reports/{id}`, `POST reports/{id}/take` | Экран жалоб; «взять» — условный UPDATE, чужую только `?force=true` | `ModerationReportsController` |
 | `GET business`, `POST business/{userId}/{approve,reject}` | Заявки бизнеса; решение — compare-and-set по `submittedAt` | `BusinessModerationController` |
 

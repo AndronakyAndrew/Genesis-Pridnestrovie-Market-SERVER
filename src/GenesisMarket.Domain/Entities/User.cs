@@ -72,6 +72,23 @@ public class User : BaseEntity
     /// </summary>
     public DateTimeOffset? LastRejectedAt { get; private set; }
 
+    /// <summary>
+    /// Сколько раз модератор выносил предупреждение (санкция без бана). Меняется только
+    /// через <see cref="Warn"/>; история с причинами — в журнале модерации (user.warn).
+    /// </summary>
+    public int WarningsCount { get; private set; }
+
+    /// <summary>Когда вынесено последнее предупреждение.</summary>
+    public DateTimeOffset? LastWarnedAt { get; private set; }
+
+    /// <summary>Предупреждение модератора: счётчик и момент. Причина пишется в журнал вызывающим.</summary>
+    public void Warn(DateTimeOffset now)
+    {
+        WarningsCount++;
+        LastWarnedAt = now;
+        UpdatedAt = now;
+    }
+
     public bool IsBanned { get; set; }
     public DateTimeOffset? BannedUntil { get; set; }
 

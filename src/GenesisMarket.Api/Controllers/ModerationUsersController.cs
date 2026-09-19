@@ -18,7 +18,7 @@ namespace GenesisMarket.Api.Controllers;
 /// </summary>
 [Route("api/moderation/users")]
 [Authorize(Policy = "Moderator")]
-public class ModerationUsersController(AppDbContext db) : ApiControllerBase
+public class ModerationUsersController(AppDbContext db, IModerationAudit audit) : ApiControllerBase
 {
     private const int DefaultLimit = 25;
     private const int MaxLimit = 100;
@@ -59,6 +59,9 @@ public class ModerationUsersController(AppDbContext db) : ApiControllerBase
                     ((r.TargetType == ReportTargetType.User && r.TargetId == u.Id) ||
                      (r.TargetType == ReportTargetType.Listing &&
                       db.Listings.Any(l => l.Id == r.TargetId && l.OwnerId == u.Id)))));
+                break;
+            case ModerationUsersTab.Warned:
+                users = users.Where(u => u.WarningsCount > 0);
                 break;
         }
 
@@ -215,6 +218,36 @@ public class ModerationUsersController(AppDbContext db) : ApiControllerBase
         return Ok(new ModerationUserDossier(
             user, profile?.Description, profile?.TelegramUsername, byStatus, recent,
             filed, filedRejected, against, prefixes, linked, sanctions, businessStatus));
+    }
+
+    /// <summary>
+    /// Предупреждение — санкция без бана: счётчик на пользователе и запись в журнал с
+    /// причиной. Доступ к аккаунту не меняется. Те же ограничения, что у бана: не себя
+    /// и не администратора.
+    /// </summary>
+    [HttpPost("{id:guid}/warn")]
+    public async Task<ActionResult<ModerationActionResult>> Warn(Guid id, WarnUserRequest request, CancellationToken ct)
+    {
+        if (id == CurrentUserId())
+            return Problem(title: "Нельзя вынести предупреждение самому себе", statusCode: StatusCodes.Status400BadRequest);
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted, ct);
+        if (user is null)
+            return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
+        if (user.Role == UserRole.Admin)
+            return Problem(title: "Нельзя вынести предупреждение администратору", statusCode: StatusCodes.Status403Forbidden);
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        user.Warn(DateTimeOffset.UtcNow);
+        audit.Record(ModerationLog.ActionWarnUser, ModerationLog.TargetUser, id,
+            reason: request.Reason,
+            payload: new { reason = request.Reason.Trim(), warningsCount = user.WarningsCount });
+
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        return Ok(new ModerationActionResult($"Предупреждение вынесено (всего: {user.WarningsCount})."));
     }
 
     /// <summary>Срок бана из снимка решения (<c>{"until": ...}</c>), если он там есть.</summary>
