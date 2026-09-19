@@ -15,6 +15,19 @@ public static class SeoUrls
     /// <summary>Канонический адрес карточки объявления: <c>{base}/listing/{slug}</c>.</summary>
     public static string Listing(string baseUrl, string slug) => $"{baseUrl}/listing/{slug}";
 
+    /// <summary>
+    /// Публичный адрес фото объявления: <c>{base}/api/img/{objectKey}</c> — путь фронтенда,
+    /// который переписывается на <c>/api/images/{objectKey}</c> API (анонимная отдача,
+    /// <c>image/webp</c>, неизменяемый кэш).
+    ///
+    /// Presigned-ссылке на MinIO в og:image и JSON-LD не место: она подписывается внутренним
+    /// адресом бакета (<c>minio:9000</c>) и несёт ключ доступа в query-строке — снаружи не
+    /// открывается вовсе (ни краулер, ни бот мессенджера превью не получат), да ещё и
+    /// раскрывает устройство хранилища.
+    /// </summary>
+    public static string ListingImage(string baseUrl, string objectKey) =>
+        $"{baseUrl}/api/img/{objectKey}";
+
     /// <summary>Главная страница.</summary>
     public static string Home(string baseUrl) => $"{baseUrl}/";
 

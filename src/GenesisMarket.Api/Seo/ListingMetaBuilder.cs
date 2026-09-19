@@ -36,7 +36,8 @@ public static class ListingMetaBuilder
         string SellerName);
 
     public static ListingMetaResponse Build(
-        MetaInput listing, string canonicalUrl, string? ogImage, string siteName)
+        MetaInput listing, string canonicalUrl, string? ogImage, string siteName,
+        int? ogImageWidth = null, int? ogImageHeight = null)
     {
         var noIndex = listing.Status != ListingStatus.Active;
         var isArchived = listing.Status is ListingStatus.Archived or ListingStatus.Sold;
@@ -55,6 +56,9 @@ public static class ListingMetaBuilder
             OgTitle: $"{listing.Title} — {priceLabel}",
             OgDescription: description,
             OgImage: ogImage,
+            // Размеры без самой картинки бессмысленны — обнуляем их вместе с ней.
+            OgImageWidth: ogImage is null ? null : ogImageWidth,
+            OgImageHeight: ogImage is null ? null : ogImageHeight,
             IsArchived: isArchived,
             NoIndex: noIndex,
             JsonLd: BuildJsonLd(listing, canonicalUrl, ogImage, siteName));

@@ -38,8 +38,16 @@ public class SeoTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
         var slug = listing.GetProperty("slug").GetString();
         Assert.Equal($"https://market.test/listing/{slug}", meta.GetProperty("canonicalUrl").GetString());
 
-        // og:image — presigned-ссылка на первое фото (не null, раз фото засеяно).
-        Assert.Equal(JsonValueKind.String, meta.GetProperty("ogImage").ValueKind);
+        // og:image — публичный адрес первого фото на домене сайта. Presigned-ссылки на
+        // MinIO здесь быть не должно: внутренний хост и ключ доступа наружу не отдаём,
+        // да и краулер с ботом мессенджера такую ссылку всё равно не откроют.
+        var ogImage = meta.GetProperty("ogImage").GetString();
+        Assert.StartsWith($"https://market.test/api/img/listings/{id}/", ogImage);
+        Assert.DoesNotContain("X-Amz", ogImage);
+        Assert.DoesNotContain("minio", ogImage);
+        // Размеры превью — из строки изображения (сид кладёт 800×600).
+        Assert.Equal(800, meta.GetProperty("ogImageWidth").GetInt32());
+        Assert.Equal(600, meta.GetProperty("ogImageHeight").GetInt32());
 
         // JSON-LD schema.org/Product с offers: цена в RUP, наличие InStock.
         var jsonLd = meta.GetProperty("jsonLd");
