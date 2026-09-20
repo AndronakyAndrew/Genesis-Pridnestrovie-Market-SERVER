@@ -54,7 +54,7 @@ public class AuthTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
     public async Task Reusing_rotated_refresh_token_revokes_the_chain()
     {
         var email = Unique("rotate");
-        await factory.SeedUserAsync(email, GoodPassword);
+        var userId = await factory.SeedUserAsync(email, GoodPassword);
         var client = factory.CreateClient();
 
         var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = GoodPassword });
@@ -65,6 +65,11 @@ public class AuthTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
         Assert.Equal(HttpStatusCode.OK, rotate.StatusCode);
         var refresh2 = await FieldOf(rotate, "refreshToken");
 
+        // Сдвигаем отзыв в прошлое: повтор ЗА окном гонки вкладок — уже кража.
+        await factory.ExecuteSqlAsync(
+            "UPDATE refresh_tokens SET \"RevokedAt\" = \"RevokedAt\" - interval '1 hour' " +
+            $"WHERE \"RevokedAt\" IS NOT NULL AND \"UserId\" = '{userId}'");
+
         // Повторное использование refresh1 = кража → 401 и отзыв всей цепочки.
         var reuse = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = refresh1 });
         Assert.Equal(HttpStatusCode.Unauthorized, reuse.StatusCode);
@@ -72,6 +77,37 @@ public class AuthTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
         // refresh2 из той же цепочки тоже больше не работает.
         var afterReuse = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = refresh2 });
         Assert.Equal(HttpStatusCode.Unauthorized, afterReuse.StatusCode);
+    }
+
+    /// <summary>
+    /// Две вкладки стартуют одновременно и уходят за обновлением с одной и той же
+    /// cookie: вторая предъявляет уже заменённый токен. Это не кража — в пределах
+    /// окна она получает продолжение цепочки, а сессия остаётся жива. Без этого
+    /// восстановление вкладок браузером разлогинивало человека везде.
+    /// </summary>
+    [Fact]
+    public async Task Racing_tabs_reusing_the_same_refresh_token_keep_the_session()
+    {
+        var email = Unique("race");
+        await factory.SeedUserAsync(email, GoodPassword);
+        var client = factory.CreateClient();
+
+        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = GoodPassword });
+        var refresh1 = await FieldOf(login, "refreshToken");
+
+        var first = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = refresh1 });
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var refresh2 = await FieldOf(first, "refreshToken");
+
+        // Вторая вкладка с тем же (уже заменённым) токеном.
+        var second = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = refresh1 });
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var refresh3 = await FieldOf(second, "refreshToken");
+        Assert.NotEqual(refresh2, refresh3);
+
+        // Цепочка цела: последний выданный токен продолжает работать.
+        var next = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = refresh3 });
+        Assert.Equal(HttpStatusCode.OK, next.StatusCode);
     }
 
     [Fact]

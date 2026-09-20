@@ -240,12 +240,13 @@ public class SessionsTests(AuthApiFactory factory) : IClassFixture<AuthApiFactor
     /// <summary>
     /// Защита от кражи на месте: предъявление СТАРОГО токена из середины цепочки
     /// (такой отозван ротацией, а не владельцем) по-прежнему отзывает всё.
+    /// Окно гонки вкладок этого не отменяет — за его пределами реакция прежняя.
     /// </summary>
     [Fact]
     public async Task Replaying_a_rotated_away_token_still_revokes_every_session()
     {
         var email = Unique("sessions-theft");
-        await factory.SeedUserAsync(email, Password);
+        var userId = await factory.SeedUserAsync(email, Password);
 
         var stolen = await SignInAsync(email, ChromeWindows);
         var other = await SignInAsync(email, SafariIphone);
@@ -254,6 +255,11 @@ public class SessionsTests(AuthApiFactory factory) : IClassFixture<AuthApiFactor
         var rotated = await factory.CreateClient().PostAsJsonAsync(
             "/api/auth/refresh", new { refreshToken = stolen.RefreshToken });
         Assert.Equal(HttpStatusCode.OK, rotated.StatusCode);
+
+        // Сдвигаем отзыв в прошлое: повтор идёт ЗА окном гонки вкладок.
+        await factory.ExecuteSqlAsync(
+            "UPDATE refresh_tokens SET \"RevokedAt\" = \"RevokedAt\" - interval '1 hour' " +
+            $"WHERE \"RevokedAt\" IS NOT NULL AND \"UserId\" = '{userId}'");
 
         // Вор предъявляет украденный старый токен.
         var replay = await factory.CreateClient().PostAsJsonAsync(

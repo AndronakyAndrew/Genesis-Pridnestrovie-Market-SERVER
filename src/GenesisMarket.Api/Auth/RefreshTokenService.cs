@@ -56,6 +56,8 @@ public sealed class RefreshTokenService(
     ILogger<RefreshTokenService> logger) : IRefreshTokenService
 {
     private readonly int _lifetimeDays = options.Value.RefreshTokenDays;
+    private readonly TimeSpan _reuseGrace =
+        TimeSpan.FromSeconds(Math.Max(0, options.Value.RefreshReuseGraceSeconds));
 
     public async Task<(string RawToken, DateTimeOffset ExpiresAt, Guid SessionId)> IssueAsync(
         Guid userId, SessionContext context, CancellationToken ct)
@@ -107,8 +109,22 @@ public sealed class RefreshTokenService(
                 return new RefreshOutcome(RefreshStatus.Invalid, Guid.Empty, null, null);
 
             // Отозван РОТАЦИЕЙ (есть замена) — предъявлен старый токен из середины
-            // цепочки. Законный клиент так не делает: он всегда держит последний.
-            // Это признак кражи, отзываем всё.
+            // цепочки. Обычно это кража, но есть законный случай: refresh-токен
+            // лежит в одной cookie на весь браузер, и вкладки, стартовавшие
+            // одновременно (в т.ч. при восстановлении сессии браузера), уходят за
+            // обновлением с ОДНИМ токеном. Пока первая ротирует, вторая держит в
+            // руках уже заменённый. Без окна это считалось кражей и отзывало всю
+            // цепочку — человек молча вылетал на всех устройствах.
+            // В пределах окна отдаём продолжение той же цепочки, за окном — кража.
+            if (DateTimeOffset.UtcNow - token.RevokedAt.Value <= _reuseGrace)
+            {
+                var head = await db.RefreshTokens.FirstOrDefaultAsync(
+                    t => t.SessionId == token.SessionId && t.RevokedAt == null, ct);
+
+                if (head is not null && DateTimeOffset.UtcNow < head.ExpiresAt)
+                    return await RotateActiveAsync(head, context, ct);
+            }
+
             await RevokeAllAsync(token.UserId, ct);
             logger.LogWarning(
                 "Security: повторное использование отозванного refresh-токена. UserId={UserId}. Цепочка отозвана.",
@@ -119,7 +135,14 @@ public sealed class RefreshTokenService(
         if (DateTimeOffset.UtcNow >= token.ExpiresAt)
             return new RefreshOutcome(RefreshStatus.Invalid, Guid.Empty, null, null);
 
-        // Активный токен — ротация.
+        return await RotateActiveAsync(token, context, ct);
+    }
+
+    /// <summary>Замена активного токена цепочки новым. Вызывается и обычным путём,
+    /// и из окна повторного предъявления — правила выдачи должны быть одни.</summary>
+    private async Task<RefreshOutcome> RotateActiveAsync(
+        RefreshToken token, SessionContext context, CancellationToken ct)
+    {
         var (raw, newHash) = Generate();
         var now = DateTimeOffset.UtcNow;
         var expiresAt = now.AddDays(_lifetimeDays);

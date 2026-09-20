@@ -21,6 +21,13 @@ public sealed class JwtOptions
     public int RefreshTokenDays { get; set; } = 30;
 
     /// <summary>
+    /// Окно, в котором повторное предъявление только что заменённого
+    /// refresh-токена считается гонкой вкладок, а не кражей, секунды.
+    /// 0 — окна нет: любой повтор отзывает цепочку.
+    /// </summary>
+    public int RefreshReuseGraceSeconds { get; set; } = 60;
+
+    /// <summary>
     /// TTL кэша SecurityStamp/бана при валидации токена, секунды.
     /// 0 — не кэшировать (всегда запрос в БД); используется в тестах.
     /// </summary>
