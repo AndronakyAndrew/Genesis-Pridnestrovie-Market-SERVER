@@ -105,7 +105,8 @@ public class UsersController(
             ReviewsCount: user.ReviewsCount,
             user.PhoneVerified,
             IsVerifiedBusiness: business is not null,
-            Business: business));
+            Business: business,
+            EmailVerified: user.EmailVerified));
     }
 
     private async Task<IActionResult> AvatarAsync(Expression<Func<Profile, bool>> match, CancellationToken ct)

@@ -116,4 +116,9 @@ public record PublicProfileResponse(
     /// Название магазина и реквизиты. Только у подтверждённого бизнеса; иначе null —
     /// непроверенные реквизиты частного лица публичными не становятся.
     /// </summary>
-    PublicBusinessInfo? Business = null);
+    PublicBusinessInfo? Business = null,
+    /// <summary>
+    /// Почта подтверждена — основание для галочки «Проверенный пользователь».
+    /// Телефон для галочки не требуется; PhoneVerified остаётся отдельным фактом.
+    /// </summary>
+    bool EmailVerified = false);
