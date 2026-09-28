@@ -184,6 +184,73 @@ public class AuthTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
+    [Fact]
+    public async Task Login_by_email_code_issues_tokens_and_code_is_single_use()
+    {
+        var email = Unique("codelogin");
+        await factory.SeedUserAsync(email, GoodPassword, emailVerified: false);
+        var client = factory.CreateClient();
+
+        var send = await client.PostAsJsonAsync("/api/auth/login-code", new { email });
+        Assert.Equal(HttpStatusCode.OK, send.StatusCode);
+
+        var code = factory.LastCode(email.ToLowerInvariant());
+        Assert.NotNull(code);
+
+        var login = await client.PostAsJsonAsync("/api/auth/login-code/verify", new { email, code });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.False(string.IsNullOrEmpty(await FieldOf(login, "accessToken")));
+
+        // Код с почты подтверждает владение ею.
+        using (var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync()))
+            Assert.True(doc.RootElement.GetProperty("user").GetProperty("emailVerified").GetBoolean());
+
+        var reuse = await client.PostAsJsonAsync("/api/auth/login-code/verify", new { email, code });
+        Assert.Equal(HttpStatusCode.Unauthorized, reuse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Login_code_does_not_reveal_whether_email_exists()
+    {
+        var email = Unique("codeident");
+        await factory.SeedUserAsync(email, GoodPassword);
+        var client = factory.CreateClient();
+
+        var known = await client.PostAsJsonAsync("/api/auth/login-code", new { email });
+        var unknown = await client.PostAsJsonAsync("/api/auth/login-code", new { email = Unique("nobody") });
+
+        Assert.Equal(HttpStatusCode.OK, known.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, unknown.StatusCode);
+        Assert.Equal(await FieldOf(known, "message"), await FieldOf(unknown, "message"));
+
+        var wrongCode = await client.PostAsJsonAsync("/api/auth/login-code/verify",
+            new { email, code = "000000" });
+        var noUser = await client.PostAsJsonAsync("/api/auth/login-code/verify",
+            new { email = Unique("nobody"), code = "000000" });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, wrongCode.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, noUser.StatusCode);
+        Assert.Equal(await TitleOf(wrongCode), await TitleOf(noUser));
+    }
+
+    [Fact]
+    public async Task Email_verification_code_is_not_accepted_as_login_code()
+    {
+        var email = Unique("codecross");
+        await factory.SeedUserAsync(email, GoodPassword, emailVerified: false);
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new("Bearer", await LoginAndGetAccessToken(client, email, GoodPassword));
+
+        await client.PostAsync("/api/me/email/send-code", null);
+        var verificationCode = factory.LastCode(email.ToLowerInvariant());
+        client.DefaultRequestHeaders.Authorization = null;
+
+        var login = await client.PostAsJsonAsync("/api/auth/login-code/verify",
+            new { email, code = verificationCode });
+        Assert.Equal(HttpStatusCode.Unauthorized, login.StatusCode);
+    }
+
     // ---- helpers ----
 
     private static string Unique(string prefix) => $"{prefix}-{Guid.NewGuid():N}@test.io";

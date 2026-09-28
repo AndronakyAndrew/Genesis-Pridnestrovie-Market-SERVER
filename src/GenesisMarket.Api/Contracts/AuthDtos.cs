@@ -18,6 +18,15 @@ public record LoginRequest(
     [Required, EmailAddress] string Email,
     [Required] string Password);
 
+/// <summary>Запрос одноразового кода входа на почту.</summary>
+public record LoginCodeRequest(
+    [Required, EmailAddress, MaxLength(256)] string Email);
+
+/// <summary>Вход по коду из письма (см. <c>POST /api/auth/login-code</c>).</summary>
+public record LoginByCodeRequest(
+    [Required, EmailAddress, MaxLength(256)] string Email,
+    [Required, MaxLength(12)] string Code);
+
 public record RefreshRequest(
     [Required] string RefreshToken);
 

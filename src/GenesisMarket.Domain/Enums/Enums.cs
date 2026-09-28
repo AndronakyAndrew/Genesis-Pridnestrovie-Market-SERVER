@@ -85,7 +85,13 @@ public enum UserRole
 public enum VerificationChannel
 {
     Email,
-    Phone
+    Phone,
+
+    /// <summary>
+    /// Одноразовый код входа на почту. Отдельный канал: код входа и код
+    /// подтверждения почты не принимаются друг за друга и не делят кулдаун.
+    /// </summary>
+    LoginEmail
 }
 
 /// <summary>

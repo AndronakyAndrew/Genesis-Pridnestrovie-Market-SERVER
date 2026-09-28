@@ -30,11 +30,15 @@ public class AuthController(
     PasswordResetService passwordReset,
     IPublicCodeGenerator publicCodes,
     VerificationService verification,
+    LoginCodeService loginCodes,
     ILogger<AuthController> logger,
     IOptions<PhoneOptions> phoneOptions) : ApiControllerBase
 {
     // Один и тот же текст на неверный email и неверный пароль (анти-перечисление).
     private const string LoginError = "Неверный email или пароль";
+
+    // Один текст на любой промах кодом: неизвестный адрес, неверный, истёкший код.
+    private const string LoginCodeError = "Неверный или устаревший код. Запросите новый.";
 
     [AllowAnonymous]
     [EnableRateLimiting(RateLimitPolicies.SensitiveAnon)]
@@ -112,6 +116,50 @@ public class AuthController(
         // Пересчёт хеша при смене workFactor.
         if (hasher.NeedsRehash(user.PasswordHash))
             user.PasswordHash = hasher.Hash(request.Password);
+
+        securityAudit.LoginSucceeded(user.Id);
+        return Ok(await IssueAsync(user, ip, ct));
+    }
+
+    /// <summary>
+    /// Запрос одноразового кода входа. Ответ одинаков для существующего и
+    /// несуществующего адреса — иначе ручка стала бы оракулом на перечисление.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("login-code")]
+    public async Task<IActionResult> RequestLoginCode(LoginCodeRequest request, CancellationToken ct)
+    {
+        var limit = rateLimiter.CheckLoginCodeRequest(ClientIp());
+        if (!limit.Allowed)
+            return TooManyRequests(limit.RetryAfter);
+
+        await loginCodes.RequestAsync(Normalize(request.Email), ct);
+
+        return Ok(new MessageResponse(
+            "Если такой адрес зарегистрирован, мы отправили на него код для входа."));
+    }
+
+    /// <summary>
+    /// Вход по коду из письма. Лимит — общий с входом по паролю (IP + email),
+    /// плюс счётчик попыток на самом коде.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("login-code/verify")]
+    public async Task<ActionResult<AuthResponse>> LoginByCode(LoginByCodeRequest request, CancellationToken ct)
+    {
+        var ip = ClientIp();
+        var email = Normalize(request.Email);
+
+        var limit = rateLimiter.CheckLogin(ip, email);
+        if (!limit.Allowed)
+            return TooManyRequests(limit.RetryAfter);
+
+        var user = await loginCodes.VerifyAsync(email, request.Code, ct);
+        if (user is null)
+        {
+            securityAudit.LoginFailed();
+            return Problem(title: LoginCodeError, statusCode: StatusCodes.Status401Unauthorized);
+        }
 
         securityAudit.LoginSucceeded(user.Id);
         return Ok(await IssueAsync(user, ip, ct));

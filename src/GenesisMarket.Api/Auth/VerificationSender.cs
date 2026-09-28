@@ -25,13 +25,13 @@ public sealed class VerificationSender(
                 target,
                 $"Местная площадка Genesis: код подтверждения {code}. Действует {ttlMinutes} мин.",
                 ct),
-            VerificationChannel.Email => SendEmailAsync(target, code, ct),
+            VerificationChannel.Email => SendEmailAsync(target, emailRenderer.RenderCodeEmail(code), ct),
+            VerificationChannel.LoginEmail => SendEmailAsync(target, emailRenderer.RenderLoginCodeEmail(code), ct),
             _ => Task.CompletedTask
         };
 
-    private Task SendEmailAsync(string target, string code, CancellationToken ct)
+    private Task SendEmailAsync(string target, RenderedEmail mail, CancellationToken ct)
     {
-        var mail = emailRenderer.RenderCodeEmail(code);
         return email.SendAsync(target, mail.Subject, mail.Html, mail.Text, mail.Logo, ct);
     }
 }

@@ -14,6 +14,9 @@ public readonly record struct RateLimitResult(bool Allowed, TimeSpan RetryAfter)
 public interface IAuthRateLimiter
 {
     RateLimitResult CheckLogin(string ip, string email);
+    
+    /// <summary>Запрос кода входа: 10 писем в час на IP (кулдаун на адрес — в сервисе).</summary>
+    RateLimitResult CheckLoginCodeRequest(string ip);
 }
 
 public sealed class MemoryAuthRateLimiter(IMemoryCache cache) : IAuthRateLimiter
@@ -23,6 +26,9 @@ public sealed class MemoryAuthRateLimiter(IMemoryCache cache) : IAuthRateLimiter
         public int Count;
         public DateTimeOffset ResetAt { get; } = resetAt;
     }
+
+    public RateLimitResult CheckLoginCodeRequest(string ip) =>
+        Check($"rl:login-code:{ip}", limit: 10, window: TimeSpan.FromHours(1));
 
     public RateLimitResult CheckLogin(string ip, string email) =>
         Check($"rl:login:{ip}:{email.ToLowerInvariant()}", limit: 5, window: TimeSpan.FromMinutes(15));

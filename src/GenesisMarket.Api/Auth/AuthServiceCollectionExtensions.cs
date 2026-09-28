@@ -89,6 +89,7 @@ public static class AuthServiceCollectionExtensions
         services.AddSingleton<PasswordResetEmailRenderer>();
         services.AddSingleton<IVerificationSender, VerificationSender>();
         services.AddScoped<VerificationService>();
+        services.AddScoped<LoginCodeService>();
         services.AddScoped<PasswordResetService>();
         services.AddSingleton<IPublishingPolicy, PublishingPolicy>();
 

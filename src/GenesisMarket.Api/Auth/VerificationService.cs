@@ -128,7 +128,7 @@ public sealed class VerificationService(
         else u.PhoneVerified = true;
     }
 
-    private static string GenerateCode(int length)
+    internal static string GenerateCode(int length)
     {
         var sb = new StringBuilder(length);
         for (var i = 0; i < length; i++)
@@ -136,5 +136,5 @@ public sealed class VerificationService(
         return sb.ToString();
     }
 
-    private static byte[] Hash(string code) => SHA256.HashData(Encoding.UTF8.GetBytes(code.Trim()));
+    internal static byte[] Hash(string code) => SHA256.HashData(Encoding.UTF8.GetBytes(code.Trim()));
 }
