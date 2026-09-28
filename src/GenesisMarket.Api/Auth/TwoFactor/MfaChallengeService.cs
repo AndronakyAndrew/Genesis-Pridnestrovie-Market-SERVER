@@ -43,7 +43,11 @@ public sealed class MfaChallengeService(
         return new MfaChallengeTicket(raw, expires);
     }
 
-    /// <summary>Проверить второй фактор по билету. null — билет недействителен или код неверен.</summary>
+    /// <summary>
+    /// Проверить второй фактор по билету. null — билет недействителен или код неверен.
+    /// Результат с <see cref="SecondFactorResult.Locked"/> — НЕ успех: второй фактор
+    /// аккаунта временно заблокирован, сессию выдавать нельзя.
+    /// </summary>
     public async Task<MfaChallengeOutcome?> CompleteAsync(string token, string? code, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(token))
@@ -58,7 +62,13 @@ public sealed class MfaChallengeService(
             return null;
 
         var result = await twoFactor.VerifyAsync(challenge.UserId, code, ct);
-        if (result == SecondFactorResult.Invalid)
+
+        // Второй фактор аккаунта заблокирован после серии неверных кодов: код не проверялся,
+        // попытку билета не тратим. Вызывающий отвечает 429, а не «неверный код».
+        if (result == SecondFactorResult.Locked)
+            return new MfaChallengeOutcome(challenge.UserId, SecondFactorResult.Locked);
+
+        if (result is not (SecondFactorResult.Totp or SecondFactorResult.RecoveryCode))
         {
             challenge.Attempts++;
             // Исчерпанный билет гасится сразу: дальше только новый вход паролем.

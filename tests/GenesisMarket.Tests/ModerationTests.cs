@@ -263,7 +263,9 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
     [Fact]
     public async Task User_contacts_returns_pii_and_logs_every_call()
     {
-        var mod = await Moderator();
+        // Полный доступ к контактам — у Admin и выше; модератору — только в рамках жалобы
+        // (см. AccessAuditTests).
+        var mod = await Admin();
         var email = Unique("contactowner");
         var victimId = await factory.SeedUserAsync(email, Password);
 

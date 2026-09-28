@@ -2150,10 +2150,16 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("EnabledAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("FailedAttempts")
+                        .HasColumnType("integer");
+
                     b.Property<long>("LastUsedTimeStep")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint")
                         .HasDefaultValue(0L);
+
+                    b.Property<DateTimeOffset?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<byte[]>("SecretCipher")
                         .IsRequired()

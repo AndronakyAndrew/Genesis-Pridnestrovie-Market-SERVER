@@ -19,8 +19,9 @@ namespace GenesisMarket.Api.Controllers;
 /// Email в поиске не участвует по той же причине: иначе реестр стал бы нежурналируемым
 /// резолвером «email → аккаунт».
 /// </summary>
+// Политика — на каждой ручке, а не на классе: политики класса и метода складываются через «И»,
+// а предупреждение (users.warn, модератор) не должно требовать реестра (users.view, Admin).
 [Route("api/moderation/users")]
-[Authorize(Policy = Permissions.UsersView)]
 public class ModerationUsersController(
     AppDbContext db, IModerationAudit audit, IRoleStore roles, ICatalogReferences references) : ApiControllerBase
 {
@@ -32,6 +33,7 @@ public class ModerationUsersController(
     private const int DossierListings = 8;
     private const int DossierLinkedAccounts = 10;
 
+    [Authorize(Policy = Permissions.UsersView)]
     [HttpGet]
     public async Task<ActionResult<ModerationUsersPage>> List([FromQuery] ModerationUsersQuery query, CancellationToken ct)
     {
@@ -120,6 +122,7 @@ public class ModerationUsersController(
     }
 
     /// <summary>Плитки над реестром.</summary>
+    [Authorize(Policy = Permissions.UsersView)]
     [HttpGet("summary")]
     public async Task<ActionResult<ModerationUsersSummary>> Summary(CancellationToken ct)
     {
@@ -150,6 +153,7 @@ public class ModerationUsersController(
     /// Досье пользователя: счётчики объявлений и жалоб, сетевой сигнал, история санкций.
     /// Без контактов — для них отдельная журналируемая ручка.
     /// </summary>
+    [Authorize(Policy = Permissions.UsersView)]
     [HttpGet("{id:guid}/dossier")]
     public async Task<ActionResult<ModerationUserDossier>> Dossier(Guid id, CancellationToken ct)
     {

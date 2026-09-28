@@ -2,6 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GenesisMarket.Domain.Enums;
+using GenesisMarket.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace GenesisMarket.Tests;
@@ -48,7 +51,10 @@ public class ModerationWorkspaceTests(AuthApiFactory factory) : IClassFixture<Au
         Assert.Equal(HttpStatusCode.OK,
             (await mod.PostAsync($"/api/moderation/listings/{listingId}/approve", null)).StatusCode);
 
-        using var doc = await GetJson(mod, $"/api/moderation/logs?q={listingId}");
+        // Журнал модерации — уровень Admin: модератор решает, но журнал не читает.
+        Assert.Equal(HttpStatusCode.Forbidden, (await mod.GetAsync($"/api/moderation/logs?q={listingId}")).StatusCode);
+        var (admin, _) = await Moderator(UserRole.Admin);
+        using var doc = await GetJson(admin, $"/api/moderation/logs?q={listingId}");
         var item = Assert.Single(Items(doc));
 
         Assert.Equal("listing.approve", item.GetProperty("action").GetString());
@@ -71,7 +77,8 @@ public class ModerationWorkspaceTests(AuthApiFactory factory) : IClassFixture<Au
         await mod.PostAsJsonAsync($"/api/moderation/listings/{rejected}/reject",
             new { reason = "BadPhotos", comment = (string?)null });
 
-        using var doc = await GetJson(mod, $"/api/moderation/logs?q={marker}&action=listing.reject");
+        var (admin, _) = await Moderator(UserRole.Admin);
+        using var doc = await GetJson(admin, $"/api/moderation/logs?q={marker}&action=listing.reject");
         var ids = Items(doc).Select(i => i.GetProperty("targetId").GetGuid()).ToList();
 
         Assert.Contains(rejected, ids);
@@ -89,13 +96,14 @@ public class ModerationWorkspaceTests(AuthApiFactory factory) : IClassFixture<Au
             await mod.PostAsync($"/api/moderation/listings/{l}/approve", null);
         }
 
-        using var first = await GetJson(mod, $"/api/moderation/logs?actorId={modId}&limit=2");
+        var (admin, _) = await Moderator(UserRole.Admin);
+        using var first = await GetJson(admin, $"/api/moderation/logs?actorId={modId}&limit=2");
         var firstIds = Items(first).Select(i => i.GetProperty("id").GetGuid()).ToList();
         Assert.Equal(2, firstIds.Count);
         Assert.True(first.RootElement.GetProperty("hasMore").GetBoolean());
         var cursor = first.RootElement.GetProperty("nextCursor").GetString();
 
-        using var second = await GetJson(mod, $"/api/moderation/logs?actorId={modId}&limit=2&cursor={cursor}");
+        using var second = await GetJson(admin, $"/api/moderation/logs?actorId={modId}&limit=2&cursor={cursor}");
         var secondIds = Items(second).Select(i => i.GetProperty("id").GetGuid()).ToList();
 
         Assert.Single(secondIds);
@@ -113,7 +121,8 @@ public class ModerationWorkspaceTests(AuthApiFactory factory) : IClassFixture<Au
         await mod.PostAsJsonAsync($"/api/moderation/listings/{r}/reject", new { reason = "Duplicate" });
 
         var from = Uri.EscapeDataString(DateTimeOffset.UtcNow.AddHours(-1).ToString("O"));
-        using var doc = await GetJson(mod, $"/api/moderation/logs/summary?actorId={modId}&from={from}");
+        var (admin, _) = await Moderator(UserRole.Admin);
+        using var doc = await GetJson(admin, $"/api/moderation/logs/summary?actorId={modId}&from={from}");
         var root = doc.RootElement;
 
         Assert.Equal(2, root.GetProperty("total").GetInt32());
@@ -144,10 +153,14 @@ public class ModerationWorkspaceTests(AuthApiFactory factory) : IClassFixture<Au
     [Fact]
     public async Task Users_search_by_public_code_returns_row_without_contacts()
     {
-        var (mod, _) = await Moderator();
         var userId = await factory.SeedUserAsync(Unique("findme"), Password);
-        var code = await PublicCodeOf(mod, userId);
 
+        // Реестр пользователей — уровень Admin: модератору 403.
+        var (moderator, _) = await Moderator();
+        var code = await PublicCodeOf(moderator, userId);
+        Assert.Equal(HttpStatusCode.Forbidden, (await moderator.GetAsync($"/api/moderation/users?q={code}")).StatusCode);
+
+        var (mod, _) = await Moderator(UserRole.Admin);
         using var doc = await GetJson(mod, $"/api/moderation/users?q={code}");
         var row = Assert.Single(Items(doc));
 
@@ -340,11 +353,15 @@ public class ModerationWorkspaceTests(AuthApiFactory factory) : IClassFixture<Au
         return client;
     }
 
-    /// <summary>«ID профиля» — через карточку контактов модератора (единственное, где он есть по GUID).</summary>
-    private static async Task<string> PublicCodeOf(HttpClient mod, Guid userId)
+    /// <summary>
+    /// «ID профиля» — прямо из БД: карточка контактов модератору теперь открыта только в
+    /// рамках разбираемой жалобы, а тесту реестра нужен лишь код.
+    /// </summary>
+    private async Task<string> PublicCodeOf(HttpClient _, Guid userId)
     {
-        using var doc = await GetJson(mod, $"/api/moderation/users/{userId}");
-        return doc.RootElement.GetProperty("publicCode").GetString()!;
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.Users.Where(u => u.Id == userId).Select(u => u.PublicCode).FirstAsync();
     }
 
     private static async Task<JsonDocument> GetJson(HttpClient client, string url)

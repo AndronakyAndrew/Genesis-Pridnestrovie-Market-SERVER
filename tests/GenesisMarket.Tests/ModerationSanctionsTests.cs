@@ -34,13 +34,16 @@ public class ModerationSanctionsTests(AuthApiFactory factory) : IClassFixture<Au
         Assert.Equal(2, await factory.ModerationLogCountAsync(userId, "user.warn"));
         Assert.False((await factory.UserBanStateAsync(userId)).IsBanned);
 
-        using var doc = await GetJson(mod, $"/api/moderation/users/{userId}/dossier");
+        // Предупреждение выносит модератор, а досье и реестр — уровень Admin.
+        Assert.Equal(HttpStatusCode.Forbidden, (await mod.GetAsync($"/api/moderation/users/{userId}/dossier")).StatusCode);
+        var (admin, _) = await Moderator(UserRole.Admin);
+        using var doc = await GetJson(admin, $"/api/moderation/users/{userId}/dossier");
         Assert.Equal(2, doc.RootElement.GetProperty("user").GetProperty("warningsCount").GetInt32());
         Assert.Equal(2, doc.RootElement.GetProperty("sanctions").EnumerateArray()
             .Count(s => s.GetProperty("action").GetString() == "user.warn"));
 
         var code = doc.RootElement.GetProperty("user").GetProperty("publicCode").GetString();
-        using var warned = await GetJson(mod, $"/api/moderation/users?tab=Warned&q={code}");
+        using var warned = await GetJson(admin, $"/api/moderation/users?tab=Warned&q={code}");
         Assert.Single(warned.RootElement.GetProperty("items").EnumerateArray());
     }
 
@@ -64,8 +67,14 @@ public class ModerationSanctionsTests(AuthApiFactory factory) : IClassFixture<Au
     [Fact]
     public async Task Block_card_stores_only_last4_and_logs_without_number()
     {
-        var (mod, _) = await Moderator();
         var number = RandomCard("9005");
+
+        // Чёрный список карт — уровень Admin: модератору 403.
+        var (moderator, _) = await Moderator();
+        Assert.Equal(HttpStatusCode.Forbidden, (await moderator.PostAsJsonAsync("/api/moderation/blocked-cards",
+            new { cardNumber = number, reason = "Модератор" })).StatusCode);
+
+        var (mod, _) = await Moderator(UserRole.Admin);
 
         var resp = await mod.PostAsJsonAsync("/api/moderation/blocked-cards",
             new { cardNumber = Spaced(number), reason = "Требовал предоплату на карту" });
@@ -96,7 +105,7 @@ public class ModerationSanctionsTests(AuthApiFactory factory) : IClassFixture<Au
     [Fact]
     public async Task Block_card_rejects_too_short_number()
     {
-        var (mod, _) = await Moderator();
+        var (mod, _) = await Moderator(UserRole.Admin);
         var resp = await mod.PostAsJsonAsync("/api/moderation/blocked-cards",
             new { cardNumber = "1234 5678 90", reason = "Мало цифр" });
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
@@ -105,7 +114,7 @@ public class ModerationSanctionsTests(AuthApiFactory factory) : IClassFixture<Au
     [Fact]
     public async Task Listing_with_blocked_card_goes_to_premoderation_even_for_trusted_author()
     {
-        var (mod, _) = await Moderator();
+        var (mod, _) = await Moderator(UserRole.Admin);
         var number = RandomCard("4276");
         var block = await mod.PostAsJsonAsync("/api/moderation/blocked-cards",
             new { cardNumber = number, reason = "Мошенничество" });
@@ -149,10 +158,10 @@ public class ModerationSanctionsTests(AuthApiFactory factory) : IClassFixture<Au
 
     private static string Spaced(string number) => string.Join(" ", Chunks(number));
 
-    private async Task<(HttpClient Client, Guid Id)> Moderator()
+    private async Task<(HttpClient Client, Guid Id)> Moderator(UserRole role = UserRole.Moderator)
     {
-        var email = Unique("mod");
-        var id = await factory.SeedUserAsync(email, Password, role: UserRole.Moderator);
+        var email = Unique(role.ToString().ToLowerInvariant());
+        var id = await factory.SeedUserAsync(email, Password, role: role);
         return (await AuthedClient(email), id);
     }
 

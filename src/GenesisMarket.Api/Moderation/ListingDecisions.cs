@@ -67,6 +67,8 @@ public sealed class ListingDecisions(
         var note = string.IsNullOrWhiteSpace(comment) ? null : comment.Trim();
         var now = DateTimeOffset.UtcNow;
         var id = listing.Id;
+        // Прежний статус — «старое значение» в журнале действий (было → стало).
+        var before = new { status = listing.Status.ToString() };
 
         switch (decision)
         {
@@ -85,7 +87,8 @@ public sealed class ListingDecisions(
                 await channelPublisher.EnqueueAsync(id, ct);
 
                 audit.Record(ModerationLog.ActionApproveListing, ModerationLog.TargetListing, id,
-                    payload: new { postModeration = wasInCatalog }, waitSince: queuedAt);
+                    payload: new { status = listing.Status.ToString(), postModeration = wasInCatalog },
+                    waitSince: queuedAt, before: before);
 
                 return wasInCatalog
                     ? "Объявление проверено и оставлено в каталоге."
@@ -120,8 +123,8 @@ public sealed class ListingDecisions(
                     revise ? ModerationLog.ActionReviseListing : ModerationLog.ActionRejectListing,
                     ModerationLog.TargetListing, id,
                     reason: note,
-                    payload: new { reason = code.ToString(), comment = note, postModeration = wasInCatalog },
-                    waitSince: queuedAt);
+                    payload: new { status = listing.Status.ToString(), reason = code.ToString(), comment = note, postModeration = wasInCatalog },
+                    waitSince: queuedAt, before: before);
 
                 return (revise, wasInCatalog) switch
                 {

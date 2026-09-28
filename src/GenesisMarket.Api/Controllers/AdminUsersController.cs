@@ -98,6 +98,10 @@ public class AdminUsersController(
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted, ct);
         if (user is null)
             return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
+        // Снять бан — такая же санкция по отношению к цели, как наложить: только к роли ниже
+        // своей. Иначе Admin снимал бы бан, который Owner наложил на другого Admin.
+        if (await OutranksAsync(id, ct, unban: true) is { } forbidden)
+            return forbidden;
         if (!user.IsBanned)
             return Problem(title: "Пользователь не заблокирован", statusCode: StatusCodes.Status409Conflict);
 
@@ -122,13 +126,15 @@ public class AdminUsersController(
     }
 
     /// <summary>403, если цель не ниже исполнителя по роли; иначе null.</summary>
-    private async Task<ObjectResult?> OutranksAsync(Guid targetId, CancellationToken ct)
+    private async Task<ObjectResult?> OutranksAsync(Guid targetId, CancellationToken ct, bool unban = false)
     {
         var actor = CurrentUser.Role ?? UserRole.User;
         var target = await roles.GetRoleAsync(targetId, ct);
         return RolePermissions.Outranks(actor, target)
             ? null
-            : Problem(title: "Нельзя заблокировать сотрудника того же или более высокого уровня",
+            : Problem(title: unban
+                    ? "Нельзя разблокировать сотрудника того же или более высокого уровня"
+                    : "Нельзя заблокировать сотрудника того же или более высокого уровня",
                 statusCode: StatusCodes.Status403Forbidden);
     }
 }

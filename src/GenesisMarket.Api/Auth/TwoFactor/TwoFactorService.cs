@@ -15,7 +15,10 @@ public enum SecondFactorResult
 {
     Invalid,
     Totp,
-    RecoveryCode
+    RecoveryCode,
+
+    /// <summary>Второй фактор временно заблокирован после серии неверных кодов — код не проверялся.</summary>
+    Locked
 }
 
 /// <summary>
@@ -107,27 +110,32 @@ public sealed class TwoFactorService(
         if (row is null || string.IsNullOrWhiteSpace(code))
             return SecondFactorResult.Invalid;
 
-        var step = Totp.Verify(protector.Unprotect(row.SecretCipher), code, clock.GetUtcNow(), row.LastUsedTimeStep);
+        var now = clock.GetUtcNow();
+        if (IsLocked(row, now))
+            return SecondFactorResult.Locked;
+
+        var step = Totp.Verify(protector.Unprotect(row.SecretCipher), code, now, row.LastUsedTimeStep);
         if (step is not null)
         {
             row.LastUsedTimeStep = step.Value;
+            ResetFailures(row);
             await db.SaveChangesAsync(ct);
             return SecondFactorResult.Totp;
         }
 
         if (NormalizeRecovery(code) is not { } normalized)
-            return SecondFactorResult.Invalid;
+            return await RegisterFailureAsync(row, now, ct);
 
         var hash = protector.HashRecoveryCode(normalized);
-        var now = clock.GetUtcNow();
 
         // Условный UPDATE: один код не проходит дважды даже при двух одновременных входах.
         var used = await db.RecoveryCodes
             .Where(c => c.UserId == userId && c.CodeHash == hash && c.UsedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(c => c.UsedAt, now), ct);
         if (used == 0)
-            return SecondFactorResult.Invalid;
+            return await RegisterFailureAsync(row, now, ct);
 
+        ResetFailures(row);
         var left = await db.RecoveryCodes.CountAsync(c => c.UserId == userId && c.UsedAt == null, ct);
         // Вход ещё не завершён — исполнитель указан явно: это сам владелец аккаунта.
         auditLog.Record(AuditActions.RecoveryCodeUsed, AuditActions.TargetUser, userId.ToString(),
@@ -144,11 +152,20 @@ public sealed class TwoFactorService(
         if (row is null)
             return null;
 
-        var step = Totp.Verify(protector.Unprotect(row.SecretCipher), code, clock.GetUtcNow(), row.LastUsedTimeStep);
-        if (step is null)
+        // Та же блокировка по аккаунту: перевыпуск кодов — тоже проверка второго фактора.
+        var now = clock.GetUtcNow();
+        if (IsLocked(row, now))
             return null;
 
+        var step = Totp.Verify(protector.Unprotect(row.SecretCipher), code, now, row.LastUsedTimeStep);
+        if (step is null)
+        {
+            await RegisterFailureAsync(row, now, ct);
+            return null;
+        }
+
         row.LastUsedTimeStep = step.Value;
+        ResetFailures(row);
         var codes = await ReplaceRecoveryCodesAsync(userId, ct);
         auditLog.Record(AuditActions.RecoveryCodesRegenerated, AuditActions.TargetUser, userId.ToString(),
             newValue: new { recoveryCodes = codes.Count });
@@ -160,7 +177,8 @@ public sealed class TwoFactorService(
     /// <summary>Отключить 2FA самому (только не сотруднику — проверяет вызывающий). Требует действующий код.</summary>
     public async Task<bool> DisableAsync(Guid userId, string code, CancellationToken ct)
     {
-        if (await VerifyAsync(userId, code, ct) == SecondFactorResult.Invalid)
+        // Только явный успех: и неверный код, и блокировка — отказ.
+        if (await VerifyAsync(userId, code, ct) is not (SecondFactorResult.Totp or SecondFactorResult.RecoveryCode))
             return false;
 
         await RemoveAsync(userId, ct);
@@ -184,6 +202,44 @@ public sealed class TwoFactorService(
         auditLog.Record(AuditActions.TwoFactorReset, AuditActions.TargetUser, userId.ToString(),
             oldValue: new { enabled = true }, newValue: new { enabled = false }, reason: reason);
         return true;
+    }
+
+    /// <summary>До какого момента второй фактор заблокирован; null — не заблокирован.</summary>
+    public async Task<DateTimeOffset?> LockedUntilAsync(Guid userId, CancellationToken ct)
+    {
+        var until = await db.TwoFactors.AsNoTracking()
+            .Where(t => t.UserId == userId)
+            .Select(t => t.LockedUntil)
+            .FirstOrDefaultAsync(ct);
+        return until is { } u && u > clock.GetUtcNow() ? u : null;
+    }
+
+    private static bool IsLocked(UserTwoFactor row, DateTimeOffset now) => row.LockedUntil is { } u && u > now;
+
+    private static void ResetFailures(UserTwoFactor row)
+    {
+        row.FailedAttempts = 0;
+        row.LockedUntil = null;
+    }
+
+    /// <summary>
+    /// Неверный код: счётчик по аккаунту (с любых адресов и билетов). На пороге — блокировка
+    /// второго фактора на <see cref="TwoFactorOptions.LockoutMinutes"/> и запись в журнал.
+    /// Исполнитель — владелец аккаунта явно: вход ещё не завершён, токена нет.
+    /// </summary>
+    private async Task<SecondFactorResult> RegisterFailureAsync(UserTwoFactor row, DateTimeOffset now, CancellationToken ct)
+    {
+        row.FailedAttempts++;
+        if (row.FailedAttempts >= Math.Max(1, _o.LockoutThreshold))
+        {
+            row.LockedUntil = now.AddMinutes(Math.Max(1, _o.LockoutMinutes));
+            auditLog.Record(AuditActions.TwoFactorLocked, AuditActions.TargetUser, row.UserId.ToString(),
+                newValue: new { failedAttempts = row.FailedAttempts, lockedUntil = row.LockedUntil },
+                actingUserId: row.UserId);
+            row.FailedAttempts = 0;
+        }
+        await db.SaveChangesAsync(ct);
+        return SecondFactorResult.Invalid;
     }
 
     private async Task RemoveAsync(Guid userId, CancellationToken ct)

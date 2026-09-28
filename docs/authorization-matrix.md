@@ -27,16 +27,19 @@
 
 | Разрешение | Что даёт | Moderator | Admin | Owner |
 |---|---|---|---|---|
-| `listings.moderate` | Очередь, решения по объявлениям, назначение | ✅ | ✅ | ✅ |
-| `reports.review` | Жалобы: список, взять, закрыть | ✅ | ✅ | ✅ |
+| `listings.moderate` | Очередь, решения по объявлениям, назначение, скрытие объявления, счётчики очереди (`GET stats`) | ✅ | ✅ | ✅ |
+| `reports.review` | Жалобы: список, взять, закрыть; контакты — **только участников жалобы, которую сотрудник взял в работу** | ✅ | ✅ | ✅ |
 | `reviews.moderate` | Скрытие отзывов | ✅ | ✅ | ✅ |
-| `users.view` | Реестр, досье, журналируемый просмотр контактов | ✅ | ✅ | ✅ |
-| `users.warn` | Предупреждение | ✅ | ✅ | ✅ |
-| `cards.manage` | Чёрный список карт | ✅ | ✅ | ✅ |
-| `business.review` | Заявки бизнеса | ✅ | ✅ | ✅ |
-| `moderation.journal.read` | Журнал модерации, статистика | ✅ | ✅ | ✅ |
+| `users.warn` | Предупреждение (только к роли ниже) | ✅ | ✅ | ✅ |
+| `users.view` | Реестр пользователей и досье (без контактов) | — | ✅ | ✅ |
+| `cards.manage` | Чёрный список карт | — | ✅ | ✅ |
+| `business.review` | Заявки бизнеса | — | ✅ | ✅ |
+| `moderation.journal.read` | Журнал модерации (все решения всех сотрудников) | — | ✅ | ✅ |
 | `users.ban` | Блокировка и разблокировка | — | ✅ | ✅ |
 | `catalog.manage` | Справочники: города, категории, подкатегории | — | ✅ | ✅ |
+| `users.contacts` | Контакты любого пользователя в рамках модерации (с записью в журнал) | — | ✅ | ✅ |
+| `invitations.manage` | Приглашения продавцов: мастер, ссылки, отзыв — **только свои** | — | ✅ | ✅ |
+| `invitations.all` | Приглашения всех сотрудников: просмотр, перевыпуск, отзыв | — | — | ✅ |
 | `roles.manage` | Сотрудники: список, поиск по email, смена ролей | — | — | ✅ |
 | `audit.read` | Журнал аудита и история ролей | — | — | ✅ |
 
@@ -50,7 +53,11 @@
 | Правило | Где обеспечено |
 |---|---|
 | Нельзя решать и назначать на себя **своё** объявление (одиночно и пакетом) — Owner не исключение | `ModerationController.DecideAsync`, `ModerationQueueController.Assign/BulkAsync`, `Moderation/ConflictOfInterest.cs` |
-| Нельзя брать и закрывать жалобу на себя, своё объявление, отзыв о себе или свой | `ModerationReportsController.Take`, `ModerationController.ResolveReport` |
+| Нельзя брать и закрывать жалобу, где сотрудник участник: подал её сам, она на него, его объявление, отзыв о нём или его отзыв | `ConflictOfInterest.IsReportParticipantAsync`; `ModerationReportsController.Take`, `ModerationController.ResolveReport` |
+| Контакты: модератору — только участников жалобы в статусе «в работе», назначенной на него (`?reportId=`); Admin и выше (`users.contacts`) — любого. Каждый просмотр — в журнал | `ModerationController.UserContactsAsync` |
+| Разбан — как бан: только к роли строго ниже своей | `AdminUsersController.Unban` |
+| Скрытие чужого объявления (`DELETE /api/listings/{id}`) и скрытие отзыва пишутся в журнал модерации (`listing.hide`, `review.hide`) | `ListingsController.Delete`, `ReviewsController.Hide` |
+| Заблокированному вход отказывает сразу (403), токены не выдаются | `AuthController.CompleteFirstFactorAsync`, `VerifySecondFactor` |
 | Нельзя скрыть отзыв о себе или свой | `ReviewsController.Hide` |
 | Санкции — только к роли **строго ниже** своей: модератор не предупреждает модератора, админ не банит админа, владельца не трогает никто | `RolePermissions.Outranks`; `ModerationUsersController.Warn`, `AdminUsersController.Ban` |
 | Owner не назначается через API; свою роль менять нельзя; роль владельца через API не меняется; заблокированного не повышают | `RoleManagementService.ChangeByOwnerAsync` |
@@ -65,6 +72,12 @@
 - Вход паролем или кодом из письма при включённой 2FA → **202** с одноразовым билетом (5 минут,
   5 попыток) → `POST /api/auth/2fa/verify` → токены с `mfa`.
 - Отметка 2FA — свойство сессии (`refresh_tokens.MfaVerifiedAt`), переживает ротацию.
+- **Блокировка по аккаунту:** после `TwoFactor:LockoutThreshold` (10) неверных кодов подряд — с любых
+  адресов и билетов — второй фактор не принимается `TwoFactor:LockoutMinutes` (15) минут, даже верный
+  код (429). Счётчик в БД (`user_two_factor.FailedAttempts`/`LockedUntil`), блокировка пишется в журнал
+  (`2fa.locked`). Считаются вход, отключение 2FA и перевыпуск резервных кодов.
+- Резервный код принимается на втором шаге входа и при отключении 2FA (не сотруднику). Для включения
+  2FA и перевыпуска резервных кодов нужен код из приложения.
 - Сотрудник не может отключить 2FA (`POST /api/me/2fa/disable` → 403). Включение 2FA завершает прочие
   сессии и выдаёт текущей новый access-токен с `mfa`.
 - **Короткая служебная сессия**: refresh-токен сотрудника живёт не дольше `StaffSession:AbsoluteHours`
@@ -135,14 +148,14 @@
 | `GET queue`, `GET listings/{id}`, `POST listings/{id}/{approve,reject,revise}` | `listings.moderate` | Очередь и решения (через `IListingDecisions`), не по своим объявлениям | `ModerationController` |
 | `GET listings`, `GET listings/counts`, `POST listings/{id}/{assign,unassign}`, `POST listings/bulk/{approve,reject,revise,assign}` | `listings.moderate` | Таблица очереди, назначение, пакеты ≤ 50 одной транзакцией; свои объявления пакет отбрасывает | `ModerationQueueController` |
 | `POST reports/{id}/resolve` | `reports.review` | Закрытие жалобы (не касающейся себя) | `ModerationController` |
-| `GET stats` | `moderation.journal.read` | Счётчики дашборда | `ModerationController` |
-| `GET users/{id}`, `GET users/by-code/{code}` | `users.view` | **Контакты** (email/телефон). Единственные ручки с контактами; каждый вызов журналируется | `ModerationController.UserContactsAsync` |
-| `GET logs`, `GET logs/summary`, `GET logs/actors` | `moderation.journal.read` | Журнал модерации (только чтение) | `ModerationJournalController` |
-| `GET users`, `GET users/summary`, `GET users/{id}/dossier` | `users.view` | Реестр и досье **без контактов**; email в поиске не участвует | `ModerationUsersController` |
-| `POST users/{id}/warn` | `users.view` + `users.warn` | Предупреждение — не себе и только роли ниже своей | `ModerationUsersController.Warn` |
-| `GET blocked-cards`, `POST blocked-cards`, `DELETE blocked-cards/{id}` | `cards.manage` | Чёрный список карт: номер → HMAC + последние 4 цифры | `ModerationBlockedCardsController` |
+| `GET stats` | `listings.moderate` | Счётчики дашборда и бейджи меню — нужны каждому, кто разбирает очередь | `ModerationController` |
+| `GET users/{id}`, `GET users/by-code/{code}` | `reports.review` (+ `users.contacts` для любого пользователя) | **Контакты** (email/телефон). Единственные ручки с контактами; модератору — только участников своей жалобы в работе (`?reportId=`); каждый вызов журналируется | `ModerationController.UserContactsAsync` |
+| `GET logs`, `GET logs/summary`, `GET logs/actors` | `moderation.journal.read` (Admin) | Журнал модерации (только чтение) | `ModerationJournalController` |
+| `GET users`, `GET users/summary`, `GET users/{id}/dossier` | `users.view` (Admin) | Реестр и досье **без контактов**; email в поиске не участвует | `ModerationUsersController` (политика на каждой ручке) |
+| `POST users/{id}/warn` | `users.warn` | Предупреждение — не себе и только роли ниже своей; реестра не требует | `ModerationUsersController.Warn` |
+| `GET blocked-cards`, `POST blocked-cards`, `DELETE blocked-cards/{id}` | `cards.manage` (Admin) | Чёрный список карт: номер → HMAC + последние 4 цифры | `ModerationBlockedCardsController` |
 | `GET reports`, `GET reports/summary`, `GET reports/{id}`, `POST reports/{id}/take` | `reports.review` | Экран жалоб; «взять» — условный UPDATE, чужую только `?force=true`; касающуюся себя — 403 | `ModerationReportsController` |
-| `GET business`, `POST business/{userId}/{approve,reject}` | `business.review` | Заявки бизнеса; решение — compare-and-set по `submittedAt` | `BusinessModerationController` |
+| `GET business`, `POST business/{userId}/{approve,reject}` | `business.review` (Admin) | Заявки бизнеса; решение — compare-and-set по `submittedAt` | `BusinessModerationController` |
 | `POST /api/reviews/{id}/hide` | `reviews.moderate` | Скрытие отзыва (не о себе и не своего) | `ReviewsController.Hide` |
 
 Сетевой сигнал в досье — совпадение HMAC адреса входа (`refresh_tokens.CreatedByIpHash`);
@@ -157,6 +170,31 @@
 | `POST catalog/subcategories`, `PATCH catalog/subcategories/{id}` | `catalog.manage` | Подкатегории | `AdminCatalogController` |
 | `GET staff`, `GET staff/lookup?email=`, `PUT staff/{userId}/role` | `roles.manage` | Сотрудники; поиск по email журналируется (адрес в журнал не пишется) | `AdminStaffController` |
 | `GET audit`, `GET audit/role-changes` | `audit.read` | Журнал аудита и история ролей (только чтение) | `AdminAuditController` |
+
+### Приглашения продавцов
+
+Сотрудник (Admin/Owner) готовит магазин и черновики товаров, владелец магазина принимает их по
+одноразовой ссылке и публикует сам. Черновики до принятия лежат в отдельных таблицах
+(`seller_invitations`, `invitation_drafts`, `invitation_draft_photos`) — каталог, поиск, sitemap и
+`/api/images/listings/...` их не видят в принципе.
+
+| Эндпоинт | Доступ | Что | Где обеспечено |
+|---|---|---|---|
+| `GET/POST api/admin/invitations`, `GET/PATCH {id}` | `invitations.manage` | Список и шаг «Магазин»; чужое — **404** (кроме `invitations.all`) | `AdminInvitationsController.Visible/LockAsync` |
+| `POST/PUT/DELETE {id}/drafts[/{draftId}]`, `POST/DELETE …/photos` | `invitations.manage` | Товары и фото; только пока приглашение не принято и не отозвано | там же, под `SELECT … FOR UPDATE` |
+| `POST {id}/link` | `invitations.manage` | Первая ссылка; без товаров — 409 | `AdminInvitationsController.IssueAsync` |
+| `POST {id}/reissue`, `POST {id}/revoke` | `invitations.manage` | Перевыпуск («Ожидает»/«Истекло») гасит старую ссылку; отзыв | там же |
+| `GET api/invitations/{token}` | 🌐 аноним, 30/10 мин на IP | Предпросмотр: название, город, превью. Заметки и данных сотрудника нет | `InvitationsController.Get` |
+| `POST api/invitations/{token}/signup` | 🌐 аноним, тот же лимит | Аккаунт без пароля + код входа; ответ одинаков для нового и занятого адреса | `InvitationsController.Signup` |
+| `POST api/invitations/{token}/accept` | 🔒 любой аккаунт, кроме автора приглашения (403) | Одна транзакция, условный UPDATE `Pending → Accepted` | `InvitationService.AcceptAsync` |
+| `GET api/invitation-photos/{id}?v=&exp=&sig=` | 🌐 только с действующей HMAC-подписью | Фото черновика | `InvitationsController.Photo`, `InvitationPhotoUrls` |
+| `GET api/me/invited-drafts`, `POST api/me/invited-drafts/publish` | 👤 владелец объявлений | Публикация только с согласием текущей версии; строка `publication_consents` на объявление | `ListingsController.PublishInvited` |
+| `POST api/listings/{id}/publish` для объявления из приглашения | 👤 | Без согласия — 409 | `ListingsController.Publish` |
+| `POST api/me/password` | 🔒 свой, только пока `HasPassword = false` | Первый пароль аккаунта из приглашения | `AuthController.SetPassword` |
+
+Токен — 32 случайных байта (base64url), в БД только SHA-256. Контакты объявления — всегда из
+профиля владельца; сотрудник их не вводит. `publication_consents` — только на добавление (триггер
+`journal_append_only`), `IpHash` снимается через 90 дней.
 
 Публично: `GET /api/catalog/references` — все справочники одним ответом, с флагом `isActive`
 (`CatalogReferencesController`). Коды на входе регистронезависимы, в БД и в ответах — канонические.
@@ -207,6 +245,12 @@ Owner, когда владелец уже есть, — только с `--trans
   конфликт интересов, иерархия санкций, неизменяемость журналов на уровне БД, CLI `grant-role`/`reset-2fa`.
 - `TwoFactorTests` — векторы RFC 6238, включение, вход в два шага, повтор кода, резервные коды,
   лимит попыток на билет, короткая служебная сессия.
+- `AccessAuditTests` — контакты только в рамках взятой жалобы, разбан по рангу, жалоба от самого
+  сотрудника, журнал скрытия объявления/отзыва и прежнего статуса, блокировка второго фактора,
+  вход заблокированного, вход пользователя без 2FA паролем и кодом.
+- `SellerInvitationTests` — права на создание, ссылка без товаров, повтор/истечение/отзыв/перевыпуск,
+  гонка четырёх одновременных принятий, чужие приглашения и черновики, согласие на публикацию,
+  невидимость черновиков в публичной выдаче, регистрация по ссылке, лимит на IP, очистка.
 - `CatalogReferencesTests` — справочники в БД, регистр кодов, выключенные значения, журнал.
 - `AuthorizationTests` — удаление объявления: аноним → 401, чужой → 403, владелец → 204,
   модератор → 204; гость смотрит каталог и регистрируется.

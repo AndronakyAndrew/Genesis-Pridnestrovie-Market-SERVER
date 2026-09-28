@@ -103,6 +103,7 @@ public static class AuditActions
     public const string TwoFactorReset = "2fa.reset";
     public const string RecoveryCodesRegenerated = "2fa.recovery_regenerate";
     public const string RecoveryCodeUsed = "2fa.recovery_used";
+    public const string TwoFactorLocked = "2fa.locked";
 
     public const string CatalogCreate = "catalog.create";
     public const string CatalogUpdate = "catalog.update";

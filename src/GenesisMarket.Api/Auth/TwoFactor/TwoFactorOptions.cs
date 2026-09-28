@@ -16,6 +16,15 @@ public sealed class TwoFactorOptions
 
     /// <summary>Резервных кодов в пачке.</summary>
     public int RecoveryCodeCount { get; set; } = 10;
+
+    /// <summary>
+    /// Неудачных проверок второго фактора подряд (по аккаунту, с любых адресов), после
+    /// которых второй фактор временно не принимается.
+    /// </summary>
+    public int LockoutThreshold { get; set; } = 10;
+
+    /// <summary>На сколько минут блокируется второй фактор после порога.</summary>
+    public int LockoutMinutes { get; set; } = 15;
 }
 
 /// <summary>

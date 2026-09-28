@@ -141,15 +141,22 @@ public class PublicCodeTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
     /// заводился: в жалобе написано «GEN-82914», а не GUID.
     /// </summary>
     [Fact]
-    public async Task Moderator_can_find_a_user_by_code()
+    public async Task Staff_can_find_a_user_by_code()
     {
         var email = Unique("code-lookup");
         var userId = await factory.SeedUserAsync(email, Password);
         var code = await CodeOfAsync(userId);
 
+        // Модератору контакты по коду — только в рамках разбираемой жалобы.
         var moderator = Unique("code-moderator");
         await factory.SeedUserAsync(moderator, Password, role: UserRole.Moderator);
-        var client = await AuthedClient(moderator);
+        var modClient = await AuthedClient(moderator);
+        Assert.Equal(HttpStatusCode.Forbidden, (await modClient.GetAsync($"/api/moderation/users/by-code/{code}")).StatusCode);
+
+        // Admin (полный доступ к контактам) находит аккаунт по коду.
+        var admin = Unique("code-admin");
+        await factory.SeedUserAsync(admin, Password, role: UserRole.Admin);
+        var client = await AuthedClient(admin);
 
         var card = await client.GetFromJsonAsync<JsonElement>($"/api/moderation/users/by-code/{code}");
         Assert.Equal(userId, card.GetProperty("id").GetGuid());

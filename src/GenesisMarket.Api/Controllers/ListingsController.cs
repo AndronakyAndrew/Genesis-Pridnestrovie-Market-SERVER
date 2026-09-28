@@ -509,7 +509,8 @@ public class ListingsController(
 
     [Authorize]
     [HttpDelete("{id:guid}")]
-    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+    public async Task<IActionResult> Delete(
+        Guid id, [FromQuery] string? reason, [FromServices] IModerationAudit audit, CancellationToken ct)
     {
         var listing = await db.Listings.FirstOrDefaultAsync(l => l.Id == id, ct);
         if (listing is null)
@@ -519,6 +520,14 @@ public class ListingsController(
         var result = await authorization.AuthorizeAsync(User, listing, ResourceOwnerRequirement.Policy);
         if (!result.Succeeded)
             return Forbid();
+
+        // Чужое объявление снимает сотрудник — это решение модерации: пишется в журнал
+        // той же транзакцией, что и сам переход (SaveChanges ниже).
+        if (listing.OwnerId != CurrentUserId())
+            audit.Record(ModerationLog.ActionHideListing, ModerationLog.TargetListing, id,
+                reason: string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
+                payload: new { status = nameof(ListingStatus.Archived) },
+                before: new { status = listing.Status.ToString() });
 
         // Снятие с публикации = уход в архив (переход — доменным методом).
         listing.Archive(DateTimeOffset.UtcNow);

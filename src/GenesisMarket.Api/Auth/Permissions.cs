@@ -21,11 +21,13 @@ public static class Permissions
     /// <summary>Скрытие отзывов.</summary>
     public const string ReviewsModerate = "reviews.moderate";
 
-    /// <summary>Реестр пользователей, досье и журналируемый просмотр контактов.</summary>
-    public const string UsersView = "users.view";
-
-    /// <summary>Предупреждение пользователю (санкция без бана).</summary>
+    /// <summary>Предупреждение пользователю (санкция без бана) — только к роли ниже своей.</summary>
     public const string UsersWarn = "users.warn";
+
+    // ---- Admin ----
+
+    /// <summary>Реестр пользователей и досье (без контактов).</summary>
+    public const string UsersView = "users.view";
 
     /// <summary>Чёрный список банковских карт.</summary>
     public const string CardsManage = "cards.manage";
@@ -33,16 +35,20 @@ public static class Permissions
     /// <summary>Заявки на подтверждение бизнеса.</summary>
     public const string BusinessReview = "business.review";
 
-    /// <summary>Рабочий журнал модерации (moderation_logs) и счётчики.</summary>
+    /// <summary>Рабочий журнал модерации (moderation_logs): все решения всех сотрудников.</summary>
     public const string ModerationJournalRead = "moderation.journal.read";
-
-    // ---- Admin ----
 
     /// <summary>Блокировка и разблокировка пользователей.</summary>
     public const string UsersBan = "users.ban";
 
     /// <summary>Справочники: города, категории, подкатегории.</summary>
     public const string CatalogManage = "catalog.manage";
+
+    /// <summary>
+    /// Контакты (email, телефон) любого пользователя в рамках модерации, с записью в журнал.
+    /// Без него — только контакты участников жалобы, которую сотрудник сейчас разбирает.
+    /// </summary>
+    public const string UsersContacts = "users.contacts";
 
     /// <summary>Приглашения продавцов: создавать и вести СВОИ (чужие — только с <see cref="InvitationsAll"/>).</summary>
     public const string InvitationsManage = "invitations.manage";
@@ -61,7 +67,7 @@ public static class Permissions
     public static readonly IReadOnlyList<string> All =
     [
         ListingsModerate, ReportsReview, ReviewsModerate, UsersView, UsersWarn, CardsManage,
-        BusinessReview, ModerationJournalRead, UsersBan, CatalogManage, InvitationsManage,
+        BusinessReview, ModerationJournalRead, UsersBan, CatalogManage, UsersContacts, InvitationsManage,
         RolesManage, AuditRead, InvitationsAll
     ];
 }
@@ -76,13 +82,18 @@ public static class RolePermissions
 
     private static Dictionary<UserRole, IReadOnlySet<string>> Build()
     {
+        // Модератор — объявления, жалобы, отзывы и предупреждение (эталонная матрица, 2026-09-28).
         string[] moderator =
         [
             Permissions.ListingsModerate, Permissions.ReportsReview, Permissions.ReviewsModerate,
-            Permissions.UsersView, Permissions.UsersWarn, Permissions.CardsManage,
-            Permissions.BusinessReview, Permissions.ModerationJournalRead
+            Permissions.UsersWarn
         ];
-        string[] admin = [.. moderator, Permissions.UsersBan, Permissions.CatalogManage, Permissions.InvitationsManage];
+        string[] admin =
+        [
+            .. moderator, Permissions.UsersView, Permissions.CardsManage, Permissions.BusinessReview,
+            Permissions.ModerationJournalRead, Permissions.UsersBan, Permissions.CatalogManage,
+            Permissions.UsersContacts, Permissions.InvitationsManage
+        ];
         string[] owner = [.. admin, Permissions.RolesManage, Permissions.AuditRead, Permissions.InvitationsAll];
 
         return new Dictionary<UserRole, IReadOnlySet<string>>

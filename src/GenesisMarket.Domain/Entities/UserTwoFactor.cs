@@ -25,6 +25,15 @@ public class UserTwoFactor
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Неудачные проверки второго фактора подряд — по аккаунту, а не по IP: перебор с
+    /// многих адресов при известном пароле упирается в этот счётчик. Успех обнуляет.
+    /// </summary>
+    public int FailedAttempts { get; set; }
+
+    /// <summary>До какого момента второй фактор не принимается вовсе (даже верный код).</summary>
+    public DateTimeOffset? LockedUntil { get; set; }
+
     public ICollection<RecoveryCode> RecoveryCodes { get; set; } = new List<RecoveryCode>();
 
     public bool IsEnabled => EnabledAt is not null;

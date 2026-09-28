@@ -263,26 +263,38 @@ public class ModerationController(
     /// <summary>
     /// Контактные данные пользователя (email/телефон) — САМАЯ чувствительная ручка.
     /// Каждый вызов пишется в журнал модерации (даже если это просто просмотр).
+    /// <para>
+    /// Admin и выше (<see cref="Permissions.UsersContacts"/>) видят контакты любого
+    /// пользователя. Модератор — только участника жалобы, которую он сам сейчас разбирает:
+    /// <paramref name="reportId"/> обязателен, жалоба — в работе и назначена на него.
+    /// </para>
     /// </summary>
-    [Authorize(Policy = Permissions.UsersView)]
+    // Разрешение жалоб, а не реестра: модератор видит контакты в рамках разбираемой жалобы,
+    // полный доступ — отдельное разрешение users.contacts (проверяется внутри).
+    [Authorize(Policy = Permissions.ReportsReview)]
     [HttpGet("users/{id:guid}")]
-    public Task<ActionResult<ModerationUserContacts>> GetUserContacts(Guid id, CancellationToken ct) =>
-        UserContactsAsync(u => u.Id == id, ct);
+    public Task<ActionResult<ModerationUserContacts>> GetUserContacts(
+        Guid id, [FromQuery] Guid? reportId, CancellationToken ct) =>
+        UserContactsAsync(u => u.Id == id, reportId, ct);
 
     /// <summary>
     /// Та же карточка, но по «ID профиля» («82914»), а не по GUID: в жалобах и
-    /// в поддержке пользователя называют именно кодом. Ручка закрыта разрешением
-    /// users.view намеренно — кодов всего 90 000, и открытый резолвер «код → аккаунт»
+    /// в поддержке пользователя называют именно кодом. Ручка закрыта служебным разрешением
+    /// намеренно — кодов всего 90 000, и открытый резолвер «код → аккаунт»
     /// превратил бы их в перечислимое пространство имён. Просмотр пишется в журнал
     /// так же, как и обращение по GUID.
     /// </summary>
-    [Authorize(Policy = Permissions.UsersView)]
+    [Authorize(Policy = Permissions.ReportsReview)]
     [HttpGet("users/by-code/{code}")]
-    public Task<ActionResult<ModerationUserContacts>> GetUserContactsByCode(string code, CancellationToken ct) =>
-        UserContactsAsync(u => u.PublicCode == code, ct);
+    public Task<ActionResult<ModerationUserContacts>> GetUserContactsByCode(
+        string code, [FromQuery] Guid? reportId, CancellationToken ct) =>
+        UserContactsAsync(u => u.PublicCode == code, reportId, ct);
+
+    private const string ContactsOutsideReport =
+        "Контакты доступны только участникам жалобы, которую вы сейчас разбираете";
 
     private async Task<ActionResult<ModerationUserContacts>> UserContactsAsync(
-        System.Linq.Expressions.Expression<Func<User, bool>> match, CancellationToken ct)
+        System.Linq.Expressions.Expression<Func<User, bool>> match, Guid? reportId, CancellationToken ct)
     {
         var user = await db.Users.AsNoTracking()
             .Where(match)
@@ -296,15 +308,32 @@ public class ModerationController(
         if (user is null)
             return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
 
-        // Обязательно фиксируем факт просмотра чувствительных данных.
-        audit.Record(ModerationLog.ActionViewUserContacts, ModerationLog.TargetUser, user.Id);
+        // Без полного доступа — только в рамках своей жалобы в работе и только её участники.
+        // Ответ не различает «нет жалобы» и «не участник»: иначе ручка подсказывала бы связи.
+        if (!CurrentUser.Can(Permissions.UsersContacts))
+        {
+            var me = CurrentUserId()!.Value;
+            var report = reportId is { } rid
+                ? await db.Reports.AsNoTracking().FirstOrDefaultAsync(r =>
+                    r.Id == rid && r.Status == ReportStatus.InReview && r.AssignedToUserId == me, ct)
+                : null;
+            if (report is null || !await ConflictOfInterest.IsReportParticipantAsync(db, report, user.Id, ct))
+                return Problem(title: ContactsOutsideReport, statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        // Обязательно фиксируем факт просмотра чувствительных данных (и в рамках какой жалобы).
+        audit.Record(ModerationLog.ActionViewUserContacts, ModerationLog.TargetUser, user.Id,
+            payload: reportId is null ? null : new { reportId });
         await db.SaveChangesAsync(ct);
 
         return Ok(user);
     }
 
-    /// <summary>Счётчики очереди и активности модерации за сегодня/неделю.</summary>
-    [Authorize(Policy = Permissions.ModerationJournalRead)]
+    /// <summary>
+    /// Счётчики очереди и активности модерации за сегодня/неделю — из них бейджи меню и вкладки,
+    /// нужны каждому, кто разбирает очередь. Сам журнал (кто что решил) — только Admin.
+    /// </summary>
+    [Authorize(Policy = Permissions.ListingsModerate)]
     [HttpGet("stats")]
     public async Task<ActionResult<ModerationStats>> GetStats(CancellationToken ct)
     {

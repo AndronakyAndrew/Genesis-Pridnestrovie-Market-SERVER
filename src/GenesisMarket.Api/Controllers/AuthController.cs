@@ -188,8 +188,19 @@ public class AuthController(
             return Problem(title: "Неверный код или истёк срок входа. Попробуйте ещё раз.",
                 statusCode: StatusCodes.Status401Unauthorized);
         }
+        if (outcome.Method == SecondFactorResult.Locked)
+        {
+            securityAudit.LoginFailed();
+            var until = await twoFactor.LockedUntilAsync(outcome.UserId, ct);
+            return TooManyRequests(
+                until is { } u ? (int)Math.Ceiling((u - DateTimeOffset.UtcNow).TotalSeconds) : 60,
+                "Слишком много неверных кодов. Вход по второму фактору временно заблокирован — попробуйте позже.");
+        }
 
         var user = await db.Users.Include(u => u.Profile).FirstAsync(u => u.Id == outcome.UserId, ct);
+        // Бан мог прийти между первым и вторым шагом входа.
+        if (BannedError(user) is { } banned)
+            return banned;
         securityAudit.LoginSucceeded(user.Id);
         return Ok(await IssueAsync(user, ip: ClientIp(), mfaVerified: true, ct));
     }
@@ -353,6 +364,12 @@ public class AuthController(
     /// </summary>
     private async Task<ActionResult<AuthResponse>> CompleteFirstFactorAsync(User user, string ip, CancellationToken ct)
     {
+        // Заблокированному — отказ сразу, после верного первого фактора (оракула на
+        // перечисление нет: без пароля или кода сюда не попасть). Раньше вход выдавал
+        // токены, которые на первом же запросе получали 401.
+        if (BannedError(user) is { } banned)
+            return banned;
+
         if (await twoFactor.IsEnabledAsync(user.Id, ct))
         {
             var ticket = await mfaChallenges.CreateAsync(user.Id, ct);
@@ -419,6 +436,13 @@ public class AuthController(
     }
 
     private static string Normalize(string email) => email.Trim().ToLowerInvariant();
+
+    /// <summary>403, если аккаунт заблокирован (бессрочно или срок ещё не вышел); иначе null.</summary>
+    private ObjectResult? BannedError(User user) =>
+        user.IsBanned && (user.BannedUntil is null || user.BannedUntil > DateTimeOffset.UtcNow)
+            ? Problem(title: "Аккаунт заблокирован. Если это ошибка — напишите в поддержку.",
+                statusCode: StatusCodes.Status403Forbidden)
+            : null;
 
     private ObjectResult? PasswordError(string password) => passwordPolicy.Validate(password) switch
     {

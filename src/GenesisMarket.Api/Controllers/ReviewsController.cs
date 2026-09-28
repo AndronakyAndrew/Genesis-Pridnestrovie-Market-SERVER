@@ -233,7 +233,7 @@ public class ReviewsController(AppDbContext db, IPublicCodeResolver publicCodes)
     /// </summary>
     [Authorize(Policy = Permissions.ReviewsModerate)]
     [HttpPost("{id:guid}/hide")]
-    public async Task<IActionResult> Hide(Guid id, CancellationToken ct)
+    public async Task<IActionResult> Hide(Guid id, [FromServices] IModerationAudit audit, CancellationToken ct)
     {
         var moderatorId = CurrentUserId()!.Value;
 
@@ -250,6 +250,11 @@ public class ReviewsController(AppDbContext db, IPublicCodeResolver publicCodes)
         review.IsHidden = true;
         review.HiddenByUserId = moderatorId;
         review.UpdatedAt = DateTimeOffset.UtcNow;
+
+        // Решение модератора — в журнал той же транзакцией (SaveChanges ниже).
+        audit.Record(ModerationLog.ActionHideReview, ModerationLog.TargetReview, id,
+            payload: new { isHidden = true, review.TargetUserId, review.ListingId },
+            before: new { isHidden = false });
 
         // Триггер уберёт отзыв из AverageRating/ReviewsCount продавца.
         await db.SaveChangesAsync(ct);

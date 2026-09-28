@@ -80,4 +80,16 @@ public class ModerationLog
 
     /// <summary>Просмотр контактных данных пользователя (email/телефон) — чувствительное чтение.</summary>
     public const string ActionViewUserContacts = "user.view_contacts";
+
+    /// <summary>
+    /// Сотрудник снял с публикации ЧУЖОЕ объявление (DELETE /api/listings/{id}). Снятие
+    /// владельцем своего объявления — не модерация и в журнал не пишется.
+    /// </summary>
+    public const string ActionHideListing = "listing.hide";
+
+    /// <summary>Отзыв. TargetId — Id отзыва.</summary>
+    public const string TargetReview = "review";
+
+    /// <summary>Модератор скрыл отзыв.</summary>
+    public const string ActionHideReview = "review.hide";
 }
