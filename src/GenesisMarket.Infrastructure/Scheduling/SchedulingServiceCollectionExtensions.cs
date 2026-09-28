@@ -1,3 +1,4 @@
+using GenesisMarket.Infrastructure.Invitations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Quartz;
@@ -20,10 +21,12 @@ public static class SchedulingServiceCollectionExtensions
         services.Configure<OutboxOptions>(configuration.GetSection(OutboxOptions.Section));
         services.Configure<SavedSearchOptions>(configuration.GetSection(SavedSearchOptions.Section));
         services.Configure<JournalRetentionOptions>(configuration.GetSection(JournalRetentionOptions.Section));
+        services.Configure<InvitationOptions>(configuration.GetSection(InvitationOptions.Section));
 
         // Сервис-логика доступна всегда (в т.ч. когда планировщик выключен — для тестов/ручного прогона).
         services.AddScoped<ICatalogHygieneService, CatalogHygieneService>();
         services.AddScoped<IJournalRetentionService, JournalRetentionService>();
+        services.AddScoped<IInvitationCleanupService, InvitationCleanupService>();
 
         var enabled = configuration.GetValue($"{SchedulingSection}:Enabled", defaultValue: true);
         if (!enabled)
@@ -48,6 +51,12 @@ public static class SchedulingServiceCollectionExtensions
         var savedSearchCron = string.IsNullOrWhiteSpace(savedSearch.NotificationCron)
             ? "0 0/15 * * * ?"
             : savedSearch.NotificationCron;
+
+        var invitations = configuration.GetSection(InvitationOptions.Section).Get<InvitationOptions>()
+                          ?? new InvitationOptions();
+        var invitationCron = string.IsNullOrWhiteSpace(invitations.CleanupCron)
+            ? "0 20 3 * * ?"
+            : invitations.CleanupCron;
 
         services.AddQuartz(q =>
         {
@@ -120,6 +129,17 @@ public static class SchedulingServiceCollectionExtensions
                 .ForJob(SavedSearchNotificationJob.Key)
                 .WithIdentity("saved-search-notification-interval")
                 .WithCronSchedule(savedSearchCron, x => x.WithMisfireHandlingInstructionDoNothing()));
+
+            // ---- Приглашения продавцов: истечение ссылок и удаление закрытых/брошенных ----
+            q.AddJob<InvitationCleanupJob>(j => j
+                .WithIdentity(InvitationCleanupJob.Key)
+                .StoreDurably()
+                .WithDescription("Истечение ссылок приглашений и удаление закрытых и брошенных приглашений"));
+
+            q.AddTrigger(t => t
+                .ForJob(InvitationCleanupJob.Key)
+                .WithIdentity("invitation-cleanup-daily")
+                .WithCronSchedule(invitationCron, x => x.WithMisfireHandlingInstructionDoNothing()));
         });
 
         // WaitForJobsToComplete — не рвём выполнение джоба при остановке приложения.

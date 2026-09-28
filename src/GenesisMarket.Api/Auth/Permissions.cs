@@ -44,6 +44,9 @@ public static class Permissions
     /// <summary>Справочники: города, категории, подкатегории.</summary>
     public const string CatalogManage = "catalog.manage";
 
+    /// <summary>Приглашения продавцов: создавать и вести СВОИ (чужие — только с <see cref="InvitationsAll"/>).</summary>
+    public const string InvitationsManage = "invitations.manage";
+
     // ---- Owner ----
 
     /// <summary>Выдача и снятие ролей, список сотрудников, поиск по email.</summary>
@@ -52,10 +55,14 @@ public static class Permissions
     /// <summary>Общий журнал действий (audit_events) и история ролей.</summary>
     public const string AuditRead = "audit.read";
 
+    /// <summary>Видеть, отзывать и перевыпускать приглашения любого сотрудника.</summary>
+    public const string InvitationsAll = "invitations.all";
+
     public static readonly IReadOnlyList<string> All =
     [
         ListingsModerate, ReportsReview, ReviewsModerate, UsersView, UsersWarn, CardsManage,
-        BusinessReview, ModerationJournalRead, UsersBan, CatalogManage, RolesManage, AuditRead
+        BusinessReview, ModerationJournalRead, UsersBan, CatalogManage, InvitationsManage,
+        RolesManage, AuditRead, InvitationsAll
     ];
 }
 
@@ -75,8 +82,8 @@ public static class RolePermissions
             Permissions.UsersView, Permissions.UsersWarn, Permissions.CardsManage,
             Permissions.BusinessReview, Permissions.ModerationJournalRead
         ];
-        string[] admin = [.. moderator, Permissions.UsersBan, Permissions.CatalogManage];
-        string[] owner = [.. admin, Permissions.RolesManage, Permissions.AuditRead];
+        string[] admin = [.. moderator, Permissions.UsersBan, Permissions.CatalogManage, Permissions.InvitationsManage];
+        string[] owner = [.. admin, Permissions.RolesManage, Permissions.AuditRead, Permissions.InvitationsAll];
 
         return new Dictionary<UserRole, IReadOnlySet<string>>
         {

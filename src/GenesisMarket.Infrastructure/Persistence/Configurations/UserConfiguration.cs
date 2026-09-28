@@ -29,6 +29,9 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
 
         b.Property(u => u.PhoneE164).HasMaxLength(20);
         b.Property(u => u.PhoneVerified).HasDefaultValue(false);
+        // Существующие аккаунты заданы с паролем; false — только у созданных по приглашению.
+        // Sentinel true: EF отправляет в БД явное false, а «не задано» — только для true.
+        b.Property(u => u.HasPassword).HasDefaultValue(true).HasSentinel(true);
         b.Property(u => u.IsBanned).HasDefaultValue(false);
 
         // Денормализованный рейтинг: пересчитывается триггером reviews_rating_sync.

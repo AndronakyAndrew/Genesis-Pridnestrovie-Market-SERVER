@@ -62,7 +62,9 @@ public static class SeoUrls
     public static readonly string[] DisallowedPaths =
     [
         "/create", "/profile", "/auth", "/admin",
-        "/listing/new", "/favorites", "/login", "/moderation", "/verify-email", "/user/"
+        "/listing/new", "/favorites", "/login", "/moderation", "/verify-email", "/user/",
+        // Одноразовые ссылки приглашений продавцов: токен в URL не должен попасть в индекс.
+        "/invite/"
     ];
 
     /// <summary>

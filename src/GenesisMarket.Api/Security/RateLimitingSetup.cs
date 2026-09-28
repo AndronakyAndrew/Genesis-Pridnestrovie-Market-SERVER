@@ -29,6 +29,9 @@ public static class RateLimitPolicies
     /// <summary>Поиск по каталогу: на IP.</summary>
     public const string Search = "search";
 
+    /// <summary>Проверка и использование ссылки приглашения продавца: на IP.</summary>
+    public const string InvitationToken = "invitation-token";
+
     /// <summary>
     /// Публичный профиль по «ID профиля»: на IP. Отдельная политика нужна именно
     /// здесь: код пятизначный, то есть пространство всего в 90 000 значений, и
@@ -68,6 +71,9 @@ public sealed class RateLimitOptions
 
     /// <summary>Чувствительные анонимные POST-ы, запросов в час на IP.</summary>
     public int SensitiveAnonPerHour { get; set; } = 3;
+
+    /// <summary>Запросы по ссылке приглашения (просмотр, регистрация) на IP за 10 минут.</summary>
+    public int InvitationTokenPer10Minutes { get; set; } = 30;
 
     /// <summary>Создание объявлений, запросов в час на пользователя.</summary>
     public int CreateListingPerHour { get; set; } = 10;
@@ -114,6 +120,11 @@ public static class RateLimitingSetup
             // Публичный профиль по «ID профиля» — на IP.
             options.AddPolicy(RateLimitPolicies.ProfileByCode, ctx =>
                 FixedByKey($"profile-code:{Ip(ctx)}", rl.ProfileByCodePerMinute, TimeSpan.FromMinutes(1)));
+
+            // Ссылка приглашения — на IP: токен 256-битный, лимит закрывает не перебор, а
+            // бомбардировку регистрациями и письмами с кодом по одной утёкшей ссылке.
+            options.AddPolicy(RateLimitPolicies.InvitationToken, ctx =>
+                FixedByKey($"invitation:{Ip(ctx)}", rl.InvitationTokenPer10Minutes, TimeSpan.FromMinutes(10)));
 
             // Чувствительные анонимные POST-ы — на IP.
             options.AddPolicy(RateLimitPolicies.SensitiveAnon, ctx =>

@@ -173,6 +173,15 @@ public class Listing : BaseEntity, IOwnedResource
     public User? Owner { get; set; }
 
     /// <summary>
+    /// Приглашение продавца, из черновика которого создано объявление (null — обычное).
+    /// Такое объявление публикуется только с согласием владельца (<see cref="PublicationConsent"/>).
+    /// </summary>
+    public Guid? SourceInvitationId { get; set; }
+
+    /// <summary>Сотрудник, подготовивший черновик (журнал: кто подготовил, кто опубликовал).</summary>
+    public Guid? PreparedByUserId { get; set; }
+
+    /// <summary>
     /// Идентификатор канала/чата, куда объявление было опубликовано в Telegram
     /// (маршрутизация категория → канал; может отличаться от общего канала). Заполнен
     /// вместе с <see cref="TelegramMessageId"/> — нужен, чтобы позже отредактировать

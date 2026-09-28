@@ -101,6 +101,9 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
         // только выключить (IsActive). Restrict держит это и на уровне БД.
         b.HasOne<CatalogCategory>().WithMany().HasForeignKey(l => l.Category).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<CatalogCity>().WithMany().HasForeignKey(l => l.City).OnDelete(DeleteBehavior.Restrict);
+        // Приглашение удаляется фоновой очисткой — ссылка из объявления просто обнуляется.
+        b.HasOne<SellerInvitation>().WithMany().HasForeignKey(l => l.SourceInvitationId).OnDelete(DeleteBehavior.SetNull);
+        b.HasIndex(l => l.SourceInvitationId).HasFilter("\"SourceInvitationId\" IS NOT NULL");
 
         b.HasOne(l => l.Subcategory)
             .WithMany(s => s.Listings)

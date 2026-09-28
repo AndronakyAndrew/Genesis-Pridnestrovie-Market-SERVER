@@ -107,4 +107,14 @@ public class OutboxMessage
     /// и (если контакт похож на email) письмо-подтверждение отправителю. Payload: <c>{ feedbackId }</c>.
     /// </summary>
     public const string FeedbackReceived = "feedback-received";
+
+    /// <summary>
+    /// Перенести объекты хранилища: копия в новый ключ, затем удаление исходного.
+    /// Payload: JSON-массив <c>[{ from, to }]</c>. Используется при принятии приглашения
+    /// продавца: фото черновиков переезжают из <c>invitations/</c> под <c>listings/</c>.
+    /// </summary>
+    public const string MoveImages = "move-images";
+
+    /// <summary>Приглашение продавца принято → письмо владельцу. Payload: <c>{ invitationId }</c>.</summary>
+    public const string InvitationAccepted = "invitation-accepted";
 }

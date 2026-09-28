@@ -490,6 +490,115 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.InvitationDraft", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Condition")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(5000)
+                        .HasColumnType("character varying(5000)");
+
+                    b.Property<Guid>("InvitationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ListingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("Price")
+                        .HasColumnType("numeric(12,0)");
+
+                    b.Property<string>("PriceType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SubcategoryId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UpdatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Category");
+
+                    b.HasIndex("SubcategoryId");
+
+                    b.HasIndex("InvitationId", "SortOrder");
+
+                    b.ToTable("invitation_drafts", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_invitation_drafts_price", "(\"PriceType\" = 'Negotiable' AND \"Price\" IS NULL) OR (\"PriceType\" = 'Free' AND \"Price\" = 0) OR (\"PriceType\" = 'Fixed' AND \"Price\" IS NOT NULL AND \"Price\" >= 0)");
+
+                            t.HasCheckConstraint("ck_invitation_drafts_title", "char_length(\"Title\") BETWEEN 5 AND 120");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.InvitationDraftPhoto", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DraftId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Height")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ObjectKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ThumbKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<int>("Width")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DraftId", "SortOrder");
+
+                    b.ToTable("invitation_draft_photos", (string)null);
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.LinkClick", b =>
                 {
                     b.Property<long>("Id")
@@ -585,6 +694,9 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("OwnerId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("PreparedByUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<decimal?>("Price")
                         .HasColumnType("numeric(12,0)");
 
@@ -631,6 +743,9 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("SoldAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("SourceInvitationId")
+                        .HasColumnType("uuid");
+
                     b.Property<ListingStatus>("Status")
                         .HasColumnType("listing_status");
 
@@ -676,6 +791,9 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Slug")
                         .IsUnique();
+
+                    b.HasIndex("SourceInvitationId")
+                        .HasFilter("\"SourceInvitationId\" IS NOT NULL");
 
                     b.HasIndex("SubcategoryId");
 
@@ -1070,6 +1188,39 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.PublicationConsent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IpHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("ListingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ListingId", "Version");
+
+                    b.ToTable("publication_consents", (string)null);
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.RecoveryCode", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1437,6 +1588,90 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.HasIndex("Query");
 
                     b.ToTable("search_misses", (string)null);
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.SellerInvitation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("AcceptedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("InternalNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTimeOffset?>("LinkIssuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("LinkVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ShopName")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTimeOffset>("StatusChangedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<byte[]>("TokenHash")
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Category");
+
+                    b.HasIndex("City");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasFilter("\"TokenHash\" IS NOT NULL");
+
+                    b.HasIndex("CreatedByUserId", "CreatedAt");
+
+                    b.HasIndex("Status", "StatusChangedAt");
+
+                    b.ToTable("seller_invitations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_seller_invitations_accepted", "(\"Status\" = 'Accepted') = (\"AcceptedByUserId\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_seller_invitations_shop_name", "char_length(btrim(\"ShopName\")) BETWEEN 2 AND 60");
+
+                            t.HasCheckConstraint("ck_seller_invitations_token", "(\"Status\" IN ('Pending', 'Expired')) = (\"TokenHash\" IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.Subcategory", b =>
@@ -1841,6 +2076,11 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<bool>("EmailVerified")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("HasPassword")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
                     b.Property<bool>("IsBanned")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
@@ -2034,6 +2274,40 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.InvitationDraft", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.CatalogCategory", null)
+                        .WithMany()
+                        .HasForeignKey("Category")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("GenesisMarket.Domain.Entities.SellerInvitation", "Invitation")
+                        .WithMany("Drafts")
+                        .HasForeignKey("InvitationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("GenesisMarket.Domain.Entities.Subcategory", null)
+                        .WithMany()
+                        .HasForeignKey("SubcategoryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Invitation");
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.InvitationDraftPhoto", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.InvitationDraft", "Draft")
+                        .WithMany("Photos")
+                        .HasForeignKey("DraftId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Draft");
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.Listing", b =>
                 {
                     b.HasOne("GenesisMarket.Domain.Entities.CatalogCategory", null)
@@ -2053,6 +2327,11 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .HasForeignKey("OwnerId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("GenesisMarket.Domain.Entities.SellerInvitation", null)
+                        .WithMany()
+                        .HasForeignKey("SourceInvitationId")
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("GenesisMarket.Domain.Entities.Subcategory", "Subcategory")
                         .WithMany("Listings")
@@ -2199,6 +2478,21 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.SellerInvitation", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.CatalogCategory", null)
+                        .WithMany()
+                        .HasForeignKey("Category")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("GenesisMarket.Domain.Entities.CatalogCity", null)
+                        .WithMany()
+                        .HasForeignKey("City")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.Subcategory", b =>
                 {
                     b.HasOne("GenesisMarket.Domain.Entities.CatalogCategory", null)
@@ -2235,9 +2529,19 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Navigation("Messages");
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.InvitationDraft", b =>
+                {
+                    b.Navigation("Photos");
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.Listing", b =>
                 {
                     b.Navigation("Images");
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.SellerInvitation", b =>
+                {
+                    b.Navigation("Drafts");
                 });
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.Subcategory", b =>

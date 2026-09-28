@@ -359,7 +359,7 @@ public class MeController(
         u.Profile?.Description,
         u.Profile?.ViberEnabled ?? false, u.Profile?.WhatsappEnabled ?? false,
         u.Profile?.ShowPhoneInListing ?? true,
-        u.CreatedAt, u.UpdatedAt);
+        u.CreatedAt, u.UpdatedAt, u.HasPassword);
 
 
 }

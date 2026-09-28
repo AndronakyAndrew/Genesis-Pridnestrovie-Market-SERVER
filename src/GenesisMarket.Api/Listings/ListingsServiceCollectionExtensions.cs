@@ -1,4 +1,6 @@
 using FluentValidation;
+using GenesisMarket.Api.Invitations;
+using GenesisMarket.Infrastructure.Invitations;
 
 namespace GenesisMarket.Api.Listings;
 
@@ -22,6 +24,11 @@ public static class ListingsServiceCollectionExtensions
         services.AddScoped<IContactRevealService, ContactRevealService>();
         services.AddScoped<ILinkRedirectService, LinkRedirectService>();
         services.AddValidatorsFromAssemblyContaining<CreateListingRequestValidator>();
+
+        // Приглашения продавцов (опции читает и джоб очистки — секция одна и та же).
+        services.Configure<InvitationOptions>(configuration.GetSection(InvitationOptions.Section));
+        services.AddScoped<InvitationService>();
+        services.AddSingleton<InvitationPhotoUrls>();
         return services;
     }
 }

@@ -6,6 +6,7 @@ using GenesisMarket.Api.Auth;
 using GenesisMarket.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
@@ -120,7 +121,7 @@ public class StaffAccessMatrixTests(AuthApiFactory factory) : IClassFixture<Auth
 
     // ---- helpers ----
 
-    private sealed record StaffEndpoint(string Method, string Route, IReadOnlyList<string> Permissions)
+    private sealed record StaffEndpoint(string Method, string Route, IReadOnlyList<string> Permissions, bool Multipart = false)
     {
         /// <summary>Младшая роль, у которой есть все разрешения эндпоинта.</summary>
         public UserRole? MinimumRole => Permissions.Count == 0
@@ -145,7 +146,11 @@ public class StaffAccessMatrixTests(AuthApiFactory factory) : IClassFixture<Auth
                         .Where(p => p is not null && GenesisMarket.Api.Auth.Permissions.All.Contains(p))
                         .Select(p => p!)
                         .Distinct()
-                        .ToList())))
+                        .ToList(),
+                    // Ручка загрузки файла принимает только multipart: JSON-тело отсёк бы
+                    // маршрутизатор (415) раньше авторизации, и проверка доступа не случилась бы.
+                    x.Endpoint.Metadata.GetMetadata<IAcceptsMetadata>()?.ContentTypes
+                        .Contains("multipart/form-data") == true)))
             .OrderBy(e => e.Route).ThenBy(e => e.Method)
             .ToList();
 
@@ -161,7 +166,9 @@ public class StaffAccessMatrixTests(AuthApiFactory factory) : IClassFixture<Auth
     private static Task<HttpResponseMessage> Send(HttpClient client, StaffEndpoint endpoint)
     {
         var request = new HttpRequestMessage(new HttpMethod(endpoint.Method), Url(endpoint.Route));
-        if (endpoint.Method is "POST" or "PUT" or "PATCH")
+        if (endpoint.Multipart)
+            request.Content = new MultipartFormDataContent { { new StringContent("x"), "note" } };
+        else if (endpoint.Method is "POST" or "PUT" or "PATCH")
             request.Content = JsonContent.Create(new { });
         return client.SendAsync(request);
     }

@@ -30,7 +30,9 @@ public record MeResponse(
     bool WhatsappEnabled,
     bool ShowPhoneInListing,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? UpdatedAt);
+    DateTimeOffset? UpdatedAt,
+    /// <summary>false — аккаунт создан по приглашению без пароля: интерфейс предлагает его задать.</summary>
+    bool HasPassword);
 
 /// <summary>
 /// PATCH профиля. ФИКСИРОВАННЫЙ набор полей — защита от mass assignment:

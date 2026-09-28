@@ -53,6 +53,8 @@ public static class OutboxServiceCollectionExtensions
         services.AddScoped<IOutboxHandler, DeleteImagesHandler>();
         services.AddScoped<IOutboxHandler, DeleteObjectHandler>();
         services.AddScoped<IOutboxHandler, FeedbackReceivedHandler>();
+        services.AddScoped<IOutboxHandler, MoveImagesHandler>();
+        services.AddScoped<IOutboxHandler, InvitationAcceptedHandler>();
 
         return services;
     }

@@ -27,6 +27,14 @@ public sealed class FakeObjectStorage : IObjectStorage
         return Task.FromResult<Stream>(new MemoryStream(bytes));
     }
 
+    public Task CopyAsync(string sourceObjectName, string targetObjectName, CancellationToken ct = default)
+    {
+        if (!_objects.TryGetValue(sourceObjectName, out var bytes))
+            throw new FileNotFoundException(sourceObjectName);
+        _objects[targetObjectName] = bytes;
+        return Task.CompletedTask;
+    }
+
     public Task RemoveAsync(string objectName, CancellationToken ct = default)
     {
         _objects.TryRemove(objectName, out _);
@@ -40,6 +48,9 @@ public sealed class FakeObjectStorage : IObjectStorage
 
     /// <summary>Есть ли объект в хранилище (для проверок в тестах).</summary>
     public bool Exists(string objectName) => _objects.ContainsKey(objectName);
+
+    /// <summary>Все ключи хранилища (проверка, что под префиксом ничего не осталось).</summary>
+    public IReadOnlyCollection<string> Keys => _objects.Keys.ToList();
 
     /// <summary>Возвращает сохранённые байты объекта.</summary>
     public bool TryGet(string objectName, out byte[] bytes)

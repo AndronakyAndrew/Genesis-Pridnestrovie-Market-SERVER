@@ -63,6 +63,12 @@ public sealed class JournalRetentionService(
             .Where(e => e.OccurredAt < revealCutoff && e.IpHash != null)
             .ExecuteUpdateAsync(s => s.SetProperty(e => e.IpHash, (string?)null), ct);
 
+        // Согласия на публикацию (приглашения продавцов): сам факт, время и версия текста
+        // хранятся бессрочно, адрес — тот же срок. Триггер append-only пропускает только это.
+        auditAnonymized += await db.PublicationConsents
+            .Where(c => c.AcceptedAt < revealCutoff && c.IpHash != null)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.IpHash, (string?)null), ct);
+
         if (anonymized > 0 || removed > 0 || auditAnonymized > 0)
             logger.LogInformation(
                 "Уборка журналов: обезличено раскрытий — {Anonymized}, удалено переходов — {Removed}, " +

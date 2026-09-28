@@ -40,6 +40,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MfaChallenge> MfaChallenges => Set<MfaChallenge>();
     public DbSet<CatalogCity> Cities => Set<CatalogCity>();
     public DbSet<CatalogCategory> Categories => Set<CatalogCategory>();
+    public DbSet<SellerInvitation> SellerInvitations => Set<SellerInvitation>();
+    public DbSet<InvitationDraft> InvitationDrafts => Set<InvitationDraft>();
+    public DbSet<InvitationDraftPhoto> InvitationDraftPhotos => Set<InvitationDraftPhoto>();
+    public DbSet<PublicationConsent> PublicationConsents => Set<PublicationConsent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

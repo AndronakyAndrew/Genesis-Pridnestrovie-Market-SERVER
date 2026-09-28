@@ -12,7 +12,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Npgsql;
 
 namespace GenesisMarket.Api.Controllers;
 
@@ -85,7 +84,7 @@ public class AuthController(
                 }
             };
             db.Users.Add(user);
-            await SaveWithFreshPublicCodeAsync(user, ct);
+            await NewAccounts.SaveAsync(db, publicCodes, user, ct);
             await SendEmailCodeAsync(user.Id, ct);
         }
 
@@ -271,6 +270,37 @@ public class AuthController(
     }
 
     /// <summary>
+    /// Первый пароль аккаунта, созданного по приглашению продавца (вход был только по коду
+    /// на почту). Текущего пароля у такого аккаунта нет, поэтому ручка работает, только пока
+    /// <see cref="User.HasPassword"/> = false; дальше — обычная смена пароля.
+    /// </summary>
+    [Authorize]
+    [HttpPost("~/api/me/password")]
+    public async Task<IActionResult> SetPassword(SetPasswordRequest request, CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null)
+            return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
+
+        if (user.HasPassword)
+            return Problem(title: "Пароль уже задан — смените его в настройках безопасности",
+                statusCode: StatusCodes.Status409Conflict);
+
+        if (PasswordError(request.NewPassword) is { } pwdError)
+            return pwdError;
+
+        user.PasswordHash = hasher.Hash(request.NewPassword);
+        user.HasPassword = true;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        // Сессии не гасим: пароля до этого не было, и текущий вход по коду остаётся законным.
+        await db.SaveChangesAsync(ct);
+
+        securityAudit.PasswordChanged(userId);
+        return NoContent();
+    }
+
+    /// <summary>
     /// Запрос ссылки восстановления пароля. Ответ одинаков для существующего и
     /// несуществующего адреса — иначе ручка становится оракулом на перечисление.
     /// </summary>
@@ -387,36 +417,6 @@ public class AuthController(
             logger.LogWarning(ex, "Не удалось отправить код подтверждения почты при регистрации.");
         }
     }
-
-    /// <summary>
-    /// Сохраняет нового пользователя, переигрывая публичный код при гонке.
-    /// Проверка занятости в <see cref="IPublicCodeGenerator"/> и сама вставка
-    /// не атомарны: две одновременные регистрации могут выбрать один и тот же
-    /// свободный код и обе пройти проверку. Победит одна, второй уникальный
-    /// индекс вернёт 23505 — тогда берём следующий код, а не отдаём 500.
-    /// </summary>
-    private async Task SaveWithFreshPublicCodeAsync(User user, CancellationToken ct)
-    {
-        const int maxRetries = 3;
-
-        for (var attempt = 1; ; attempt++)
-        {
-            try
-            {
-                await db.SaveChangesAsync(ct);
-                return;
-            }
-            catch (DbUpdateException ex)
-                when (attempt < maxRetries && IsPublicCodeConflict(ex))
-            {
-                user.PublicCode = await publicCodes.NextAsync(ct);
-            }
-        }
-    }
-
-    private static bool IsPublicCodeConflict(DbUpdateException ex) =>
-        ex.InnerException is PostgresException { SqlState: "23505" } pg &&
-        pg.ConstraintName == "IX_users_PublicCode";
 
     private static string Normalize(string email) => email.Trim().ToLowerInvariant();
 

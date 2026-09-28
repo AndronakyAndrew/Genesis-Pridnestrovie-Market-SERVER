@@ -106,6 +106,7 @@ public sealed class PasswordResetService(
 
         var user = entry.User;
         user.PasswordHash = hasher.Hash(newPassword);
+        user.HasPassword = true; // аккаунт по приглашению может получить пароль и восстановлением
         user.SecurityStamp = Guid.NewGuid();               // разлогинивает все сессии
         entry.ConsumedAt = DateTimeOffset.UtcNow;
 

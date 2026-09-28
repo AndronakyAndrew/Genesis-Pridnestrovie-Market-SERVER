@@ -106,4 +106,21 @@ public static class AuditActions
 
     public const string CatalogCreate = "catalog.create";
     public const string CatalogUpdate = "catalog.update";
+
+    // ---- Приглашения продавцов ----
+    public const string TargetInvitation = "invitation";
+    public const string TargetListing = "listing";
+    public const string InvitationCreate = "invitation.create";
+    public const string InvitationUpdate = "invitation.update";
+    public const string InvitationDraftCreate = "invitation.draft_create";
+    public const string InvitationDraftUpdate = "invitation.draft_update";
+    public const string InvitationDraftDelete = "invitation.draft_delete";
+    public const string InvitationPhotoAdd = "invitation.photo_add";
+    public const string InvitationPhotoDelete = "invitation.photo_delete";
+    public const string InvitationLinkIssue = "invitation.link_issue";
+    public const string InvitationLinkReissue = "invitation.link_reissue";
+    public const string InvitationRevoke = "invitation.revoke";
+    public const string InvitationSignup = "invitation.signup";
+    public const string InvitationAccept = "invitation.accept";
+    public const string InvitedPublish = "invitation.publish";
 }

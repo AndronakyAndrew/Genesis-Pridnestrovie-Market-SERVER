@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using FluentValidation;
 using FluentValidation.Results;
+using GenesisMarket.Api.Audit;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Business;
 using GenesisMarket.Api.Contracts;
@@ -14,6 +15,7 @@ using GenesisMarket.Api.Seo;
 using GenesisMarket.Api.Telegram.Channel;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
+using GenesisMarket.Infrastructure.Invitations;
 using GenesisMarket.Infrastructure.Persistence;
 using GenesisMarket.Infrastructure.Scheduling;
 using Microsoft.AspNetCore.Authorization;
@@ -541,6 +543,16 @@ public class ListingsController(
             return Problem(title: "Объявление уже отправлено на публикацию",
                 statusCode: StatusCodes.Status409Conflict);
 
+        // Товар из приглашения готовил сотрудник: без согласия владельца на публикацию
+        // (текущей версии текста) объявление не выходит даже по прямому вызову этой ручки.
+        if (listing.SourceInvitationId is not null)
+        {
+            var version = HttpContext.RequestServices.GetRequiredService<IOptions<InvitationOptions>>().Value.ConsentVersion;
+            if (!await db.PublicationConsents.AnyAsync(c => c.ListingId == id && c.UserId == userId && c.Version == version, ct))
+                return Problem(title: "Подтвердите согласие на публикацию товара и своих контактных данных",
+                    statusCode: StatusCodes.Status409Conflict);
+        }
+
         var (guard, author) = await PublishGuardAsync(userId, ct);
         if (guard is not null)
             return guard;
@@ -782,6 +794,122 @@ public class ListingsController(
             counts[group.Status.ToString()] = group.Count;
 
         return Ok(counts);
+    }
+
+    /// <summary>
+    /// Товары, перешедшие к владельцу из принятых приглашений продавца, — для экрана
+    /// «Проверьте товары» в кабинете. Статус показывает, что уже отправлено на публикацию.
+    /// </summary>
+    [Authorize]
+    [HttpGet("~/api/me/invited-drafts")]
+    public async Task<ActionResult<InvitedDraftsResponse>> InvitedDrafts(
+        [FromServices] IOptions<InvitationOptions> invitationOptions, CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+
+        var rows = await db.Listings.AsNoTracking()
+            .Where(l => l.OwnerId == userId && l.SourceInvitationId != null)
+            .OrderBy(l => l.CreatedAt)
+            .Select(l => new
+            {
+                l.Id, l.Slug, l.Title, l.PriceType, l.Price, l.Category, l.Status, l.CreatedAt,
+                ShopName = db.SellerInvitations.Where(i => i.Id == l.SourceInvitationId).Select(i => i.ShopName).FirstOrDefault(),
+                Thumb = db.ListingImages.Where(i => i.ListingId == l.Id).OrderBy(i => i.SortOrder)
+                    .Select(i => i.ThumbKey).FirstOrDefault()
+            })
+            .ToListAsync(ct);
+
+        var hasPassword = await db.Users.Where(u => u.Id == userId).Select(u => u.HasPassword).FirstAsync(ct);
+
+        return Ok(new InvitedDraftsResponse(
+            rows.ConvertAll(r => new InvitedDraftItem(
+                r.Id, r.Slug, r.Title,
+                r.Thumb is null ? null : $"{Request.Scheme}://{Request.Host}/api/images/{r.Thumb}",
+                r.PriceType, r.Price, r.Category, r.Status, r.ShopName ?? "", r.CreatedAt)),
+            invitationOptions.Value.ConsentVersion,
+            hasPassword));
+    }
+
+    /// <summary>
+    /// Публикация выбранных товаров из приглашения. Согласие владельца на публикацию товара
+    /// и его контактных данных обязательно и должно быть дано к ТЕКУЩЕЙ версии текста —
+    /// иначе запрос отклоняется целиком. На каждое объявление пишется строка согласия
+    /// (факт, время, версия, HMAC адреса) и запись журнала, дальше — обычный путь публикации
+    /// с модерацией. Каждое объявление сохраняется отдельно: лимит «в обороте» и отказ по
+    /// одному товару не должны откатывать остальные.
+    /// </summary>
+    [Authorize]
+    [HttpPost("~/api/me/invited-drafts/publish")]
+    public async Task<ActionResult<PublishInvitedDraftsResponse>> PublishInvited(
+        PublishInvitedDraftsRequest request,
+        [FromServices] IOptions<InvitationOptions> invitationOptions,
+        [FromServices] IAuditLog auditLog,
+        [FromServices] IIpHasher ipHasher,
+        CancellationToken ct)
+    {
+        var userId = CurrentUserId()!.Value;
+        var version = invitationOptions.Value.ConsentVersion;
+
+        if (!request.ConsentAccepted)
+            return Problem(title: "Без согласия на публикацию товары не публикуются",
+                statusCode: StatusCodes.Status400BadRequest);
+        if (!string.Equals(request.ConsentVersion, version, StringComparison.Ordinal))
+            return Problem(title: "Текст согласия обновился — обновите страницу и подтвердите его заново",
+                statusCode: StatusCodes.Status409Conflict);
+
+        var ids = request.ListingIds.Distinct().ToList();
+        var ipHash = ipHasher.Hash(ClientIp());
+        var results = new List<PublishInvitedResult>(ids.Count);
+
+        foreach (var id in ids)
+        {
+            var listing = await db.Listings.FirstOrDefaultAsync(
+                l => l.Id == id && l.OwnerId == userId && l.SourceInvitationId != null, ct);
+            if (listing is null)
+            {
+                results.Add(new PublishInvitedResult(id, null, "Товар не найден"));
+                continue;
+            }
+            if (listing.Status != ListingStatus.Draft)
+            {
+                results.Add(new PublishInvitedResult(id, listing.Status, "Уже отправлено на публикацию"));
+                continue;
+            }
+
+            var (guard, author) = await PublishGuardAsync(userId, ct);
+            if (guard is not null)
+            {
+                db.ChangeTracker.Clear();
+                results.Add(new PublishInvitedResult(id, listing.Status, (guard.Value as ProblemDetails)?.Title));
+                continue;
+            }
+
+            db.PublicationConsents.Add(new PublicationConsent
+            {
+                UserId = userId,
+                ListingId = id,
+                Version = version,
+                IpHash = ipHash
+            });
+
+            var decision = await ResolvePublishAsync(author, listing, ct);
+            listing.Publish(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
+            await EnqueueChannelPublishAsync(listing, ct);
+
+            auditLog.Record(AuditActions.InvitedPublish, AuditActions.TargetListing, id.ToString(),
+                newValue: new
+                {
+                    invitationId = listing.SourceInvitationId,
+                    preparedBy = listing.PreparedByUserId,
+                    status = listing.Status.ToString(),
+                    consentVersion = version
+                });
+
+            await db.SaveChangesAsync(ct);
+            results.Add(new PublishInvitedResult(id, listing.Status, null));
+        }
+
+        return Ok(new PublishInvitedDraftsResponse(results));
     }
 
     // ---- helpers ----

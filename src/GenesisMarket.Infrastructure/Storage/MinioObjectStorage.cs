@@ -58,6 +58,18 @@ public class MinioObjectStorage(IMinioClient client, IOptions<MinioOptions> opti
         await client.RemoveObjectAsync(args, ct);
     }
 
+    public async Task CopyAsync(string sourceObjectName, string targetObjectName, CancellationToken ct = default)
+    {
+        var args = new CopyObjectArgs()
+            .WithBucket(_options.Bucket)
+            .WithObject(targetObjectName)
+            .WithCopyObjectSource(new CopySourceObjectArgs()
+                .WithBucket(_options.Bucket)
+                .WithObject(sourceObjectName));
+
+        await client.CopyObjectAsync(args, ct);
+    }
+
     public async Task<string> GetPresignedUrlAsync(string objectName, TimeSpan expiry, CancellationToken ct = default)
     {
         var args = new PresignedGetObjectArgs()

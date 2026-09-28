@@ -17,6 +17,12 @@ public interface IObjectStorage
     Task RemoveAsync(string objectName, CancellationToken ct = default);
 
     /// <summary>
+    /// Копия объекта внутри бакета (без выкачивания байтов через приложение). Идемпотентна:
+    /// повторное копирование перезаписывает цель тем же содержимым.
+    /// </summary>
+    Task CopyAsync(string sourceObjectName, string targetObjectName, CancellationToken ct = default);
+
+    /// <summary>
     /// Presigned URL на чтение объекта с ограниченным сроком жизни. Наружу отдаётся
     /// именно он — прямые постоянные ссылки на приватный бакет не публикуются.
     /// </summary>
