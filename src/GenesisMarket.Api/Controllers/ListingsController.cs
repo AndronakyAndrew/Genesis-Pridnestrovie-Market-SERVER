@@ -46,7 +46,8 @@ public class ListingsController(
     IMemoryCache cache,
     IOptions<ListingOptions> options,
     IOptions<CatalogHygieneOptions> hygiene,
-    IOptions<SeoOptions> seo) : ApiControllerBase
+    IOptions<SeoOptions> seo,
+    ICatalogReferences references) : ApiControllerBase
 {
     // Статусы «в обороте» — учитываются в лимите и проверке дубликатов.
     private static readonly ListingStatus[] InCirculation =
@@ -68,8 +69,10 @@ public class ListingsController(
     public async Task<ActionResult<CatalogPageResponse>> GetAll(
         [FromQuery] CatalogQuery query, CancellationToken ct)
     {
-        if (ValidateFilters(query) is { } bad)
+        var (normalized, bad) = await NormalizeFiltersAsync(query, ct);
+        if (bad is not null)
             return bad;
+        query = normalized;
 
         var q = CatalogQueryBuilder.NormalizeText(query.Q);
 
@@ -239,8 +242,10 @@ public class ListingsController(
     public async Task<ActionResult<ListingCountResponse>> Count(
         [FromQuery] CatalogQuery query, CancellationToken ct)
     {
-        if (ValidateFilters(query) is { } bad)
+        var (normalized, bad) = await NormalizeFiltersAsync(query, ct);
+        if (bad is not null)
             return bad;
+        query = normalized;
 
         var cacheKey = CountCacheKey(query);
         if (!cache.TryGetValue(cacheKey, out long total))
@@ -385,7 +390,12 @@ public class ListingsController(
         if (!validation.IsValid)
             return Invalid(validation);
 
-        if (!await SubcategoryValidAsync(request.Category, request.SubcategoryId, ct))
+        if (await CatalogCodesAsync(request.Category, request.City, null, ct) is not { } codes)
+            return Problem(title: "Неизвестная или выключенная категория либо город",
+                statusCode: StatusCodes.Status400BadRequest);
+        request = request with { Category = codes.Category, City = codes.City };
+
+        if (!await SubcategoryValidAsync(request.Category, request.SubcategoryId, current: null, ct))
             return Problem(title: "Подкатегория не найдена или не соответствует категории",
                 statusCode: StatusCodes.Status400BadRequest);
 
@@ -450,7 +460,12 @@ public class ListingsController(
         if (!validation.IsValid)
             return Invalid(validation);
 
-        if (!await SubcategoryValidAsync(request.Category, request.SubcategoryId, ct))
+        if (await CatalogCodesAsync(request.Category, request.City, listing, ct) is not { } codes)
+            return Problem(title: "Неизвестная или выключенная категория либо город",
+                statusCode: StatusCodes.Status400BadRequest);
+        request = request with { Category = codes.Category, City = codes.City };
+
+        if (!await SubcategoryValidAsync(request.Category, request.SubcategoryId, listing.SubcategoryId, ct))
             return Problem(title: "Подкатегория не найдена или не соответствует категории",
                 statusCode: StatusCodes.Status400BadRequest);
 
@@ -771,13 +786,34 @@ public class ListingsController(
 
     // ---- helpers ----
 
-    /// <summary>Общие проверки фильтров каталога (для /listings и /listings/count). null — ок.</summary>
-    private ObjectResult? ValidateFilters(CatalogQuery query)
+    /// <summary>
+    /// Канонические коды категории и города для записи. Выключенные допустимы только как
+    /// текущее значение объявления (<paramref name="existing"/>). null — нельзя.
+    /// </summary>
+    private async Task<(string Category, string City)?> CatalogCodesAsync(
+        string category, string city, Listing? existing, CancellationToken ct)
+    {
+        var catalog = await references.GetAsync(ct);
+        var cat = catalog.WritableCategory(category, existing?.Category);
+        var cty = catalog.WritableCity(city, existing?.City);
+        return cat is null || cty is null ? null : (cat, cty);
+    }
+
+    /// <summary>
+    /// Общие проверки фильтров каталога (для /listings и /listings/count) и приведение кодов
+    /// категории и городов к каноническим («home» → «Home»): в БД сравнение точное.
+    /// </summary>
+    private async Task<(CatalogQuery Query, ObjectResult? Error)> NormalizeFiltersAsync(
+        CatalogQuery query, CancellationToken ct)
     {
         if (CatalogQueryBuilder.ValidateFilters(query.Cities, query.PriceFrom, query.PriceTo) is { } error)
-            return Problem(title: error, statusCode: StatusCodes.Status400BadRequest);
+            return (query, Problem(title: error, statusCode: StatusCodes.Status400BadRequest));
 
-        return null;
+        var catalog = await references.GetAsync(ct);
+        if (catalog.NormalizeFilters(query.Category, query.Cities, out var category, out var cities) is { } unknown)
+            return (query, Problem(title: unknown, statusCode: StatusCodes.Status400BadRequest));
+
+        return (query with { Category = category, Cities = cities }, null);
     }
 
     /// <summary>
@@ -807,7 +843,7 @@ public class ListingsController(
     private static string CountCacheKey(CatalogQuery q)
     {
         var cities = q.Cities is { Count: > 0 }
-            ? string.Join('.', q.Cities.Select(c => (int)c).OrderBy(c => c))
+            ? string.Join('.', q.Cities.Select(c => c.ToLowerInvariant()).OrderBy(c => c, StringComparer.Ordinal))
             : "-";
         return string.Join('|',
             "count",
@@ -870,10 +906,12 @@ public class ListingsController(
         listing.Category != request.Category ||
         listing.SubcategoryId != request.SubcategoryId;
 
-    private Task<bool> SubcategoryValidAsync(Category category, int subcategoryId, CancellationToken ct) =>
-        db.Subcategories.AnyAsync(s => s.Id == subcategoryId && s.Category == category, ct);
+    /// <summary>Подкатегория из этой категории и включена (выключенная — только если это текущее значение).</summary>
+    private Task<bool> SubcategoryValidAsync(string category, int subcategoryId, int? current, CancellationToken ct) =>
+        db.Subcategories.AnyAsync(s => s.Id == subcategoryId && s.Category == category
+                                       && (s.IsActive || s.Id == current), ct);
 
-    private async Task<bool> DuplicateExistsAsync(Guid userId, Category category, string title, CancellationToken ct)
+    private async Task<bool> DuplicateExistsAsync(Guid userId, string category, string title, CancellationToken ct)
     {
         var normalized = ListingRules.NormalizeTitle(title);
         var titles = await db.Listings
@@ -942,7 +980,7 @@ public class ListingsController(
             // Свой текст владелец видит как написал; модератору он нужен целиком,
             // чтобы решать по существу. Всем остальным — без контактов.
             showRawText: CurrentUserId() == l.OwnerId
-                         || CurrentUser.Role is UserRole.Moderator or UserRole.Admin);
+                         || CurrentUser.Can(Permissions.ListingsModerate));
 
     private static ListingResponse Map(
         Listing l, SellerBadge seller,
@@ -1011,7 +1049,7 @@ public class ListingsController(
 
     /// <summary>Вправе ли текущий запрос видеть карточку (см. <see cref="ListingVisibility"/>).</summary>
     private bool CanSee(Listing listing) =>
-        ListingVisibility.CanSee(listing.Status, listing.OwnerId, CurrentUserId(), CurrentUser.Role);
+        ListingVisibility.CanSee(listing.Status, listing.OwnerId, CurrentUserId(), CurrentUser.Can(Permissions.ListingsModerate));
 
     /// <summary>
     /// Подтверждена ли почта у текущего пользователя. Читается из БД, а не из claim'а

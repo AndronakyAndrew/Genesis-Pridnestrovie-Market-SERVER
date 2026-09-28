@@ -290,7 +290,7 @@ public class SessionsTests(AuthApiFactory factory) : IClassFixture<AuthApiFactor
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
 
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
         var body = await login.Content.ReadFromJsonAsync<JsonElement>();

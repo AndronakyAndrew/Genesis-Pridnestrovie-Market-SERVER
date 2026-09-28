@@ -1,3 +1,4 @@
+using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Moderation;
 using GenesisMarket.Domain.Entities;
@@ -15,7 +16,7 @@ namespace GenesisMarket.Api.Controllers;
 /// премодерацию (<see cref="ICardBlocklist"/>).
 /// </summary>
 [Route("api/moderation/blocked-cards")]
-[Authorize(Policy = "Moderator")]
+[Authorize(Policy = Permissions.CardsManage)]
 public class ModerationBlockedCardsController(
     AppDbContext db, ICardHasher hasher, IModerationAudit audit) : ApiControllerBase
 {

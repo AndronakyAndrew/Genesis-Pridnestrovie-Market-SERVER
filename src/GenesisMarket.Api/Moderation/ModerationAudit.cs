@@ -1,4 +1,5 @@
 using System.Text.Json;
+using GenesisMarket.Api.Audit;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Security;
 using GenesisMarket.Domain.Entities;
@@ -18,16 +19,18 @@ public interface IModerationAudit
     /// Поставить запись журнала в очередь на сохранение (Actor берётся из текущего пользователя).
     /// <paramref name="waitSince"/> — момент, с которого объект ждал решения (постановка
     /// в очередь, подача жалобы): из него считается <see cref="ModerationLog.WaitSeconds"/>.
+    /// <paramref name="before"/> — состояние объекта до действия: уходит в общий журнал
+    /// (<c>audit_events.OldValue</c>), в рабочий журнал модерации не пишется.
     /// </summary>
     void Record(string action, string targetType, Guid targetId, string? reason = null, object? payload = null,
-        DateTimeOffset? waitSince = null);
+        DateTimeOffset? waitSince = null, object? before = null);
 }
 
 public sealed class ModerationAudit(
-    AppDbContext db, ICurrentUser currentUser, ISecurityAudit securityAudit) : IModerationAudit
+    AppDbContext db, ICurrentUser currentUser, ISecurityAudit securityAudit, IAuditLog auditLog) : IModerationAudit
 {
     public void Record(string action, string targetType, Guid targetId, string? reason = null, object? payload = null,
-        DateTimeOffset? waitSince = null)
+        DateTimeOffset? waitSince = null, object? before = null)
     {
         // Внутри контроллера с policy Moderator текущий пользователь всегда задан.
         var actorId = currentUser.UserId
@@ -47,6 +50,11 @@ public sealed class ModerationAudit(
                 ? (int)Math.Clamp((DateTimeOffset.UtcNow - since).TotalSeconds, 0, int.MaxValue)
                 : null
         });
+
+        // Зеркало в общий журнал действий: у владельца одна лента на все уровни, а
+        // moderation_logs остаётся рабочим журналом модераторов (по нему считаются
+        // очередь, SLA и статистика). Снимок решения — как «новое значение».
+        auditLog.Record(action, targetType, targetId.ToString(), oldValue: before, newValue: payload, reason: reason);
 
         // Тот же факт — в журнал безопасности (отдельный поток событий безопасности).
         securityAudit.ModeratorAction(actorId, action, targetType, targetId);

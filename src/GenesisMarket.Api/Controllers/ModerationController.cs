@@ -13,29 +13,22 @@ using Microsoft.Extensions.Options;
 namespace GenesisMarket.Api.Controllers;
 
 /// <summary>
-/// Рабочая поверхность модератора. Все ручки под policy «Moderator» (роль берётся
-/// только из claim JWT — никаких хардкод-списков email/админов). Каждое действие
-/// пишется в <c>moderation_logs</c> (таблица только на добавление), включая просмотр
-/// контактных данных пользователя. Мутации выполняются в явной транзакции вместе
-/// с записью в журнал.
+/// Рабочая поверхность модератора. Каждая ручка — под своим разрешением
+/// (<see cref="Permissions"/>): роль берётся только из claim JWT, разрешение действует
+/// лишь при пройденной 2FA. Каждое действие пишется в <c>moderation_logs</c> (таблица
+/// только на добавление), включая просмотр контактных данных пользователя. Мутации
+/// выполняются в явной транзакции вместе с записью в журнал. Бан — уровень Admin,
+/// см. <see cref="AdminUsersController"/>.
 /// </summary>
 [Route("api/moderation")]
-[Authorize(Policy = "Moderator")]
 public class ModerationController(
     AppDbContext db,
     IModerationAudit audit,
-    IRefreshTokenService refreshTokens,
-    SecurityStampValidator securityStamp,
     IListingDecisions decisions,
-    IOptions<ModerationOptions> moderationOptions,
-    ILogger<ModerationController> logger) : ApiControllerBase
+    IOptions<ModerationOptions> moderationOptions) : ApiControllerBase
 {
     private const int DefaultLimit = 20;
     private const int MaxLimit = 50;
-
-    // Статусы объявлений, снимаемые с публикации при бане владельца.
-    private static readonly ListingStatus[] LiveStatuses =
-        [ListingStatus.Active, ListingStatus.PendingReview];
 
     /// <summary>
     /// Очередь модерации: объявления, ждущие решения (<c>ReviewQueuedAt</c> заполнен —
@@ -46,6 +39,7 @@ public class ModerationController(
     /// постановки в очередь (старые раньше). Курсорная пагинация. Фильтры: тип
     /// (listing|report), причина (сужает до жалоб), минимальный приоритет.
     /// </summary>
+    [Authorize(Policy = Permissions.ListingsModerate)]
     [HttpGet("queue")]
     public async Task<ActionResult<ModerationQueuePage>> GetQueue(
         [FromQuery] ModerationQueueQuery query, CancellationToken ct)
@@ -94,6 +88,7 @@ public class ModerationController(
     /// статус даже у снятого/удалённого) и открытые жалобы. Query-фильтр мягкого
     /// удаления игнорируется — модератор видит и удалённые объявления.
     /// </summary>
+    [Authorize(Policy = Permissions.ListingsModerate)]
     [HttpGet("listings/{id:guid}")]
     public async Task<ActionResult<ModerationListingCard>> GetListing(Guid id, CancellationToken ct)
     {
@@ -162,6 +157,7 @@ public class ModerationController(
     /// на витрине, подтверждаем). Проставляет <c>ApprovedAt</c>: именно с этого момента
     /// объявление идёт в зачёт доверия автора (триггер listings_trust_sync).
     /// </summary>
+    [Authorize(Policy = Permissions.ListingsModerate)]
     [HttpPost("listings/{id:guid}/approve")]
     public Task<ActionResult<ModerationActionResult>> Approve(Guid id, CancellationToken ct) =>
         DecideAsync(id, ListingDecision.Approve, reason: null, comment: null, ct);
@@ -173,6 +169,7 @@ public class ModerationController(
     /// Отказ фиксируется в <c>users.LastRejectedAt</c> триггером — и на время окна
     /// <c>CatalogHygiene:RejectLookbackDays</c> закрывает автору автопубликацию.
     /// </summary>
+    [Authorize(Policy = Permissions.ListingsModerate)]
     [HttpPost("listings/{id:guid}/reject")]
     public Task<ActionResult<ModerationActionResult>> Reject(
         Guid id, RejectListingRequest request, CancellationToken ct) =>
@@ -183,6 +180,7 @@ public class ModerationController(
     /// от отказа, <c>users.LastRejectedAt</c> не фиксируется и автопубликация автору не
     /// закрывается: исправил — публикует снова по обычным правилам.
     /// </summary>
+    [Authorize(Policy = Permissions.ListingsModerate)]
     [HttpPost("listings/{id:guid}/revise")]
     public Task<ActionResult<ModerationActionResult>> Revise(
         Guid id, RejectListingRequest request, CancellationToken ct) =>
@@ -200,6 +198,8 @@ public class ModerationController(
 
         if (listing is null)
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
+        if (listing.OwnerId == CurrentUserId())
+            return Problem(title: ConflictOfInterest.OwnListing, statusCode: StatusCodes.Status403Forbidden);
         if (listing.ReviewQueuedAt is null)
             return Problem(title: "Объявление не находится на модерации", statusCode: StatusCodes.Status409Conflict);
 
@@ -215,6 +215,7 @@ public class ModerationController(
     /// Разобрать жалобу: закрыть как Resolved (нарушение подтверждено) или Rejected
     /// (жалоба неверна). Другие статусы недопустимы. Итог фиксируется и в журнале.
     /// </summary>
+    [Authorize(Policy = Permissions.ReportsReview)]
     [HttpPost("reports/{id:guid}/resolve")]
     public async Task<ActionResult<ModerationActionResult>> ResolveReport(
         Guid id, ResolveReportRequest request, CancellationToken ct)
@@ -226,6 +227,8 @@ public class ModerationController(
         var report = await db.Reports.FirstOrDefaultAsync(r => r.Id == id, ct);
         if (report is null)
             return Problem(title: "Жалоба не найдена", statusCode: StatusCodes.Status404NotFound);
+        if (await ConflictOfInterest.ReportInvolvesAsync(db, report, CurrentUserId()!.Value, ct))
+            return Problem(title: ConflictOfInterest.OwnReport, statusCode: StatusCodes.Status403Forbidden);
         if (report.Status is ReportStatus.Resolved or ReportStatus.Rejected)
             return Problem(title: "Жалоба уже закрыта", statusCode: StatusCodes.Status409Conflict);
 
@@ -258,107 +261,22 @@ public class ModerationController(
     }
 
     /// <summary>
-    /// Забанить пользователя. В ОДНОЙ транзакции: IsBanned/BannedUntil, ротация
-    /// SecurityStamp (иначе выданный access-токен жил бы ещё до 15 минут), архивация
-    /// активных объявлений, отзыв всех refresh-токенов, запись в журнал. После
-    /// коммита сбрасывается кэш снимка пользователя — бан действует немедленно.
-    /// </summary>
-    [HttpPost("users/{id:guid}/ban")]
-    public async Task<ActionResult<ModerationActionResult>> Ban(
-        Guid id, BanUserRequest request, CancellationToken ct)
-    {
-        if (id == CurrentUserId())
-            return Problem(title: "Нельзя забанить самого себя", statusCode: StatusCodes.Status400BadRequest);
-
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted, ct);
-        if (user is null)
-            return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
-        if (user.Role == UserRole.Admin)
-            return Problem(title: "Нельзя забанить администратора", statusCode: StatusCodes.Status403Forbidden);
-
-        var now = DateTimeOffset.UtcNow;
-
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-
-        user.IsBanned = true;
-        user.BannedUntil = request.Until;
-        user.SecurityStamp = Guid.NewGuid();   // немедленно инвалидирует выданные access-токены
-        user.UpdatedAt = now;
-
-        // Активные объявления забаненного скрываем из каталога и убираем из очереди
-        // модерации: разбирать публикации заблокированного автора незачем, а зависший
-        // ReviewQueuedAt держал бы архивные объявления в очереди навсегда.
-        var archived = await db.Listings
-            .Where(l => l.OwnerId == id && LiveStatuses.Contains(l.Status))
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(l => l.Status, ListingStatus.Archived)
-                .SetProperty(l => l.ReviewQueuedAt, (DateTimeOffset?)null)
-                .SetProperty(l => l.ModerationPriority, 0)
-                .SetProperty(l => l.UpdatedAt, now), ct);
-
-        // Все refresh-токены отзываются (в этой же транзакции — общий DbContext).
-        await refreshTokens.RevokeAllAsync(id, ct);
-
-        audit.Record(ModerationLog.ActionBanUser, ModerationLog.TargetUser, id,
-            reason: request.Reason,
-            payload: new { until = request.Until, reason = request.Reason, archivedListings = archived });
-
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-
-        // Снимок пользователя кэшируется в SecurityStampValidator — сбрасываем, чтобы бан подействовал сразу.
-        securityStamp.Invalidate(id);
-
-        logger.LogInformation("Пользователь {UserId} забанен модератором {ActorId}. Архивировано объявлений: {Count}.",
-            id, CurrentUserId(), archived);
-
-        return Ok(new ModerationActionResult("Пользователь заблокирован."));
-    }
-
-    /// <summary>Снять бан: IsBanned = false, BannedUntil = null. Объявления не восстанавливаются автоматически.</summary>
-    [HttpPost("users/{id:guid}/unban")]
-    public async Task<ActionResult<ModerationActionResult>> Unban(Guid id, CancellationToken ct)
-    {
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted, ct);
-        if (user is null)
-            return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
-        if (!user.IsBanned)
-            return Problem(title: "Пользователь не заблокирован", statusCode: StatusCodes.Status409Conflict);
-
-        var now = DateTimeOffset.UtcNow;
-
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-
-        user.IsBanned = false;
-        user.BannedUntil = null;
-        user.UpdatedAt = now;
-
-        audit.Record(ModerationLog.ActionUnbanUser, ModerationLog.TargetUser, id);
-
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-
-        // Сбрасываем кэш снимка: иначе SecurityStampValidator до TTL считал бы пользователя забаненным.
-        securityStamp.Invalidate(id);
-
-        return Ok(new ModerationActionResult("Пользователь разблокирован."));
-    }
-
-    /// <summary>
     /// Контактные данные пользователя (email/телефон) — САМАЯ чувствительная ручка.
     /// Каждый вызов пишется в журнал модерации (даже если это просто просмотр).
     /// </summary>
+    [Authorize(Policy = Permissions.UsersView)]
     [HttpGet("users/{id:guid}")]
     public Task<ActionResult<ModerationUserContacts>> GetUserContacts(Guid id, CancellationToken ct) =>
         UserContactsAsync(u => u.Id == id, ct);
 
     /// <summary>
     /// Та же карточка, но по «ID профиля» («82914»), а не по GUID: в жалобах и
-    /// в поддержке пользователя называют именно кодом. Ручка закрыта политикой
-    /// Moderator намеренно — кодов всего 90 000, и открытый резолвер «код → аккаунт»
+    /// в поддержке пользователя называют именно кодом. Ручка закрыта разрешением
+    /// users.view намеренно — кодов всего 90 000, и открытый резолвер «код → аккаунт»
     /// превратил бы их в перечислимое пространство имён. Просмотр пишется в журнал
     /// так же, как и обращение по GUID.
     /// </summary>
+    [Authorize(Policy = Permissions.UsersView)]
     [HttpGet("users/by-code/{code}")]
     public Task<ActionResult<ModerationUserContacts>> GetUserContactsByCode(string code, CancellationToken ct) =>
         UserContactsAsync(u => u.PublicCode == code, ct);
@@ -371,7 +289,8 @@ public class ModerationController(
             .Where(u => !u.IsDeleted)
             .Select(u => new ModerationUserContacts(
                 u.Id, u.PublicCode, u.Email, u.PhoneE164, u.EmailVerified, u.PhoneVerified,
-                u.Role, u.IsBanned, u.BannedUntil, u.CreatedAt))
+                u.ProjectRoles.Where(r => r.ProjectKey == Projects.Market).Select(r => (UserRole?)r.Role).FirstOrDefault() ?? UserRole.User,
+                u.IsBanned, u.BannedUntil, u.CreatedAt))
             .FirstOrDefaultAsync(ct);
 
         if (user is null)
@@ -385,6 +304,7 @@ public class ModerationController(
     }
 
     /// <summary>Счётчики очереди и активности модерации за сегодня/неделю.</summary>
+    [Authorize(Policy = Permissions.ModerationJournalRead)]
     [HttpGet("stats")]
     public async Task<ActionResult<ModerationStats>> GetStats(CancellationToken ct)
     {

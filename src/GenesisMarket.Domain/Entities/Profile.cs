@@ -15,8 +15,8 @@ public class Profile
     /// <summary>Отображаемое имя. Ограничение длины ≤ 60 — на уровне БД (CHECK).</summary>
     public required string DisplayName { get; set; }
 
-    /// <summary>Город пользователя по умолчанию.</summary>
-    public City City { get; set; }
+    /// <summary>Город пользователя по умолчанию — код (FK на <c>cities.Code</c>).</summary>
+    public required string City { get; set; }
 
     public string? AvatarUrl { get; set; }
     public string? TelegramUsername { get; set; }

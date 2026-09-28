@@ -30,7 +30,7 @@ public interface ISitemapUrlProvider
     Task<long> GetActiveListingCountAsync(CancellationToken ct);
 
     /// <summary>Сколько статических URL — нужно, чтобы решить, влезает ли всё в один файл.</summary>
-    int StaticUrlCount { get; }
+    Task<int> GetStaticUrlCountAsync(CancellationToken ct);
 
     /// <summary>На сколько файлов объявлений разобьётся карта при данном числе объявлений.</summary>
     int ListingPageCount(long activeCount);

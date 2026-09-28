@@ -68,9 +68,9 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
         // Цена — целые рубли ПМР.
         b.Property(l => l.Price).HasColumnType("numeric(12,0)");
 
-        // Category / City / Condition / Status / PriceType — native enum-типы.
-        b.Property(l => l.Category).IsRequired();
-        b.Property(l => l.City).IsRequired();
+        // Category / City — коды справочников (FK ниже); Condition / Status / PriceType — native enum-типы.
+        b.Property(l => l.Category).HasMaxLength(CatalogReferenceConfiguration.CodeMaxLength).IsRequired();
+        b.Property(l => l.City).HasMaxLength(CatalogReferenceConfiguration.CodeMaxLength).IsRequired();
         b.Property(l => l.Condition).IsRequired();
         b.Property(l => l.Status).IsRequired();
         b.Property(l => l.PriceType).IsRequired();
@@ -97,6 +97,11 @@ public class ListingConfiguration : IEntityTypeConfiguration<Listing>
         b.Property(l => l.TelegramChatId).HasMaxLength(64);
 
         // FK на справочник подкатегорий (не свободный текст).
+        // Справочники: удалить город/категорию, на которые ссылаются объявления, нельзя —
+        // только выключить (IsActive). Restrict держит это и на уровне БД.
+        b.HasOne<CatalogCategory>().WithMany().HasForeignKey(l => l.Category).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<CatalogCity>().WithMany().HasForeignKey(l => l.City).OnDelete(DeleteBehavior.Restrict);
+
         b.HasOne(l => l.Subcategory)
             .WithMany(s => s.Listings)
             .HasForeignKey(l => l.SubcategoryId)

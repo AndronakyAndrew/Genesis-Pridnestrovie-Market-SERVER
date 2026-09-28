@@ -22,7 +22,7 @@ public record MeResponse(
     DateTimeOffset? BannedUntil,
     bool IsDeleted,
     string DisplayName,
-    City City,
+    string City,
     string? AvatarUrl,
     string? TelegramUsername,
     string? Description,
@@ -45,7 +45,7 @@ public record MeResponse(
 /// </summary>
 public record UpdateMeRequest(
     [MinLength(2), MaxLength(60)] string? DisplayName,
-    City? City,
+    string? City,
     [MaxLength(20)] string? PhoneE164,
     [MaxLength(64)] string? TelegramUsername,
     [MaxLength(300)] string? Description,
@@ -102,7 +102,7 @@ public record SessionResponse(
 public record PublicProfileResponse(
     string PublicCode,
     string DisplayName,
-    City City,
+    string City,
     string? AvatarUrl,
     string? Description,
     DateOnly RegisteredAt,

@@ -71,5 +71,12 @@ public class RefreshToken
     /// </summary>
     public string? IpPrefix { get; set; }
 
+    /// <summary>
+    /// Когда в этой сессии пройден второй фактор. Переносится по цепочке ротации:
+    /// обновлённый access-токен сохраняет claim <c>mfa</c>, не спрашивая код каждые
+    /// 15 минут. null — сессия открыта без 2FA, служебные права в ней не действуют.
+    /// </summary>
+    public DateTimeOffset? MfaVerifiedAt { get; set; }
+
     public bool IsActive => RevokedAt is null && DateTimeOffset.UtcNow < ExpiresAt;
 }

@@ -1,3 +1,4 @@
+using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Business;
 using GenesisMarket.Api.Contracts;
 using Microsoft.AspNetCore.Authorization;
@@ -13,7 +14,7 @@ namespace GenesisMarket.Api.Controllers;
 /// Идентификатор заявки — Id пользователя: заявка у аккаунта одна.
 /// </summary>
 [Route("api/moderation/business")]
-[Authorize(Policy = "Moderator")]
+[Authorize(Policy = Permissions.BusinessReview)]
 public class BusinessModerationController(IBusinessVerificationService verification) : ApiControllerBase
 {
     /// <summary>

@@ -1,3 +1,4 @@
+using GenesisMarket.Api.Listings;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +12,8 @@ namespace GenesisMarket.Api.Seo;
 /// в выборку не попадает. Берутся только <see cref="ListingStatus.Active"/>: проданные,
 /// архивные, черновики, отклонённые и мягко удалённые (глобальный query filter) — мимо.
 /// </summary>
-public sealed class SitemapUrlProvider(AppDbContext db, IOptions<SeoOptions> options) : ISitemapUrlProvider
+public sealed class SitemapUrlProvider(
+    AppDbContext db, IOptions<SeoOptions> options, ICatalogReferences references) : ISitemapUrlProvider
 {
     private readonly SeoOptions _seo = options.Value;
 
@@ -21,8 +23,12 @@ public sealed class SitemapUrlProvider(AppDbContext db, IOptions<SeoOptions> opt
     private const decimal ListingPriority = 0.6m;
     private const decimal InfoPriority = 0.5m;
 
-    public int StaticUrlCount =>
-        2 + Enum.GetValues<Category>().Length + Enum.GetValues<City>().Length + SeoUrls.InfoPaths.Length;
+    public async Task<int> GetStaticUrlCountAsync(CancellationToken ct)
+    {
+        var catalog = await references.GetAsync(ct);
+        return 2 + catalog.Categories.Count(c => c.IsActive) + catalog.Cities.Count(c => c.IsActive) +
+               SeoUrls.InfoPaths.Length;
+    }
 
     public int ListingPageCount(long activeCount) =>
         (int)Math.Max(1, Math.Ceiling(activeCount / (double)_seo.SitemapPageSize));
@@ -38,19 +44,19 @@ public sealed class SitemapUrlProvider(AppDbContext db, IOptions<SeoOptions> opt
 
         return section switch
         {
-            SitemapSection.Static => StaticUrls(baseUrl),
+            SitemapSection.Static => StaticUrls(baseUrl, await references.GetAsync(ct)),
             SitemapSection.Listings => await ListingUrlsAsync(baseUrl, page, ct),
-            SitemapSection.All => [.. StaticUrls(baseUrl), .. await ListingUrlsAsync(baseUrl, page: null, ct)],
+            SitemapSection.All => [.. StaticUrls(baseUrl, await references.GetAsync(ct)), .. await ListingUrlsAsync(baseUrl, page: null, ct)],
             _ => throw new ArgumentOutOfRangeException(nameof(section))
         };
     }
 
     /// <summary>
     /// Статические публичные страницы: главная, каталог, каталог с фильтром по каждой
-    /// категории и каждому городу, информационные разделы. Приватные страницы (кабинет,
+    /// активной категории и каждому активному городу справочника, информационные разделы. Приватные страницы (кабинет,
     /// вход, создание объявления, модерация) сюда не добавляются — они в robots.txt.
     /// </summary>
-    private static List<SitemapUrl> StaticUrls(string baseUrl)
+    private static List<SitemapUrl> StaticUrls(string baseUrl, CatalogSnapshot catalog)
     {
         var urls = new List<SitemapUrl>
         {
@@ -58,13 +64,13 @@ public sealed class SitemapUrlProvider(AppDbContext db, IOptions<SeoOptions> opt
             new(SeoUrls.Catalog(baseUrl), null, SitemapChangeFreq.Weekly, TopPriority)
         };
 
-        foreach (var category in Enum.GetValues<Category>())
+        foreach (var category in catalog.Categories.Where(c => c.IsActive))
             urls.Add(new SitemapUrl(
-                SeoUrls.CatalogCategory(baseUrl, category), null, SitemapChangeFreq.Daily, ShowcasePriority));
+                SeoUrls.CatalogCategory(baseUrl, category.Code), null, SitemapChangeFreq.Daily, ShowcasePriority));
 
-        foreach (var city in Enum.GetValues<City>())
+        foreach (var city in catalog.Cities.Where(c => c.IsActive))
             urls.Add(new SitemapUrl(
-                SeoUrls.CatalogCity(baseUrl, city), null, SitemapChangeFreq.Daily, ShowcasePriority));
+                SeoUrls.CatalogCity(baseUrl, city.Code), null, SitemapChangeFreq.Daily, ShowcasePriority));
 
         foreach (var path in SeoUrls.InfoPaths)
             urls.Add(new SitemapUrl($"{baseUrl}{path}", null, SitemapChangeFreq.Monthly, InfoPriority));

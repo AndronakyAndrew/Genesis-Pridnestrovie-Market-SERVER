@@ -1,4 +1,5 @@
 using System.Text.Json;
+using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Domain.Entities;
@@ -47,7 +48,7 @@ public class ListingImagesController(
             .FirstOrDefaultAsync(ct);
 
         if (listing is null ||
-            !ListingVisibility.CanSee(listing.Status, listing.OwnerId, CurrentUserId(), CurrentUser.Role))
+            !ListingVisibility.CanSee(listing.Status, listing.OwnerId, CurrentUserId(), CurrentUser.Can(Permissions.ListingsModerate)))
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
 
         var images = await db.ListingImages

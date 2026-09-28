@@ -1,5 +1,6 @@
 using System.Text.Json;
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Auth.Roles;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Profiles;
 using GenesisMarket.Domain.Entities;
@@ -26,7 +27,9 @@ public class MeController(
     IRefreshTokenService refreshTokens,
     SecurityStampValidator securityStamp,
     IOptions<PhoneOptions> phoneOptions,
-    IImageProcessor imageProcessor) : ApiControllerBase
+    IImageProcessor imageProcessor,
+    IRoleStore roles,
+    Listings.ICatalogReferences references) : ApiControllerBase
 {
     private const long MaxAvatarBytes = 5 * 1024 * 1024;
 
@@ -50,7 +53,12 @@ public class MeController(
 
         // Обновляем только переданные поля. Role/Email/IsBanned/… сюда не биндятся.
         if (request.DisplayName is not null) p.DisplayName = request.DisplayName;
-        if (request.City is { } city) p.City = city;
+        if (request.City is { } rawCity)
+        {
+            if ((await references.GetAsync(ct)).WritableCity(rawCity, p.City) is not { } city)
+                return Problem(title: "Неизвестный город", statusCode: StatusCodes.Status400BadRequest);
+            p.City = city;
+        }
         if (request.TelegramUsername is not null) p.TelegramUsername = request.TelegramUsername;
         if (request.ViberEnabled is { } viber) p.ViberEnabled = viber;
         if (request.WhatsappEnabled is { } whatsapp) p.WhatsappEnabled = whatsapp;
@@ -341,9 +349,9 @@ public class MeController(
     }
 
     private async Task<MeResponse> MapMeAsync(User u, CancellationToken ct) => new(
-        u.Id, u.PublicCode, u.Email, u.Role, u.PhoneE164, u.PhoneVerified, u.EmailVerified,
+        u.Id, u.PublicCode, u.Email, await roles.GetRoleAsync(u.Id, ct), u.PhoneE164, u.PhoneVerified, u.EmailVerified,
         u.IsBanned, u.BannedUntil, u.IsDeleted,
-        u.Profile?.DisplayName ?? "", u.Profile?.City ?? default,
+        u.Profile?.DisplayName ?? "", u.Profile?.City ?? "",
         u.Profile?.AvatarUrl is null
             ? null
             : AvatarUrl.Build(Request, u.PublicCode, u.Profile.UpdatedAt),

@@ -25,12 +25,7 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         b.Property(u => u.PublicCode).HasMaxLength(5).IsRequired();
         b.HasIndex(u => u.PublicCode).IsUnique();
 
-        // Role — не native enum, хранится строкой.
-        b.Property(u => u.Role)
-            .HasConversion<string>()
-            .HasMaxLength(20)
-            .HasDefaultValue(UserRole.User)
-            .IsRequired();
+        // Роли в users нет: см. ProjectRoleAssignmentConfiguration.
 
         b.Property(u => u.PhoneE164).HasMaxLength(20);
         b.Property(u => u.PhoneVerified).HasDefaultValue(false);

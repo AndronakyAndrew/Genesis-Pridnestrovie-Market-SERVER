@@ -18,7 +18,7 @@ public static class OptionsValidationSetup
     private static readonly string[] SecretKeys =
     [
         "Jwt:Key", "Postgres:Password", "Minio:SecretKey",
-        "Smtp:Password", "Security:IpHashKey", "Telegram:BotToken", "Resend:ApiKey",
+        "Smtp:Password", "Security:IpHashKey", "Security:TotpKey", "Telegram:BotToken", "Resend:ApiKey",
     ];
 
     private static readonly string[] DefaultDbPasswords = ["", "genesis", "postgres", "password"];

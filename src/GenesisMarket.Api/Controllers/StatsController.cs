@@ -31,7 +31,7 @@ public class StatsController(AppDbContext db, IMemoryCache cache) : ApiControlle
         if (!cache.TryGetValue(CacheKey, out PublicStatsResponse? stats) || stats is null)
         {
             var usersCount = await db.Users.AsNoTracking()
-                .Where(u => u.Role == UserRole.User && !u.IsDeleted)
+                .Where(u => !u.ProjectRoles.Any() && !u.IsDeleted)
                 .LongCountAsync(ct);
 
             // Глобальный фильтр Listing отсекает мягко удалённые.

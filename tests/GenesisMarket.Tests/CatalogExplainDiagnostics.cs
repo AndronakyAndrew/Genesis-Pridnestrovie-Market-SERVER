@@ -105,8 +105,9 @@ public sealed class CatalogExplainDiagnostics(AuthApiFactory factory, ITestOutpu
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var rnd = new Random(42);
-        var cities = Enum.GetValues<City>();
-        var categories = Enum.GetValues<Category>();
+        // Справочники — из БД (сид миграции CatalogReferencesToTables).
+        var cities = await db.Cities.Select(c => c.Code).ToArrayAsync();
+        var categories = await db.Categories.Select(c => c.Code).ToArrayAsync();
         var statuses = new[]
         {
             ListingStatus.Active, ListingStatus.Active, ListingStatus.Active,

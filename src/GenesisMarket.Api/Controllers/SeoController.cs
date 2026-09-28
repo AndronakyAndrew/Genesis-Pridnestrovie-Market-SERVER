@@ -1,4 +1,5 @@
 using GenesisMarket.Api.Contracts;
+using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Seo;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
@@ -17,7 +18,8 @@ namespace GenesisMarket.Api.Controllers;
 [Route("api")]
 public class SeoController(
     AppDbContext db,
-    IOptions<SeoOptions> options) : ApiControllerBase
+    IOptions<SeoOptions> options,
+    ICatalogReferences references) : ApiControllerBase
 {
     private readonly SeoOptions _seo = options.Value;
 
@@ -78,10 +80,11 @@ public class SeoController(
             ? null
             : SeoUrls.ListingImage(baseUrl, row.FirstImage.ObjectKey);
 
+        var catalog = await references.GetAsync(ct);
         var meta = ListingMetaBuilder.Build(
             new ListingMetaBuilder.MetaInput(
-                row.Title, row.Description, row.Price, row.PriceType, row.Category,
-                row.City, row.Condition, row.Status, row.SellerName),
+                row.Title, row.Description, row.Price, row.PriceType, catalog.CategoryName(row.Category),
+                catalog.CityName(row.City), row.Condition, row.Status, row.SellerName),
             canonicalUrl, ogImage, _seo.SiteName,
             row.FirstImage?.Width, row.FirstImage?.Height);
 
@@ -99,11 +102,15 @@ public class SeoController(
         if (BaseUrl() is not { } baseUrl)
             return SeoUnavailable();
 
-        if (!SeoUrls.TryParse<Category>(category, out var cat) || !SeoUrls.TryParse<City>(city, out var cty))
+        // Сегмент — slug справочника; по старой памяти принимается и код (у сида slug = код строчными).
+        var catalog = await references.GetAsync(ct);
+        var cat = catalog.Categories.FirstOrDefault(c => c.Slug == category.ToLowerInvariant()) ?? catalog.Category(category);
+        var cty = catalog.Cities.FirstOrDefault(c => c.Slug == city.ToLowerInvariant()) ?? catalog.City(city);
+        if (cat is null || cty is null)
             return Problem(title: "Неизвестная категория или город", statusCode: StatusCodes.Status404NotFound);
 
         var active = db.Listings.AsNoTracking()
-            .Where(l => l.Status == ListingStatus.Active && l.Category == cat && l.City == cty);
+            .Where(l => l.Status == ListingStatus.Active && l.Category == cat.Code && l.City == cty.Code);
 
         var count = await active.LongCountAsync(ct);
 
@@ -134,11 +141,11 @@ public class SeoController(
             .ToList();
 
         return Ok(new SeoLandingResponse(
-            Category: SeoUrls.Value(cat),
-            CategoryLabel: Listings.CatalogLabels.Category(cat),
-            City: SeoUrls.Value(cty),
-            CityLabel: Listings.CatalogLabels.City(cty),
-            CanonicalUrl: SeoUrls.Landing(baseUrl, cat, cty),
+            Category: cat.Slug,
+            CategoryLabel: cat.Name,
+            City: cty.Slug,
+            CityLabel: cty.Name,
+            CanonicalUrl: SeoUrls.Landing(baseUrl, cat.Slug, cty.Slug),
             Count: count,
             PriceFrom: range?.Min,
             PriceTo: range?.Max,

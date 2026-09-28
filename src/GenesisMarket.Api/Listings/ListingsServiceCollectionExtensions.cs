@@ -12,6 +12,10 @@ public static class ListingsServiceCollectionExtensions
         services.Configure<ListingOptions>(configuration.GetSection(ListingOptions.Section));
         services.Configure<ModerationOptions>(configuration.GetSection(ModerationOptions.Section));
         services.Configure<ContactRevealOptions>(configuration.GetSection(ContactRevealOptions.Section));
+
+        // Справочники каталога из БД (города, категории, подкатегории) — кэшируемый снимок.
+        services.AddMemoryCache();
+        services.AddScoped<ICatalogReferences, CatalogReferences>();
         // Политика в БД не ходит и состояния не держит — синглтона достаточно.
         services.AddSingleton<IListingModerationPolicy, ListingModerationPolicy>();
         services.AddScoped<IListingViewCounter, ListingViewCounter>();

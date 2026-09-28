@@ -12,11 +12,14 @@ public class SubcategoryConfiguration : IEntityTypeConfiguration<Subcategory>
         b.ToTable("subcategories");
         b.HasKey(s => s.Id);
 
-        // Стабильные Id из сида → без автоинкремента.
-        b.Property(s => s.Id).ValueGeneratedNever();
+        // Id из сида (1–42) заданы явно; новые подкатегории администратора получают Id из
+        // identity, начатой с 1000 (см. миграцию CatalogReferencesToTables) — с сидом не пересекаются.
+        b.Property(s => s.Id).UseIdentityByDefaultColumn();
 
-        // Category — native enum-тип.
-        b.Property(s => s.Category).IsRequired();
+        // Category — код справочника категорий.
+        b.Property(s => s.Category).HasMaxLength(CatalogReferenceConfiguration.CodeMaxLength).IsRequired();
+        b.HasOne<CatalogCategory>().WithMany().HasForeignKey(s => s.Category).OnDelete(DeleteBehavior.Restrict);
+        b.Property(s => s.IsActive).HasDefaultValue(true);
 
         b.Property(s => s.Slug).HasMaxLength(60).IsRequired();
         b.Property(s => s.Name).HasMaxLength(60).IsRequired();
@@ -82,6 +85,6 @@ public class SubcategoryConfiguration : IEntityTypeConfiguration<Subcategory>
             New(42, Category.Other, "raznoe", "Разное"));
     }
 
-    private static Subcategory New(int id, Category category, string slug, string name) =>
+    private static Subcategory New(int id, string category, string slug, string name) =>
         new() { Id = id, Category = category, Slug = slug, Name = name };
 }

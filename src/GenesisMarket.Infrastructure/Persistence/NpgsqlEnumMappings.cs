@@ -14,8 +14,6 @@ public static class NpgsqlEnumMappings
     public static NpgsqlDbContextOptionsBuilder MapGenesisEnums(this NpgsqlDbContextOptionsBuilder npgsql)
     {
         var tr = LowerCaseNameTranslator.Instance;
-        npgsql.MapEnum<Category>("category", nameTranslator: tr);
-        npgsql.MapEnum<City>("city", nameTranslator: tr);
         npgsql.MapEnum<Condition>("condition", nameTranslator: tr);
         npgsql.MapEnum<ListingStatus>("listing_status", nameTranslator: tr);
         npgsql.MapEnum<PriceType>("price_type", nameTranslator: tr);

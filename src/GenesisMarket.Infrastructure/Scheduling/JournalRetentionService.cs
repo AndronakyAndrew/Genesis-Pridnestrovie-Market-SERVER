@@ -56,10 +56,18 @@ public sealed class JournalRetentionService(
             .Where(c => c.CreatedAt < clickCutoff)
             .ExecuteDeleteAsync(ct);
 
-        if (anonymized > 0 || removed > 0)
+        // Журнал действий сотрудников: запись вечная, адрес исполнителя — нет. Тот же
+        // срок, что у раскрытий. Колонка необязательная, поэтому NULL — единственное
+        // изменение строки, которое пропускает триггер append-only.
+        var auditAnonymized = await db.AuditEvents
+            .Where(e => e.OccurredAt < revealCutoff && e.IpHash != null)
+            .ExecuteUpdateAsync(s => s.SetProperty(e => e.IpHash, (string?)null), ct);
+
+        if (anonymized > 0 || removed > 0 || auditAnonymized > 0)
             logger.LogInformation(
-                "Уборка журналов: обезличено раскрытий — {Anonymized}, удалено переходов — {Removed}.",
-                anonymized, removed);
+                "Уборка журналов: обезличено раскрытий — {Anonymized}, удалено переходов — {Removed}, " +
+                "обезличено записей журнала действий — {AuditAnonymized}.",
+                anonymized, removed, auditAnonymized);
 
         return new JournalRetentionResult(anonymized, removed);
     }

@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -39,9 +40,17 @@ public static partial class SlugGenerator
         return $"{slug}-{suffix}";
     }
 
-    /// <summary>Короткий детерминированный суффикс из Id (первые 8 hex-символов).</summary>
-    public static string SuffixFromId(Guid id) => id.ToString("N")[..8];
+    /// <summary>
+    /// Короткий детерминированный суффикс из Id — ПОСЛЕДНИЕ 8 hex-символов. Id — UUID v7:
+    /// первые 12 символов у него — метка времени в миллисекундах, и первые 8 меняются раз
+    /// в ~65 секунд. Раньше суффикс брался оттуда, и два объявления с одинаковым заголовком
+    /// за минуту давали одинаковый slug. Хвост v7 — случайные биты.
+    /// </summary>
+    public static string SuffixFromId(Guid id) => id.ToString("N")[^8..];
 
-    /// <summary>Случайный суффикс — для повторной генерации при коллизии slug.</summary>
-    public static string RandomSuffix() => Guid.CreateVersion7().ToString("N")[..8];
+    /// <summary>
+    /// Случайный суффикс — для повторной генерации при коллизии slug. Криптослучайный,
+    /// а не из UUID v7: у того начало — время, и повтор в ту же минуту совпадал бы снова.
+    /// </summary>
+    public static string RandomSuffix() => RandomNumberGenerator.GetHexString(8, lowercase: true);
 }

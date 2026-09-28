@@ -1,3 +1,4 @@
+using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Moderation;
 using GenesisMarket.Domain.Entities;
@@ -15,7 +16,7 @@ namespace GenesisMarket.Api.Controllers;
 /// (<see cref="ModerationController"/>): она же пишет итог в журнал.
 /// </summary>
 [Route("api/moderation/reports")]
-[Authorize(Policy = "Moderator")]
+[Authorize(Policy = Permissions.ReportsReview)]
 public class ModerationReportsController(AppDbContext db, IModerationAudit audit) : ApiControllerBase
 {
     private const int DefaultLimit = 25;
@@ -210,6 +211,9 @@ public class ModerationReportsController(AppDbContext db, IModerationAudit audit
     {
         var me = CurrentUserId()!.Value;
         var now = DateTimeOffset.UtcNow;
+
+        if (await ConflictOfInterest.ReportInvolvesAsync(db, id, me, ct))
+            return Problem(title: ConflictOfInterest.OwnReport, statusCode: StatusCodes.Status403Forbidden);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 

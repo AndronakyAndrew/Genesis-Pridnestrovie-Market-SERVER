@@ -14,7 +14,7 @@ public interface ITelegramClient
     /// Канал для публикации объявления данной категории (канал категории или общий),
     /// либо null, если публичные каналы не сконфигурированы.
     /// </summary>
-    string? ResolveChannel(Category category);
+    string? ResolveChannel(string category);
 
     /// <summary>Пост с изображением (sendPhoto). Возвращает message_id созданного поста.</summary>
     Task<long> SendPhotoAsync(string chatId, string photoUrl, string caption, CancellationToken ct);

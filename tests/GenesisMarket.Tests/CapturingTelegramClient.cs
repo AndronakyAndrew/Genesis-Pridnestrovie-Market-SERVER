@@ -22,7 +22,7 @@ public sealed class CapturingTelegramClient(IOptions<TelegramOptions> options) :
     public IReadOnlyList<SentPost> Sends => _sends.ToArray();
     public IReadOnlyList<EditedPost> Edits => _edits.ToArray();
 
-    public string? ResolveChannel(Category category) => options.Value.ResolveChannel(category);
+    public string? ResolveChannel(string category) => options.Value.ResolveChannel(category);
 
     public Task<long> SendMessageAsync(string chatId, string text, CancellationToken ct)
     {

@@ -20,7 +20,7 @@ public static class ModerationReadModels
     /// <summary>Сырые поля строки пользователя (до сборки адреса аватара, которому нужен Request).</summary>
     public sealed record UserRow(
         Guid Id, string PublicCode, string DisplayName, bool HasAvatar, DateTimeOffset? ProfileUpdatedAt,
-        City City, UserRole Role, DateTimeOffset CreatedAt, bool EmailVerified, bool PhoneVerified,
+        string City, UserRole Role, DateTimeOffset CreatedAt, bool EmailVerified, bool PhoneVerified,
         bool IsBanned, DateTimeOffset? BannedUntil, int ActiveListings, int ApprovedListings,
         double? AverageRating, int ReviewsCount, int OpenReports, DateTimeOffset? LastRejectedAt,
         bool IsVerifiedBusiness, string? ShopName, DateTimeOffset? LastSeenAt, string? LastIpPrefix,
@@ -38,7 +38,7 @@ public static class ModerationReadModels
             u.Profile.AvatarUrl != null,
             u.Profile.UpdatedAt,
             u.Profile.City,
-            u.Role,
+            u.ProjectRoles.Where(r => r.ProjectKey == Projects.Market).Select(r => (UserRole?)r.Role).FirstOrDefault() ?? UserRole.User,
             u.CreatedAt,
             u.EmailVerified,
             u.PhoneVerified,
@@ -127,7 +127,8 @@ public static class ModerationReadModels
 
         return await db.Users.AsNoTracking()
             .Where(u => list.Contains(u.Id))
-            .Select(u => new ModerationActor(u.Id, u.PublicCode, u.Profile!.DisplayName, u.Role))
+            .Select(u => new ModerationActor(u.Id, u.PublicCode, u.Profile!.DisplayName,
+                u.ProjectRoles.Where(r => r.ProjectKey == Projects.Market).Select(r => (UserRole?)r.Role).FirstOrDefault() ?? UserRole.User))
             .ToDictionaryAsync(a => a.Id, ct);
     }
 

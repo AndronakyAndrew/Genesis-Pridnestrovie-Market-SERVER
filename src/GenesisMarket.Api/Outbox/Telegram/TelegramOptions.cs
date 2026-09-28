@@ -52,7 +52,7 @@ public sealed class TelegramOptions
     /// Разрешить канал для категории объявления: канал из <see cref="CategoryChannels"/> либо
     /// общий <see cref="BroadcastChatId"/>. Возвращает null, если ни то, ни другое не задано.
     /// </summary>
-    public string? ResolveChannel(Category category)
+    public string? ResolveChannel(string category)
     {
         // Сопоставляем без учёта регистра независимо от компаратора связанного словаря:
         // ключ в БД/конфиге — lowercase (realestate), имя члена enum — PascalCase (RealEstate).

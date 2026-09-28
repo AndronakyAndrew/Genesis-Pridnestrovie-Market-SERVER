@@ -14,7 +14,7 @@ public sealed class LogTelegramClient(IOptions<TelegramOptions> options, ILogger
     private readonly TelegramOptions _o = options.Value;
     private long _counter;
 
-    public string? ResolveChannel(Category category) =>
+    public string? ResolveChannel(string category) =>
         _o.ResolveChannel(category) ?? "dev-broadcast";
 
     public Task<long> SendMessageAsync(string chatId, string text, CancellationToken ct)

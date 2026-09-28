@@ -11,7 +11,7 @@ public record RegisterRequest(
     [Required, EmailAddress, MaxLength(256)] string Email,
     [Required] string Password,
     [Required, MinLength(2), MaxLength(60)] string DisplayName,
-    [Required] City City,
+    [Required] string City,
     [Required, MaxLength(20)] string Phone);
 
 public record LoginRequest(
@@ -54,7 +54,7 @@ public record UserResponse(
     string PublicCode,
     string Email,
     string DisplayName,
-    City City,
+    string City,
     string? PhoneE164,
     bool PhoneVerified,
     DateTimeOffset CreatedAt,

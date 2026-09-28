@@ -159,10 +159,10 @@ public class ModerationWorkspaceTests(AuthApiFactory factory) : IClassFixture<Au
     [Fact]
     public async Task Users_banned_tab_and_summary_reflect_ban()
     {
-        var (mod, _) = await Moderator();
+        var (mod, _) = await Moderator(UserRole.Admin);
         var userId = await factory.SeedUserAsync(Unique("tobeban"), Password);
 
-        var ban = await mod.PostAsJsonAsync($"/api/moderation/users/{userId}/ban",
+        var ban = await mod.PostAsJsonAsync($"/api/admin/users/{userId}/ban",
             new { reason = "Мошенничество", until = (DateTimeOffset?)null });
         Assert.Equal(HttpStatusCode.OK, ban.StatusCode);
 
@@ -178,7 +178,7 @@ public class ModerationWorkspaceTests(AuthApiFactory factory) : IClassFixture<Au
     [Fact]
     public async Task Dossier_shows_sanctions_and_accounts_from_the_same_network()
     {
-        var (mod, _) = await Moderator();
+        var (mod, _) = await Moderator(UserRole.Admin);
         var emailA = Unique("netA");
         var emailB = Unique("netB");
         var a = await factory.SeedUserAsync(emailA, Password);
@@ -188,7 +188,7 @@ public class ModerationWorkspaceTests(AuthApiFactory factory) : IClassFixture<Au
         await AuthedClient(emailA);
         await AuthedClient(emailB);
 
-        await mod.PostAsJsonAsync($"/api/moderation/users/{a}/ban",
+        await mod.PostAsJsonAsync($"/api/admin/users/{a}/ban",
             new { reason = "Проверка досье", until = DateTimeOffset.UtcNow.AddDays(3) });
 
         using var doc = await GetJson(mod, $"/api/moderation/users/{a}/dossier");
@@ -322,17 +322,18 @@ public class ModerationWorkspaceTests(AuthApiFactory factory) : IClassFixture<Au
 
     private static string Unique(string prefix) => $"{prefix}-{Guid.NewGuid():N}@test.io";
 
-    private async Task<(HttpClient Client, Guid Id)> Moderator()
+    // Бан в сценариях досье — уровень Admin: админ видит всё, что модератор, плюс бан.
+    private async Task<(HttpClient Client, Guid Id)> Moderator(UserRole role = UserRole.Moderator)
     {
         var email = Unique("mod");
-        var id = await factory.SeedUserAsync(email, Password, role: UserRole.Moderator);
+        var id = await factory.SeedUserAsync(email, Password, role: role);
         return (await AuthedClient(email), id);
     }
 
     private async Task<HttpClient> AuthedClient(string email)
     {
         var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         using var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         client.DefaultRequestHeaders.Authorization = new("Bearer", doc.RootElement.GetProperty("accessToken").GetString());

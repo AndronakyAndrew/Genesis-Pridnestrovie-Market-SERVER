@@ -26,7 +26,8 @@ public class User : BaseEntity
     /// </summary>
     public required string PublicCode { get; set; }
 
-    public UserRole Role { get; set; } = UserRole.User;
+    // Роли здесь нет: она хранится в project_role_assignments (модель «пользователь +
+    // проект + роль»), читается через IRoleStore. См. ProjectRoleAssignment.
 
     /// <summary>Телефон в формате E.164. Подтверждается по SMS (из профиля).</summary>
     public string? PhoneE164 { get; set; }
@@ -107,4 +108,10 @@ public class User : BaseEntity
     public ICollection<Listing> Listings { get; set; } = new List<Listing>();
     public ICollection<Favorite> Favorites { get; set; } = new List<Favorite>();
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
+
+    /// <summary>Служебные роли по проектам. Пусто — обычный пользователь.</summary>
+    public ICollection<ProjectRoleAssignment> ProjectRoles { get; set; } = new List<ProjectRoleAssignment>();
+
+    /// <summary>TOTP. null — 2FA не настраивалась.</summary>
+    public UserTwoFactor? TwoFactor { get; set; }
 }

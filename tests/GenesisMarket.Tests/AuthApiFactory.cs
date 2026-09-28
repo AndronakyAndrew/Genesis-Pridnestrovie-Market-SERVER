@@ -1,4 +1,6 @@
+using System.Net.Http.Json;
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Auth.TwoFactor;
 using GenesisMarket.Api.Feedback;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
@@ -40,6 +42,10 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         // Ключ HMAC для хеширования IP — чтобы раскрытие контактов писало IpHash, а не сырой IP.
         Environment.SetEnvironmentVariable(
             "Security__IpHashKey", "test-iphash-key-0123456789abcdef0123456789abcdef");
+
+        // Ключ шифрования секретов 2FA (32 байта base64) — без него приложение не стартует.
+        Environment.SetEnvironmentVariable(
+            "Security__TotpKey", Convert.ToBase64String(new byte[32].Select((_, i) => (byte)(i + 1)).ToArray()));
 
         // Задержку анонимам в тестах убираем — проверяем логику, а не тайминг.
         Environment.SetEnvironmentVariable("ContactReveal__MinDelayMs", "0");
@@ -163,7 +169,11 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         // (существующим аккаунтам она выдана амнистией). Тесты, которые проверяют именно
         // неподтверждённый путь, передают false явно.
         bool banned = false, bool phoneVerified = true, bool emailVerified = true,
-        UserRole role = UserRole.User)
+        UserRole role = UserRole.User,
+        // Служебной роли без 2FA служебные ручки отвечают 403, поэтому по умолчанию
+        // сотрудник сидируется сразу с включённой 2FA (секрет — TotpSecretFor(email)).
+        // Тесты сценария «сотрудник без 2FA» передают false явно.
+        bool? twoFactor = null)
     {
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -177,7 +187,6 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             // Тот же генератор, что и в регистрации: сиды не должны разъезжаться
             // с боевым правилом уникальности.
             PublicCode = await publicCodes.NextAsync(default),
-            Role = role,
             PhoneE164 = "+37312345678",
             PhoneVerified = phoneVerified,
             EmailVerified = emailVerified,
@@ -185,8 +194,62 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
             Profile = new Profile { DisplayName = "Тестовый", City = City.Tiraspol }
         };
         db.Users.Add(user);
+        // Владелец — один на проект (уникальный индекс). Тесты одного класса делят базу,
+        // поэтому новый сидированный владелец просто вытесняет прежнего.
+        if (role == UserRole.Owner)
+            await db.ProjectRoles
+                .Where(a => a.ProjectKey == Projects.Market && a.Role == UserRole.Owner)
+                .ExecuteDeleteAsync();
+        if (role != UserRole.User)
+            db.ProjectRoles.Add(new ProjectRoleAssignment { UserId = user.Id, ProjectKey = Projects.Market, Role = role });
+        if (twoFactor ?? role != UserRole.User)
+        {
+            var protector = scope.ServiceProvider.GetRequiredService<ITwoFactorSecretProtector>();
+            db.TwoFactors.Add(new UserTwoFactor
+            {
+                UserId = user.Id,
+                SecretCipher = protector.Protect(TotpSecretFor(email)),
+                EnabledAt = DateTimeOffset.UtcNow
+            });
+        }
         await db.SaveChangesAsync();
         return user.Id;
+    }
+
+    /// <summary>Детерминированный секрет TOTP сидированного пользователя — тест считает код сам.</summary>
+    public static byte[] TotpSecretFor(string email) =>
+        System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(email.ToLowerInvariant()));
+
+    /// <summary>
+    /// Действующий код TOTP пользователя. Защита от повтора не принимает один шаг дважды,
+    /// а тесты входят одним аккаунтом чаще раза в 30 секунд — поэтому последний принятый
+    /// шаг сбрасывается напрямую в БД. Только для тестов.
+    /// </summary>
+    public async Task<string> TotpCodeAsync(string email, byte[]? secret = null)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var normalized = email.ToLowerInvariant();
+        var userId = await db.Users.Where(u => u.Email == normalized).Select(u => u.Id).FirstAsync();
+        await db.TwoFactors.Where(t => t.UserId == userId)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.LastUsedTimeStep, 0L));
+        return Totp.Compute(secret ?? TotpSecretFor(email), Totp.TimeStep(DateTimeOffset.UtcNow));
+    }
+
+    /// <summary>
+    /// Вход паролем «как у клиента»: если сервер ответил 202 (включена 2FA), второй шаг
+    /// проходится кодом TOTP. Возвращает итоговый ответ — 200 с сессией либо ошибку.
+    /// </summary>
+    public async Task<HttpResponseMessage> LoginAsync(HttpClient client, string email, string password)
+    {
+        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password });
+        if (login.StatusCode != System.Net.HttpStatusCode.Accepted)
+            return login;
+
+        using var doc = System.Text.Json.JsonDocument.Parse(await login.Content.ReadAsStringAsync());
+        var challengeToken = doc.RootElement.GetProperty("challengeToken").GetString();
+        return await client.PostAsJsonAsync("/api/auth/2fa/verify",
+            new { challengeToken, code = await TotpCodeAsync(email) });
     }
 
     /// <summary>Прямое создание объявления для указанного владельца (для сценариев тестов).</summary>
@@ -194,11 +257,11 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>, IAsyncLifet
         Guid ownerId,
         ListingStatus status = ListingStatus.Active,
         string title = "Диван угловой тестовый",
-        Category category = Category.Home,
+        string category = Category.Home,
         int subcategoryId = 18,
         decimal? price = 3000,
         PriceType priceType = PriceType.Fixed,
-        City city = City.Bendery,
+        string city = City.Bendery,
         string? description = null,
         bool isExample = false)
     {

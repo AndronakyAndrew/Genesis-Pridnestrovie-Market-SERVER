@@ -23,9 +23,7 @@ public static class DependencyInjection
         IConfiguration configuration)
     {
         // ---- PostgreSQL ----
-        var postgres = BuildPostgresConnectionString(configuration);
-        services.AddDbContext<AppDbContext>(o =>
-            o.UseNpgsql(postgres, npgsql => npgsql.MapGenesisEnums()));
+        var postgres = AddGenesisDbContext(services, configuration);
 
         // ---- MinIO ----
         services.Configure<MinioOptions>(configuration.GetSection(MinioOptions.SectionName));
@@ -65,6 +63,19 @@ public static class DependencyInjection
         services.AddScheduling(configuration, postgres);
 
         return services;
+    }
+
+    /// <summary>
+    /// Только DbContext, без MinIO, планировщика и health checks. Отдельно — для
+    /// CLI-команд (grant-role и др.): им нужна одна база, а фоновые службы
+    /// приложения запускаться не должны. Возвращает строку подключения.
+    /// </summary>
+    public static string AddGenesisDbContext(this IServiceCollection services, IConfiguration configuration)
+    {
+        var postgres = BuildPostgresConnectionString(configuration);
+        services.AddDbContext<AppDbContext>(o =>
+            o.UseNpgsql(postgres, npgsql => npgsql.MapGenesisEnums()));
+        return postgres;
     }
 
     private static string BuildPostgresConnectionString(IConfiguration configuration)

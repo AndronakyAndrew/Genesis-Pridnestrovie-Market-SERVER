@@ -35,8 +35,8 @@ public sealed record CatalogRow(
     string Title,
     decimal? Price,
     PriceType PriceType,
-    City City,
-    Category Category,
+    string City,
+    string Category,
     string? FirstImageUrl,
     DateTimeOffset? PublishedAt,
     DateTimeOffset? BumpedAt,
@@ -94,7 +94,7 @@ public static class CatalogQueryBuilder
     /// Кросс-полевые проверки фильтров каталога, общие для живого каталога и сохранённых
     /// поисков. Возвращает текст ошибки (для 400 / деактивации) или null, если всё корректно.
     /// </summary>
-    public static string? ValidateFilters(IReadOnlyCollection<City>? cities, long? priceFrom, long? priceTo)
+    public static string? ValidateFilters(IReadOnlyCollection<string>? cities, long? priceFrom, long? priceTo)
     {
         if (cities is { Count: > MaxCities })
             return $"Слишком много городов в фильтре (максимум {MaxCities})";

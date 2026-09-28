@@ -27,7 +27,7 @@ public sealed class ResourceOwnerHandler(ICurrentUser currentUser, ISecurityAudi
         if (!currentUser.IsAuthenticated)
             return Task.CompletedTask; // не Succeed — доступ запрещён
 
-        var isModerator = currentUser.Role is UserRole.Moderator or UserRole.Admin;
+        var isModerator = currentUser.Can(Permissions.ListingsModerate);
         var isOwner = currentUser.UserId is { } id && id == resource.OwnerId;
 
         if (isModerator || isOwner)

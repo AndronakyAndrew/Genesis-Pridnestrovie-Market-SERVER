@@ -33,8 +33,8 @@ public record ModerationTargetRef(
     string? ThumbKey = null,
     decimal? Price = null,
     PriceType? PriceType = null,
-    City? City = null,
-    Category? Category = null,
+    string? City = null,
+    string? Category = null,
     ListingStatus? ListingStatus = null,
     ReportReason? ReportReason = null,
     ReportTargetType? ReportTargetType = null,
@@ -143,7 +143,7 @@ public enum ModerationUsersTab
 public record ModerationUsersQuery
 {
     public ModerationUsersTab? Tab { get; init; }
-    public City? City { get; init; }
+    public string? City { get; init; }
 
     /// <summary>«ID профиля» (5 цифр), @telegram или подстрока имени / названия магазина. Email не ищется.</summary>
     public string? Q { get; init; }
@@ -164,7 +164,7 @@ public record ModerationUserItem(
     string PublicCode,
     string DisplayName,
     string? AvatarUrl,
-    City City,
+    string City,
     UserRole Role,
     DateTimeOffset CreatedAt,
     bool EmailVerified,
@@ -325,7 +325,7 @@ public record ReporterStats(
 /// <summary>Снимок объявления — объекта жалобы. Текст сырой: модератору нужен оригинал.</summary>
 public record ReportedListing(
     Guid Id, string Slug, string Title, string Description, decimal? Price, PriceType PriceType,
-    Category Category, int SubcategoryId, City City, string? District, ListingStatus Status,
+    string Category, int SubcategoryId, string City, string? District, ListingStatus Status,
     DateTimeOffset CreatedAt, DateTimeOffset? PublishedAt, int ViewsCount, bool IsDeleted,
     IReadOnlyList<string> ThumbKeys, ModerationUserItem Owner);
 
@@ -370,8 +370,8 @@ public enum ModerationListingsSort
 public record ModerationListingsQuery
 {
     public ModerationListingsTab? Tab { get; init; }
-    public Category? Category { get; init; }
-    public City? City { get; init; }
+    public string? Category { get; init; }
+    public string? City { get; init; }
 
     /// <summary>GUID объявления, «ID профиля» автора или подстрока заголовка.</summary>
     public string? Q { get; init; }
@@ -399,9 +399,9 @@ public record ModerationListingRow(
     string Title,
     decimal? Price,
     PriceType PriceType,
-    Category Category,
+    string Category,
     int SubcategoryId,
-    City City,
+    string City,
     ListingStatus Status,
     int Priority,
     /// <summary>Момент, по которому строка стоит в очереди: постановка, возврат или отказ.</summary>

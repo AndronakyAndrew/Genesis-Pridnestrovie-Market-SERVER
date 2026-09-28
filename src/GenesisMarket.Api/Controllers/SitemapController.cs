@@ -64,7 +64,7 @@ public class SitemapController(
             return SeoUnavailable();
 
         var activeCount = await ActiveCountAsync(ct);
-        if (urls.StaticUrlCount + activeCount <= _seo.SitemapSplitThreshold)
+        if (await urls.GetStaticUrlCountAsync(ct) + activeCount <= _seo.SitemapSplitThreshold)
             return await XmlAsync(SitemapSection.All, page: 0, ct);
 
         var index = await cache.GetOrCreateAsync(

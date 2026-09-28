@@ -240,7 +240,7 @@ public class TelegramPublishTests(AuthApiFactory factory) : IClassFixture<AuthAp
         var email = Unique("tg-mod");
         await factory.SeedUserAsync(email, Password, role: UserRole.Moderator);
         var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         using var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var token = doc.RootElement.GetProperty("accessToken").GetString();
         client.DefaultRequestHeaders.Authorization = new("Bearer", token);

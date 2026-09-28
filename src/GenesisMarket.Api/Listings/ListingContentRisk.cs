@@ -76,7 +76,7 @@ public static partial class ListingContentRisk
     /// на момент создания черновика фотографий ещё нет, и это не должно штрафоваться.
     /// </summary>
     public static ContentRisk Evaluate(
-        string title, string description, decimal? price, Category category,
+        string title, string description, decimal? price, string category,
         bool hasImages, ModerationOptions options)
     {
         var text = $"{title}\n{description}";
@@ -109,7 +109,7 @@ public static partial class ListingContentRisk
             signals.Add($"цена от {options.HighPriceThreshold:N0} руб.");
         }
 
-        if (options.RiskyCategories.Contains(category))
+        if (options.RiskyCategories.Contains(category, StringComparer.OrdinalIgnoreCase))
         {
             score += options.RiskyCategoryPoints;
             signals.Add($"рисковая категория {category}");

@@ -18,8 +18,9 @@ public class ProfileConfiguration : IEntityTypeConfiguration<Profile>
 
         b.Property(p => p.DisplayName).HasMaxLength(60).IsRequired();
 
-        // City — native enum-тип.
-        b.Property(p => p.City).IsRequired();
+        // City — код справочника городов.
+        b.Property(p => p.City).HasMaxLength(CatalogReferenceConfiguration.CodeMaxLength).IsRequired();
+        b.HasOne<CatalogCity>().WithMany().HasForeignKey(p => p.City).OnDelete(DeleteBehavior.Restrict);
 
         b.Property(p => p.AvatarUrl).HasMaxLength(512);
         b.Property(p => p.TelegramUsername).HasMaxLength(64);

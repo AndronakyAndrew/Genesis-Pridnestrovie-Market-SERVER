@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Business;
+using GenesisMarket.Api.Cli;
 using GenesisMarket.Api.Configuration;
 using GenesisMarket.Api.Feedback;
 using GenesisMarket.Api.Listings;
@@ -18,6 +19,14 @@ using GenesisMarket.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
 using Serilog.Formatting.Compact;
+
+// Аварийные консольные команды (grant-role, reset-2fa): своя минимальная сборка DI,
+// веб-сервер не поднимается. См. Cli/AdminCli.cs.
+if (AdminCli.IsCommand(args))
+{
+    Environment.ExitCode = await AdminCli.RunAsync(args);
+    return;
+}
 
 // Ранний логгер (bootstrap) — ловит ошибки ещё до сборки хоста.
 Log.Logger = new LoggerConfiguration()

@@ -20,7 +20,7 @@ public class CatalogTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
     {
         var ownerEmail = Unique("cat-active");
         var owner = await factory.SeedUserAsync(ownerEmail, Password);
-        const Category cat = Category.Transport;
+        const string cat = Category.Transport;
 
         await factory.SeedListingAsync(owner, ListingStatus.Active, category: cat);
         await factory.SeedListingAsync(owner, ListingStatus.Sold, category: cat);
@@ -44,7 +44,7 @@ public class CatalogTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
     public async Task Cursor_pagination_walks_all_items_without_gaps_or_dupes()
     {
         var owner = await factory.SeedUserAsync(Unique("cat-page"), Password);
-        const Category cat = Category.Electronics;
+        const string cat = Category.Electronics;
 
         var ids = new List<Guid>();
         for (var i = 0; i < 5; i++)
@@ -82,7 +82,7 @@ public class CatalogTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
     public async Task Price_asc_orders_ascending_with_negotiable_last()
     {
         var owner = await factory.SeedUserAsync(Unique("cat-priceasc"), Password);
-        const Category cat = Category.Fashion;
+        const string cat = Category.Fashion;
 
         await factory.SeedListingAsync(owner, category: cat, price: 300);
         await factory.SeedListingAsync(owner, category: cat, price: 100);
@@ -105,7 +105,7 @@ public class CatalogTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
     public async Task Price_range_filter_excludes_out_of_band_and_negotiable()
     {
         var owner = await factory.SeedUserAsync(Unique("cat-priceband"), Password);
-        const Category cat = Category.Home;
+        const string cat = Category.Home;
 
         await factory.SeedListingAsync(owner, category: cat, price: 100, subcategoryId: 18);
         var mid = await factory.SeedListingAsync(owner, category: cat, price: 200, subcategoryId: 18);
@@ -125,7 +125,7 @@ public class CatalogTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
     public async Task Popular_orders_by_views_desc()
     {
         var owner = await factory.SeedUserAsync(Unique("cat-popular"), Password);
-        const Category cat = Category.Work;
+        const string cat = Category.Work;
 
         var low = await factory.SeedListingAsync(owner, category: cat);
         var high = await factory.SeedListingAsync(owner, category: cat);
@@ -147,7 +147,7 @@ public class CatalogTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
     public async Task Count_is_cached_and_matches_filter()
     {
         var owner = await factory.SeedUserAsync(Unique("cat-count"), Password);
-        const Category cat = Category.Services;
+        const string cat = Category.Services;
 
         for (var i = 0; i < 3; i++)
             await factory.SeedListingAsync(owner, category: cat);
@@ -230,7 +230,7 @@ public class CatalogTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
     public async Task Limit_above_max_is_clamped_not_rejected()
     {
         var owner = await factory.SeedUserAsync(Unique("cat-clamp"), Password);
-        const Category cat = Category.Animals;
+        const string cat = Category.Animals;
         for (var i = 0; i < 3; i++)
             await factory.SeedListingAsync(owner, category: cat);
 
@@ -261,7 +261,7 @@ public class CatalogTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory
     private async Task<HttpClient> AuthedClient(string email)
     {
         var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         using var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var token = doc.RootElement.GetProperty("accessToken").GetString();

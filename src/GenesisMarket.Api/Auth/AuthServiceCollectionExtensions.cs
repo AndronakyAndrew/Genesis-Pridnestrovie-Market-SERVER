@@ -1,5 +1,8 @@
 using System.Text;
-using GenesisMarket.Domain.Enums;
+using GenesisMarket.Api.Audit;
+using GenesisMarket.Api.Auth.Roles;
+using GenesisMarket.Api.Auth.TwoFactor;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
@@ -23,6 +26,8 @@ public static class AuthServiceCollectionExtensions
         services.Configure<PublishingOptions>(configuration.GetSection(PublishingOptions.Section));
         services.Configure<PhoneOptions>(configuration.GetSection(PhoneOptions.Section));
         services.Configure<PasswordResetOptions>(configuration.GetSection(PasswordResetOptions.Section));
+        services.Configure<TwoFactorOptions>(configuration.GetSection(TwoFactorOptions.Section));
+        services.Configure<StaffSessionOptions>(configuration.GetSection(StaffSessionOptions.Section));
 
         var jwt = configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
 
@@ -47,6 +52,14 @@ public static class AuthServiceCollectionExtensions
         services.AddSingleton<ITokenService, JwtTokenService>();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
         services.AddScoped<SecurityStampValidator>();
+
+        // ---- Роли, журнал действий, 2FA ----
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddRoleManagement();
+        services.AddScoped<IAuditActor, HttpAuditActor>();
+        services.AddSingleton(TwoFactorProtectorFrom(configuration));
+        services.AddScoped<TwoFactorService>();
+        services.AddScoped<MfaChallengeService>();
 
         // Публичный номер аккаунта: источник случайности — синглтон без состояния,
         // сам генератор scoped (ходит в БД за проверкой занятости).
@@ -127,12 +140,19 @@ public static class AuthServiceCollectionExtensions
                 };
             });
 
+        services.AddSingleton<IAuthorizationHandler, PermissionHandler>();
+        services.AddSingleton<IAuthorizationMiddlewareResultHandler, MfaAwareAuthorizationResultHandler>();
+
         services.AddAuthorization(options =>
         {
-            // Роли приходят только из claim токена.
-            options.AddPolicy("Moderator", p => p.RequireRole(
-                nameof(UserRole.Moderator), nameof(UserRole.Admin)));
-            options.AddPolicy("Admin", p => p.RequireRole(nameof(UserRole.Admin)));
+            // Служебная зона — только политики-разрешения. Роль приходит только из
+            // claim токена (актуальность держит SecurityStamp: смена роли его ротирует),
+            // разрешение действует лишь при claim mfa. Имён ролей в атрибутах нет.
+            foreach (var permission in Permissions.All)
+                options.AddPolicy(permission, p => p
+                    .RequireAuthenticatedUser()
+                    .AddRequirements(new PermissionRequirement(permission)));
+
             // Забаненные не проходят валидацию токена (SecurityStampValidator),
             // поэтому «не забанен» == «аутентифицирован».
             options.AddPolicy("NotBanned", p => p.RequireAuthenticatedUser());
@@ -148,5 +168,40 @@ public static class AuthServiceCollectionExtensions
         });
 
         return services;
+    }
+
+    /// <summary>
+    /// Хранилище ролей, их смена и журнал действий — общая часть HTTP-приложения и
+    /// CLI-команд. Исполнитель действия (<see cref="IAuditActor"/>) регистрирует вызывающий.
+    /// </summary>
+    public static IServiceCollection AddRoleManagement(this IServiceCollection services)
+    {
+        services.AddScoped<IRoleStore, DbRoleStore>();
+        services.AddScoped<RoleManagementService>();
+        services.AddScoped<IAuditLog, AuditLog>();
+        return services;
+    }
+
+    /// <summary>
+    /// Ключ шифрования секретов TOTP — только из окружения (<c>Security__TotpKey</c>),
+    /// во всех окружениях: без него 2FA не может ни включиться, ни проверить код, а
+    /// «тихий» запасной ключ сделал бы шифрование декоративным.
+    /// </summary>
+    public static ITwoFactorSecretProtector TwoFactorProtectorFrom(IConfiguration configuration)
+    {
+        var raw = configuration["Security:TotpKey"];
+        if (string.IsNullOrWhiteSpace(raw))
+            throw new InvalidOperationException(
+                "Security:TotpKey не задан. Ключ шифрования 2FA (32 байта, base64) должен приходить " +
+                "из переменной окружения Security__TotpKey (openssl rand -base64 32).");
+
+        byte[] key;
+        try { key = Convert.FromBase64String(raw); }
+        catch (FormatException)
+        {
+            throw new InvalidOperationException("Security:TotpKey — не base64.");
+        }
+
+        return new AesGcmTwoFactorSecretProtector(key);
     }
 }

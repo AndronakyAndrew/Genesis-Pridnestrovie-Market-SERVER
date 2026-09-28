@@ -309,8 +309,8 @@ public class SeoTests(AuthApiFactory factory) : IClassFixture<AuthApiFactory>
     public async Task Landing_returns_count_price_range_and_top_subcategories()
     {
         var owner = await factory.SeedUserAsync(Unique("seo-landing"), Password);
-        const Category cat = Category.Kids;
-        const City city = City.Dnestrovsk; // редко используемая пара — изоляция от прочих тестов
+        const string cat = Category.Kids;
+        const string city = City.Dnestrovsk; // редко используемая пара — изоляция от прочих тестов
 
         await factory.SeedListingAsync(owner, ListingStatus.Active, category: cat, city: city, price: 100, subcategoryId: 18);
         await factory.SeedListingAsync(owner, ListingStatus.Active, category: cat, city: city, price: 300, subcategoryId: 18);

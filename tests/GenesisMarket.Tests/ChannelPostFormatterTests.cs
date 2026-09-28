@@ -16,7 +16,7 @@ public class ChannelPostFormatterTests
         string? description = "Почти новый",
         decimal? price = 1200,
         PriceType priceType = PriceType.Fixed,
-        City city = City.Tiraspol,
+        string city = "Тирасполь",
         int descriptionLimit = DefaultDescriptionLimit) =>
         ChannelPostFormatter.BuildCaption(
             new ChannelPostContent(title, description, price, priceType, city), descriptionLimit);

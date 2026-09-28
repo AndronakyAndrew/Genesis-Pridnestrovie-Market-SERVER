@@ -7,7 +7,7 @@ namespace GenesisMarket.Api.Seo;
 /// маршрутизацией фронтенда (Next.js App Router, каталог <c>src/app</c>): карточка объявления —
 /// <c>/listing/{slug}</c>, каталог — <c>/catalog</c>, фильтры каталога — query-параметры
 /// (<c>?category=Electronics</c>, <c>?cities=Tiraspol</c>). Значения категорий/городов в
-/// query-строке — имена enum как есть (PascalCase): фронтенд сверяет их со своим справочником
+/// query-строке — коды справочников как есть (PascalCase): фронтенд сверяет их со своим справочником
 /// по точному совпадению. Все методы возвращают абсолютные ссылки от базового адреса.
 /// </summary>
 public static class SeoUrls
@@ -35,11 +35,11 @@ public static class SeoUrls
     public static string Catalog(string baseUrl) => $"{baseUrl}/catalog";
 
     /// <summary>Каталог с фильтром по категории: <c>{base}/catalog?category=Transport</c>.</summary>
-    public static string CatalogCategory(string baseUrl, Category category) =>
+    public static string CatalogCategory(string baseUrl, string category) =>
         $"{baseUrl}/catalog?category={category}";
 
     /// <summary>Каталог с фильтром по городу: <c>{base}/catalog?cities=Tiraspol</c>.</summary>
-    public static string CatalogCity(string baseUrl, City city) =>
+    public static string CatalogCity(string baseUrl, string city) =>
         $"{baseUrl}/catalog?cities={city}";
 
     /// <summary>
@@ -65,20 +65,12 @@ public static class SeoUrls
         "/listing/new", "/favorites", "/login", "/moderation", "/verify-email", "/user/"
     ];
 
-    /// <summary>Витрина категории — посадочная «категория × город» (пока только API-сводка).</summary>
-    public static string Landing(string baseUrl, Category category, City city) =>
-        $"{baseUrl}/{Value(category)}/{Value(city)}";
+    /// <summary>
+    /// Витрина категории — посадочная «категория × город» (пока только API-сводка). Сегменты —
+    /// Slug справочников (для сида — код строчными: «realestate/tiraspol», как было при enum-ах).
+    /// </summary>
+    public static string Landing(string baseUrl, string categorySlug, string citySlug) =>
+        $"{baseUrl}/{categorySlug}/{citySlug}";
 
     public static string Sitemap(string baseUrl) => $"{baseUrl}/sitemap.xml";
-
-    /// <summary>Строковая метка enum как в БД (RealEstate → «realestate»).</summary>
-    public static string Value<TEnum>(TEnum value) where TEnum : struct, Enum =>
-        value.ToString().ToLowerInvariant();
-
-    /// <summary>
-    /// Разбор строковой метки enum из маршрута (регистронезависимо). Используется
-    /// посадочными и sitemap-путями, где категория/город приходят строкой из URL.
-    /// </summary>
-    public static bool TryParse<TEnum>(string? value, out TEnum parsed) where TEnum : struct, Enum =>
-        Enum.TryParse(value, ignoreCase: true, out parsed) && Enum.IsDefined(parsed);
 }

@@ -24,7 +24,7 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
     [InlineData("GET", "/api/moderation/stats")]
     [InlineData("GET", "/api/moderation/listings/{id}")]
     [InlineData("POST", "/api/moderation/listings/{id}/approve")]
-    [InlineData("POST", "/api/moderation/users/{id}/ban")]
+    [InlineData("POST", "/api/admin/users/{id}/ban")]
     public async Task Regular_user_gets_403_on_moderation_endpoints(string method, string path)
     {
         var userEmail = Unique("plainuser");
@@ -185,7 +185,7 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
     [Fact]
     public async Task Ban_bans_user_archives_listings_and_kills_tokens()
     {
-        var mod = await Moderator();
+        var mod = await Admin();
 
         // Живой пользователь с реальными токенами.
         var (victimEmail, victimId) = await RegisterAndGetId("victim");
@@ -199,7 +199,7 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
         // До бана объявление находится через каталог.
         Assert.Contains(listingId, await CatalogSearchIds(marker));
 
-        var ban = await mod.PostAsJsonAsync($"/api/moderation/users/{victimId}/ban",
+        var ban = await mod.PostAsJsonAsync($"/api/admin/users/{victimId}/ban",
             new { reason = "Мошенничество", until = (DateTimeOffset?)null });
         Assert.Equal(HttpStatusCode.OK, ban.StatusCode);
 
@@ -237,10 +237,10 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
     public async Task Cannot_ban_self()
     {
         var modEmail = Unique("selfmod");
-        var modId = await factory.SeedUserAsync(modEmail, Password, role: UserRole.Moderator);
+        var modId = await factory.SeedUserAsync(modEmail, Password, role: UserRole.Admin);
         var mod = await AuthedClient(modEmail);
 
-        var resp = await mod.PostAsJsonAsync($"/api/moderation/users/{modId}/ban",
+        var resp = await mod.PostAsJsonAsync($"/api/admin/users/{modId}/ban",
             new { reason = "test", until = (DateTimeOffset?)null });
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
@@ -248,10 +248,10 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
     [Fact]
     public async Task Unban_lifts_ban_and_logs()
     {
-        var mod = await Moderator();
+        var mod = await Admin();
         var victimId = await factory.SeedUserAsync(Unique("victim"), Password, banned: true);
 
-        var resp = await mod.PostAsync($"/api/moderation/users/{victimId}/unban", null);
+        var resp = await mod.PostAsync($"/api/admin/users/{victimId}/unban", null);
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
 
         Assert.False((await factory.UserBanStateAsync(victimId)).IsBanned);
@@ -332,10 +332,18 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
         return await AuthedClient(email);
     }
 
+    /// <summary>Бан — уровень Admin (users.ban), у модератора его нет.</summary>
+    private async Task<HttpClient> Admin()
+    {
+        var email = Unique("admin");
+        await factory.SeedUserAsync(email, Password, role: UserRole.Admin);
+        return await AuthedClient(email);
+    }
+
     private async Task<HttpClient> AuthedClient(string email)
     {
         var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         using var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var token = doc.RootElement.GetProperty("accessToken").GetString();
@@ -358,7 +366,7 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
         });
         Assert.Equal(HttpStatusCode.OK, reg.StatusCode);
 
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         using var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var id = doc.RootElement.GetProperty("user").GetProperty("id").GetGuid();
         return (email, id);
@@ -367,7 +375,7 @@ public class ModerationTests(AuthApiFactory factory) : IClassFixture<AuthApiFact
     private async Task<(HttpClient Client, string RefreshToken)> LoginWithRefresh(string email)
     {
         var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         using var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var access = doc.RootElement.GetProperty("accessToken").GetString();

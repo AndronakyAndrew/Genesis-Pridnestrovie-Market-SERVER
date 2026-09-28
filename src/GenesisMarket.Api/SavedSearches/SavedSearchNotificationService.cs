@@ -21,6 +21,7 @@ namespace GenesisMarket.Api.SavedSearches;
 public sealed class SavedSearchNotificationService(
     AppDbContext db,
     IOptions<SavedSearchOptions> options,
+    ICatalogReferences references,
     ILogger<SavedSearchNotificationService> logger) : ISavedSearchNotificationService
 {
     private readonly SavedSearchOptions _o = options.Value;
@@ -103,6 +104,16 @@ public sealed class SavedSearchNotificationService(
             search.IsActive = false;
             return false;
         }
+
+        // Город или категория могли исчезнуть из справочника — такой поиск больше не сопоставим.
+        if ((await references.GetAsync(ct)).NormalizeFilters(query.Category, query.Cities, out var category, out var cities)
+            is { } unknown)
+        {
+            logger.LogWarning("Сохранённый поиск {SavedSearchId} деактивирован: {Error}", search.Id, unknown);
+            search.IsActive = false;
+            return false;
+        }
+        query = query with { Category = category, Cities = cities };
 
         // Курсор (PublishedAt, Id): PublishedAt берём у последнего уведомлённого объявления.
         DateTimeOffset? cursorPublishedAt = null;

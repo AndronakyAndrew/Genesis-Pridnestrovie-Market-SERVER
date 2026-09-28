@@ -29,13 +29,15 @@ public class Listing : BaseEntity, IOwnedResource
 
     public PriceType PriceType { get; set; } = PriceType.Fixed;
 
-    public Category Category { get; set; }
+    /// <summary>Код категории (FK на <c>categories.Code</c>).</summary>
+    public required string Category { get; set; }
 
     /// <summary>FK на справочник подкатегорий. Пара (Category, Subcategory) валидируется на сервере.</summary>
     public int SubcategoryId { get; set; }
     public Subcategory? Subcategory { get; set; }
 
-    public City City { get; set; }
+    /// <summary>Код города (FK на <c>cities.Code</c>).</summary>
+    public required string City { get; set; }
 
     /// <summary>Район/микрорайон. До 100 символов (CHECK на уровне БД).</summary>
     public string? District { get; set; }

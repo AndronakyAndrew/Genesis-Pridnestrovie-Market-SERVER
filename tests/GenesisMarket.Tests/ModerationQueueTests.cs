@@ -267,7 +267,7 @@ public class ModerationQueueTests(AuthApiFactory factory) : IClassFixture<AuthAp
     private async Task<HttpClient> AuthedClient(string email)
     {
         var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         using var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         client.DefaultRequestHeaders.Authorization = new("Bearer", doc.RootElement.GetProperty("accessToken").GetString());
@@ -275,7 +275,7 @@ public class ModerationQueueTests(AuthApiFactory factory) : IClassFixture<AuthAp
     }
 
     /// <summary>Подкатегория, в которой больше никто в этом классе тестов не сидит.</summary>
-    private static async Task<int> SubcategoryOf(HttpClient client, Category category)
+    private static async Task<int> SubcategoryOf(HttpClient client, string category)
     {
         using var doc = await GetJson(client, "/api/subcategories");
         return doc.RootElement.EnumerateArray()

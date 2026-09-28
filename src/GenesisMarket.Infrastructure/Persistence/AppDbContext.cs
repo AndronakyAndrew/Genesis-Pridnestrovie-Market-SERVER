@@ -32,6 +32,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<FeedbackMessage> FeedbackMessages => Set<FeedbackMessage>();
     public DbSet<ChannelPostQueue> ChannelPostQueue => Set<ChannelPostQueue>();
     public DbSet<LinkClick> LinkClicks => Set<LinkClick>();
+    public DbSet<ProjectRoleAssignment> ProjectRoles => Set<ProjectRoleAssignment>();
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<RoleChange> RoleChanges => Set<RoleChange>();
+    public DbSet<UserTwoFactor> TwoFactors => Set<UserTwoFactor>();
+    public DbSet<RecoveryCode> RecoveryCodes => Set<RecoveryCode>();
+    public DbSet<MfaChallenge> MfaChallenges => Set<MfaChallenge>();
+    public DbSet<CatalogCity> Cities => Set<CatalogCity>();
+    public DbSet<CatalogCategory> Categories => Set<CatalogCategory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -44,8 +52,6 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         // Метки формирует LowerCaseNameTranslator. Тот же транслятор Npgsql
         // применяет при runtime-маппинге (auto-map из модели при UseNpgsql(строка)).
         var tr = LowerCaseNameTranslator.Instance;
-        modelBuilder.HasPostgresEnum<Category>(name: "category", nameTranslator: tr);
-        modelBuilder.HasPostgresEnum<City>(name: "city", nameTranslator: tr);
         modelBuilder.HasPostgresEnum<Condition>(name: "condition", nameTranslator: tr);
         modelBuilder.HasPostgresEnum<ListingStatus>(name: "listing_status", nameTranslator: tr);
         modelBuilder.HasPostgresEnum<PriceType>(name: "price_type", nameTranslator: tr);

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Moderation;
 using GenesisMarket.Domain.Entities;
@@ -16,7 +17,7 @@ namespace GenesisMarket.Api.Controllers;
 /// Сам просмотр журнала не журналируется — в нём нет контактов пользователей.
 /// </summary>
 [Route("api/moderation/logs")]
-[Authorize(Policy = "Moderator")]
+[Authorize(Policy = Permissions.ModerationJournalRead)]
 public class ModerationJournalController(AppDbContext db) : ApiControllerBase
 {
     private const int DefaultLimit = 25;
@@ -111,9 +112,10 @@ public class ModerationJournalController(AppDbContext db) : ApiControllerBase
     public async Task<ActionResult<IReadOnlyList<ModerationActor>>> Actors(CancellationToken ct)
     {
         var actors = await db.Users.AsNoTracking()
-            .Where(u => u.Role != UserRole.User && !u.IsDeleted)
+            .Where(u => u.ProjectRoles.Any(r => r.ProjectKey == Projects.Market) && !u.IsDeleted)
             .OrderBy(u => u.Profile!.DisplayName)
-            .Select(u => new ModerationActor(u.Id, u.PublicCode, u.Profile!.DisplayName, u.Role))
+            .Select(u => new ModerationActor(u.Id, u.PublicCode, u.Profile!.DisplayName,
+                u.ProjectRoles.Where(r => r.ProjectKey == Projects.Market).Select(r => (UserRole?)r.Role).FirstOrDefault() ?? UserRole.User))
             .ToListAsync(ct);
         return Ok(actors);
     }

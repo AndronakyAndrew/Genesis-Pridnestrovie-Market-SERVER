@@ -21,7 +21,8 @@ namespace GenesisMarket.Api.Controllers;
 [Route("api/saved-searches")]
 public class SavedSearchesController(
     AppDbContext db,
-    IOptions<SavedSearchOptions> options) : ApiControllerBase
+    IOptions<SavedSearchOptions> options,
+    ICatalogReferences references) : ApiControllerBase
 {
     private readonly SavedSearchOptions _o = options.Value;
 
@@ -58,6 +59,12 @@ public class SavedSearchesController(
         if (CatalogQueryBuilder.ValidateFilters(
                 request.Query.Cities, request.Query.PriceFrom, request.Query.PriceTo) is { } error)
             return Problem(title: error, statusCode: StatusCodes.Status400BadRequest);
+
+        // Коды категории и городов — канонические: в БД и в сопоставлении они сравниваются точно.
+        if ((await references.GetAsync(ct)).NormalizeFilters(
+                request.Query.Category, request.Query.Cities, out var category, out var cities) is { } unknown)
+            return Problem(title: unknown, statusCode: StatusCodes.Status400BadRequest);
+        request = request with { Query = request.Query with { Category = category, Cities = cities } };
 
         // Лимит активных поисков на пользователя.
         var active = await db.SavedSearches.CountAsync(s => s.UserId == userId && s.IsActive, ct);
@@ -101,10 +108,14 @@ public class SavedSearchesController(
             search.NotifyChannel = channel;
 
         // Смена критериев — перепривязываем курсор: уведомления только о новом после изменения.
-        if (request.Query is { } query)
+        if (request.Query is { } raw)
         {
-            if (CatalogQueryBuilder.ValidateFilters(query.Cities, query.PriceFrom, query.PriceTo) is { } error)
+            if (CatalogQueryBuilder.ValidateFilters(raw.Cities, raw.PriceFrom, raw.PriceTo) is { } error)
                 return Problem(title: error, statusCode: StatusCodes.Status400BadRequest);
+            if ((await references.GetAsync(ct)).NormalizeFilters(
+                    raw.Category, raw.Cities, out var category, out var cities) is { } unknown)
+                return Problem(title: unknown, statusCode: StatusCodes.Status400BadRequest);
+            var query = raw with { Category = category, Cities = cities };
 
             search.QueryJson = SavedSearchJson.Serialize(query);
             search.LastNotifiedListingId =

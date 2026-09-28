@@ -1,3 +1,4 @@
+using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Moderation;
@@ -18,12 +19,13 @@ namespace GenesisMarket.Api.Controllers;
 /// <see cref="IListingDecisions"/>, поэтому ничем от них не отличается.
 /// </summary>
 [Route("api/moderation/listings")]
-[Authorize(Policy = "Moderator")]
+[Authorize(Policy = Permissions.ListingsModerate)]
 public class ModerationQueueController(
     AppDbContext db,
     IListingDecisions decisions,
     IModerationAudit audit,
-    IOptions<ModerationOptions> options) : ApiControllerBase
+    IOptions<ModerationOptions> options,
+    ICatalogReferences references) : ApiControllerBase
 {
     private const int DefaultLimit = 25;
     private const int MaxLimit = 100;
@@ -40,10 +42,18 @@ public class ModerationQueueController(
 
         var listings = ByTab(query.Tab ?? ModerationListingsTab.Review, now);
 
-        if (query.Category is { } category)
+        // Коды — к каноническому виду: сравнение в БД точное, а регистр на входе не важен.
+        var catalog = await references.GetAsync(ct);
+        if (query.Category is { } rawCategory)
+        {
+            var category = catalog.Category(rawCategory)?.Code ?? rawCategory;
             listings = listings.Where(l => l.Category == category);
-        if (query.City is { } city)
+        }
+        if (query.City is { } rawCity)
+        {
+            var city = catalog.City(rawCity)?.Code ?? rawCity;
             listings = listings.Where(l => l.City == city);
+        }
         if (query.Mine == true && CurrentUserId() is { } me)
             listings = listings.Where(l => l.ReviewAssigneeId == me);
 
@@ -170,6 +180,8 @@ public class ModerationQueueController(
 
         if (listing is null)
             return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
+        if (listing.OwnerId == me)
+            return Problem(title: ConflictOfInterest.OwnListing, statusCode: StatusCodes.Status403Forbidden);
         if (listing.ReviewQueuedAt is null)
             return Problem(title: "Объявление не находится на модерации", statusCode: StatusCodes.Status409Conflict);
         if (listing.ReviewAssigneeId is { } other && other != me && !force)
@@ -270,6 +282,7 @@ public class ModerationQueueController(
             .Where(l => ids.Contains(l.Id))
             .ToDictionaryAsync(l => l.Id, ct);
 
+        var me = CurrentUserId()!.Value;
         var succeeded = new List<Guid>();
         var failed = new List<BulkFailure>();
 
@@ -285,6 +298,13 @@ public class ModerationQueueController(
             if (listing.ReviewQueuedAt is null)
             {
                 failed.Add(new BulkFailure(id, "Объявление не находится на модерации"));
+                continue;
+            }
+            // Своё объявление в пакете не решается и не назначается — даже если
+            // модератор выделил его вместе с остальными.
+            if (listing.OwnerId == me)
+            {
+                failed.Add(new BulkFailure(id, ConflictOfInterest.OwnListing));
                 continue;
             }
 

@@ -51,6 +51,7 @@ public class ListingLifecycleTests(AuthApiFactory factory) : IClassFixture<AuthA
             priceType = "fixed",
             category = "home",
             subcategoryId = 18,
+            city = "tiraspol",
             district = (string?)null,
             condition = "used",
             status = "Active"   // должно игнорироваться
@@ -269,6 +270,7 @@ public class ListingLifecycleTests(AuthApiFactory factory) : IClassFixture<AuthA
         priceType = "fixed",
         category = "home",
         subcategoryId = 18,
+        city = "tiraspol",
         district = (string?)null,
         condition = "used",
         publish
@@ -282,6 +284,7 @@ public class ListingLifecycleTests(AuthApiFactory factory) : IClassFixture<AuthA
         priceType = "fixed",
         category = "home",
         subcategoryId = 18,
+        city = "tiraspol",
         district = (string?)null,
         condition = "used"
     };
@@ -291,7 +294,7 @@ public class ListingLifecycleTests(AuthApiFactory factory) : IClassFixture<AuthA
     private async Task<HttpClient> AuthedClient(string email)
     {
         var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         using var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var token = doc.RootElement.GetProperty("accessToken").GetString();

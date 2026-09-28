@@ -12,12 +12,15 @@ public class SubcategoriesController(AppDbContext db) : ApiControllerBase
     /// <summary>
     /// Возвращает все подкатегории в стабильном порядке. Доступен анонимам, чтобы
     /// форма создания объявления могла загрузить справочник до проверки сессии.
+    /// Только включённые: выключенную подкатегорию для нового объявления не выбрать
+    /// (полный список с флагом активности — <c>GET /api/catalog/references</c>).
     /// </summary>
     [AllowAnonymous]
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<SubcategoryResponse>>> GetAll(CancellationToken ct)
     {
         var subcategories = await db.Subcategories.AsNoTracking()
+            .Where(s => s.IsActive)
             .OrderBy(s => s.Category)
             .ThenBy(s => s.Name)
             .Select(s => new SubcategoryResponse(s.Id, s.Category, s.Slug, s.Name))

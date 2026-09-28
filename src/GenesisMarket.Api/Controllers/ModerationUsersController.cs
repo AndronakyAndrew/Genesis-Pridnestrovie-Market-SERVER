@@ -1,5 +1,8 @@
 using System.Text.Json;
+using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Auth.Roles;
 using GenesisMarket.Api.Contracts;
+using GenesisMarket.Api.Listings;
 using GenesisMarket.Api.Moderation;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
@@ -17,8 +20,9 @@ namespace GenesisMarket.Api.Controllers;
 /// резолвером «email → аккаунт».
 /// </summary>
 [Route("api/moderation/users")]
-[Authorize(Policy = "Moderator")]
-public class ModerationUsersController(AppDbContext db, IModerationAudit audit) : ApiControllerBase
+[Authorize(Policy = Permissions.UsersView)]
+public class ModerationUsersController(
+    AppDbContext db, IModerationAudit audit, IRoleStore roles, ICatalogReferences references) : ApiControllerBase
 {
     private const int DefaultLimit = 25;
     private const int MaxLimit = 100;
@@ -46,7 +50,7 @@ public class ModerationUsersController(AppDbContext db, IModerationAudit audit) 
                 users = users.Where(u => u.CreatedAt >= since);
                 break;
             case ModerationUsersTab.Staff:
-                users = users.Where(u => u.Role != UserRole.User);
+                users = users.Where(u => u.ProjectRoles.Any(r => r.ProjectKey == Projects.Market));
                 break;
             case ModerationUsersTab.Business:
                 users = users.Where(u => u.BusinessProfile != null
@@ -65,8 +69,11 @@ public class ModerationUsersController(AppDbContext db, IModerationAudit audit) 
                 break;
         }
 
-        if (query.City is { } city)
+        if (query.City is { } rawCity)
+        {
+            var city = (await references.GetAsync(ct)).City(rawCity)?.Code ?? rawCity;
             users = users.Where(u => u.Profile!.City == city);
+        }
 
         if (ModerationSearch.Normalize(query.Q) is { } search)
         {
@@ -223,8 +230,9 @@ public class ModerationUsersController(AppDbContext db, IModerationAudit audit) 
     /// <summary>
     /// Предупреждение — санкция без бана: счётчик на пользователе и запись в журнал с
     /// причиной. Доступ к аккаунту не меняется. Те же ограничения, что у бана: не себя
-    /// и не администратора.
+    /// и только роли строго ниже своей (модератор не предупреждает модератора).
     /// </summary>
+    [Authorize(Policy = Permissions.UsersWarn)]
     [HttpPost("{id:guid}/warn")]
     public async Task<ActionResult<ModerationActionResult>> Warn(Guid id, WarnUserRequest request, CancellationToken ct)
     {
@@ -234,8 +242,9 @@ public class ModerationUsersController(AppDbContext db, IModerationAudit audit) 
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted, ct);
         if (user is null)
             return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
-        if (user.Role == UserRole.Admin)
-            return Problem(title: "Нельзя вынести предупреждение администратору", statusCode: StatusCodes.Status403Forbidden);
+        if (!RolePermissions.Outranks(CurrentUser.Role ?? UserRole.User, await roles.GetRoleAsync(id, ct)))
+            return Problem(title: "Нельзя вынести предупреждение сотруднику того же или более высокого уровня",
+                statusCode: StatusCodes.Status403Forbidden);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 

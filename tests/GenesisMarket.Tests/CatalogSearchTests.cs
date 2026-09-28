@@ -19,7 +19,7 @@ public class CatalogSearchTests(AuthApiFactory factory) : IClassFixture<AuthApiF
     public async Task Fts_matches_and_ranks_title_above_description()
     {
         var owner = await factory.SeedUserAsync(Unique("s-fts"), Password);
-        const Category cat = Category.Electronics;
+        const string cat = Category.Electronics;
 
         var titleHit = await factory.SeedListingAsync(owner, category: cat,
             title: "Игровой ноутбук ASUS", description: "мощная машина для игр");
@@ -43,7 +43,7 @@ public class CatalogSearchTests(AuthApiFactory factory) : IClassFixture<AuthApiF
     public async Task Special_characters_do_not_error_or_change_meaning()
     {
         var owner = await factory.SeedUserAsync(Unique("s-spec"), Password);
-        const Category cat = Category.Transport;
+        const string cat = Category.Transport;
         var target = await factory.SeedListingAsync(owner, category: cat,
             title: "Продам диван кожаный", description: "мягкий и удобный");
 
@@ -71,7 +71,7 @@ public class CatalogSearchTests(AuthApiFactory factory) : IClassFixture<AuthApiF
     public async Task Search_combines_with_filters()
     {
         var owner = await factory.SeedUserAsync(Unique("s-filter"), Password);
-        const Category cat = Category.Fashion;
+        const string cat = Category.Fashion;
 
         var inTiraspol = await factory.SeedListingAsync(owner, category: cat,
             title: "Куртка зимняя пуховая", city: City.Tiraspol);
@@ -89,7 +89,7 @@ public class CatalogSearchTests(AuthApiFactory factory) : IClassFixture<AuthApiF
     public async Task Relevance_cursor_paginates_without_gaps_or_dupes()
     {
         var owner = await factory.SeedUserAsync(Unique("s-page"), Password);
-        const Category cat = Category.Kids;
+        const string cat = Category.Kids;
 
         var seeded = new List<Guid>();
         for (var i = 0; i < 5; i++)
@@ -121,7 +121,7 @@ public class CatalogSearchTests(AuthApiFactory factory) : IClassFixture<AuthApiF
     public async Task Typo_falls_back_to_trigram_similarity()
     {
         var owner = await factory.SeedUserAsync(Unique("s-typo"), Password);
-        const Category cat = Category.RealEstate;
+        const string cat = Category.RealEstate;
         var fridge = await factory.SeedListingAsync(owner, category: cat,
             title: "Холодильник", description: "бытовая техника");
 
@@ -140,7 +140,7 @@ public class CatalogSearchTests(AuthApiFactory factory) : IClassFixture<AuthApiF
     public async Task Zero_result_query_is_logged_to_search_misses()
     {
         var owner = await factory.SeedUserAsync(Unique("s-miss"), Password);
-        const Category cat = Category.Animals;
+        const string cat = Category.Animals;
         await factory.SeedListingAsync(owner, category: cat, title: "Попугай волнистый");
 
         const string gibberish = "цщксэёйзюнтъь"; // ни FTS, ни fuzzy не найдут
@@ -157,7 +157,7 @@ public class CatalogSearchTests(AuthApiFactory factory) : IClassFixture<AuthApiF
     public async Task Highlight_escapes_source_before_marking()
     {
         var owner = await factory.SeedUserAsync(Unique("s-xss"), Password);
-        const Category cat = Category.Work;
+        const string cat = Category.Work;
         await factory.SeedListingAsync(owner, category: cat,
             title: "Ноутбук <script>alert(1)</script>", description: "продам срочно");
 

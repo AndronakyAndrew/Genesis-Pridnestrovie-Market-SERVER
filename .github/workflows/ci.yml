@@ -140,6 +140,8 @@ jobs:
           JWT_ISSUER=genesis-market
           JWT_AUDIENCE=genesis-market
           IPHASH_KEY=ci-only-iphash-key-at-least-32-bytes-long-0123456789
+          # Ключ шифрования секретов 2FA: ровно 32 байта в base64 (только для CI).
+          TOTP_KEY=Y2ktb25seS10b3RwLWtleS0zMi1ieXRlcy1sb25nISE=
           SMTP_HOST=smtp.invalid
           SMTP_USER=ci
           SMTP_PASSWORD=ci

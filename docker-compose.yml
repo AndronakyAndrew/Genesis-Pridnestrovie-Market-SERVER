@@ -84,6 +84,8 @@ services:
       Jwt__Audience: ${JWT_AUDIENCE}
       # Ключ HMAC для хеширования IP (сырой IP в базе не хранится).
       Security__IpHashKey: ${IPHASH_KEY}
+      # Ключ шифрования секретов TOTP (2FA) — только из окружения.
+      Security__TotpKey: ${TOTP_KEY}
       # SMTP для писем подтверждения. В Production пустой Smtp__Host — ошибка старта:
       # иначе код подтверждения ушёл бы в лог вместо письма (см. Auth/EmailSender.cs).
       Smtp__Host: ${SMTP_HOST}

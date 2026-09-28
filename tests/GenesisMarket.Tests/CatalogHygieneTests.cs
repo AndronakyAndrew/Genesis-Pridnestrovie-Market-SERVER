@@ -69,7 +69,7 @@ public class CatalogHygieneTests(AuthApiFactory factory) : IClassFixture<AuthApi
     {
         var ownerEmail = Unique("bump-sort");
         var owner = await factory.SeedUserAsync(ownerEmail, Password);
-        const Category cat = Category.Animals;
+        const string cat = Category.Animals;
 
         // Три активных объявления с разным «возрастом поднятия».
         var oldest = await factory.SeedListingAsync(owner, category: cat, title: "Старое объявление в топ");
@@ -281,7 +281,7 @@ public class CatalogHygieneTests(AuthApiFactory factory) : IClassFixture<AuthApi
     private async Task<HttpClient> AuthedClient(string email)
     {
         var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         using var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         var token = doc.RootElement.GetProperty("accessToken").GetString();

@@ -25,9 +25,11 @@ public static class ListingVisibility
     /// Вправе ли текущий запрос видеть объявление. Неопубликованное — только
     /// владельцу и модератору; всем остальным вызывающий отдаёт 404 (не 403:
     /// постороннему незачем знать, что объявление существует).
+    /// <paramref name="canModerate"/> — разрешение модерации объявлений у текущей сессии
+    /// (роль и пройденная 2FA, см. <c>ICurrentUser.Can</c>).
     /// </summary>
-    public static bool CanSee(ListingStatus status, Guid ownerId, Guid? currentUserId, UserRole? role) =>
+    public static bool CanSee(ListingStatus status, Guid ownerId, Guid? currentUserId, bool canModerate) =>
         IsPublic(status)
         || (currentUserId is { } id && id == ownerId)
-        || role is UserRole.Moderator or UserRole.Admin;
+        || canModerate;
 }

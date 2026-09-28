@@ -55,7 +55,7 @@ public sealed class HttpTelegramClient : ITelegramClient
                 });
     }
 
-    public string? ResolveChannel(Category category) => _o.ResolveChannel(category);
+    public string? ResolveChannel(string category) => _o.ResolveChannel(category);
 
     public async Task<long> SendMessageAsync(string chatId, string text, CancellationToken ct)
     {

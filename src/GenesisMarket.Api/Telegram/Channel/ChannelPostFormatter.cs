@@ -9,7 +9,7 @@ namespace GenesisMarket.Api.Telegram.Channel;
 /// ни имени, ни профиля; контакты, вписанные в сам текст, вычищает форматтер.
 /// </summary>
 public sealed record ChannelPostContent(
-    string Title, string? Description, decimal? Price, PriceType PriceType, City City);
+    string Title, string? Description, decimal? Price, PriceType PriceType, string CityName);
 
 /// <summary>
 /// Подпись поста объявления для канала (parse_mode=HTML). Пользовательский текст экранируется,
@@ -55,7 +55,7 @@ public static class ChannelPostFormatter
     /// </summary>
     public static string BuildCaption(ChannelPostContent post, int descriptionMaxLength)
     {
-        var city = CatalogLabels.City(post.City);
+        var city = post.CityName;
         var title = Shorten(Clean(post.Title), MaxTitleLength);
 
         var head = $"📦 #объявления #{Hashtag(city)}\n\n{title}\n\n💰 {FormatPrice(post.PriceType, post.Price)}\n📍 {city}";

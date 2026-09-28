@@ -210,6 +210,7 @@ public class ModerationPolicyTests(AuthApiFactory factory) : IClassFixture<AuthA
             priceType = "fixed",
             category = "home",
             subcategoryId = 18,
+            city = "tiraspol",
             district = (string?)null,
             condition = "used"
         });
@@ -240,6 +241,7 @@ public class ModerationPolicyTests(AuthApiFactory factory) : IClassFixture<AuthA
             priceType = "fixed",
             category = "home",
             subcategoryId = 18,
+            city = "tiraspol",
             district = "Октябрьский",
             condition = "used"
         });
@@ -347,6 +349,7 @@ public class ModerationPolicyTests(AuthApiFactory factory) : IClassFixture<AuthA
             priceType = "fixed",
             category,
             subcategoryId,
+            city = "tiraspol",
             district = (string?)null,
             condition = "used",
             publish = true
@@ -374,7 +377,7 @@ public class ModerationPolicyTests(AuthApiFactory factory) : IClassFixture<AuthA
     private async Task<HttpClient> AuthedClient(string email)
     {
         var client = factory.CreateClient();
-        var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        var login = await factory.LoginAsync(client, email, Password);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         using var doc = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
         client.DefaultRequestHeaders.Authorization =

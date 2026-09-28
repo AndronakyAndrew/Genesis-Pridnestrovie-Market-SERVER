@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Text.Json;
+using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Listings;
+using GenesisMarket.Api.Moderation;
 using GenesisMarket.Api.Profiles;
 using GenesisMarket.Api.Security;
 using GenesisMarket.Domain.Entities;
@@ -229,7 +231,7 @@ public class ReviewsController(AppDbContext db, IPublicCodeResolver publicCodes)
     /// Скрыть отзыв (модерация). Идемпотентно. Скрытый отзыв уходит из публичной
     /// выдачи и из агрегата рейтинга (пересчёт триггером).
     /// </summary>
-    [Authorize(Policy = "Moderator")]
+    [Authorize(Policy = Permissions.ReviewsModerate)]
     [HttpPost("{id:guid}/hide")]
     public async Task<IActionResult> Hide(Guid id, CancellationToken ct)
     {
@@ -238,6 +240,9 @@ public class ReviewsController(AppDbContext db, IPublicCodeResolver publicCodes)
         var review = await db.Reviews.FirstOrDefaultAsync(r => r.Id == id, ct);
         if (review is null)
             return Problem(title: "Отзыв не найден", statusCode: StatusCodes.Status404NotFound);
+        if (ConflictOfInterest.ReviewInvolves(review, moderatorId))
+            return Problem(title: ConflictOfInterest.OwnReview,
+                statusCode: StatusCodes.Status403Forbidden);
 
         if (review.IsHidden)
             return NoContent();

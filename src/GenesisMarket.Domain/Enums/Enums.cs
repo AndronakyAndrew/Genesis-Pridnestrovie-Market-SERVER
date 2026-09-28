@@ -1,37 +1,42 @@
 namespace GenesisMarket.Domain.Enums;
 
-// ВНИМАНИЕ: значения (метки) этих enum-ов в PostgreSQL — native enum-типы
+// ВНИМАНИЕ: значения (метки) enum-ов ниже в PostgreSQL — native enum-типы
 // (CREATE TYPE ... AS ENUM), а не строки/числа. Метки формируются из имён
-// членов приведением к нижнему регистру (RealEstate -> "realestate"),
-// чтобы совпадать со справочниками из CLAUDE.md.
+// членов приведением к нижнему регистру (NotApplicable -> "notapplicable").
 // Порядок членов менять нельзя без миграции ALTER TYPE.
+//
+// Города и категории enum-ами больше не являются: это справочники в БД
+// (таблицы cities и categories), которыми управляет администратор. Ниже —
+// только коды начального сида: ими пользуются тесты, настройки по умолчанию
+// и код, которому нужна конкретная категория. Полный актуальный список —
+// только из БД (ICatalogReferences).
 
-/// <summary>Города ПМР. Native enum-тип <c>city</c>.</summary>
-public enum City
+/// <summary>Коды городов начального сида (таблица <c>cities</c>, колонка Code).</summary>
+public static class City
 {
-    Tiraspol,
-    Bendery,
-    Rybnitsa,
-    Dubossary,
-    Slobodzea,
-    Grigoriopol,
-    Dnestrovsk,
-    Kamenka
+    public const string Tiraspol = "Tiraspol";
+    public const string Bendery = "Bendery";
+    public const string Rybnitsa = "Rybnitsa";
+    public const string Dubossary = "Dubossary";
+    public const string Slobodzea = "Slobodzea";
+    public const string Grigoriopol = "Grigoriopol";
+    public const string Dnestrovsk = "Dnestrovsk";
+    public const string Kamenka = "Kamenka";
 }
 
-/// <summary>Категории каталога. Native enum-тип <c>category</c>.</summary>
-public enum Category
+/// <summary>Коды категорий начального сида (таблица <c>categories</c>, колонка Code).</summary>
+public static class Category
 {
-    RealEstate,
-    Transport,
-    Electronics,
-    Home,
-    Fashion,
-    Kids,
-    Work,
-    Services,
-    Animals,
-    Other
+    public const string RealEstate = "RealEstate";
+    public const string Transport = "Transport";
+    public const string Electronics = "Electronics";
+    public const string Home = "Home";
+    public const string Fashion = "Fashion";
+    public const string Kids = "Kids";
+    public const string Work = "Work";
+    public const string Services = "Services";
+    public const string Animals = "Animals";
+    public const string Other = "Other";
 }
 
 /// <summary>Состояние товара. Native enum-тип <c>condition</c>.</summary>
@@ -69,13 +74,22 @@ public enum PriceType
 }
 
 /// <summary>
-/// Роль пользователя. В БД хранится строкой (не входит в набор native enum-ов).
+/// Роль пользователя в проекте. В БД хранится строкой в <c>project_role_assignments</c>
+/// (не входит в набор native enum-ов); отсутствие строки означает <see cref="User"/>.
+/// Порядок членов — это ранг: каждая следующая роль включает права предыдущей
+/// (см. <c>RolePermissions</c>). Менять порядок нельзя.
 /// </summary>
 public enum UserRole
 {
     User,
     Moderator,
-    Admin
+    Admin,
+
+    /// <summary>
+    /// Владелец площадки — ровно один на проект (частичный уникальный индекс).
+    /// Назначается только CLI-командой <c>grant-role</c>, не через API.
+    /// </summary>
+    Owner
 }
 
 /// <summary>

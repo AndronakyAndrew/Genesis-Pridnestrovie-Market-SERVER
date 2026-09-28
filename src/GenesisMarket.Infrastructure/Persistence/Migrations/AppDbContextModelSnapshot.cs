@@ -22,13 +22,88 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                 .HasAnnotation("ProductVersion", "10.0.0")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
-            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "category", new[] { "realestate", "transport", "electronics", "home", "fashion", "kids", "work", "services", "animals", "other" });
-            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "city", new[] { "tiraspol", "bendery", "rybnitsa", "dubossary", "slobodzea", "grigoriopol", "dnestrovsk", "kamenka" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "condition", new[] { "new", "used", "notapplicable" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "listing_status", new[] { "draft", "pendingreview", "active", "sold", "archived", "rejected" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "price_type", new[] { "fixed", "negotiable", "free" });
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "pg_trgm");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.AuditEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<Guid?>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ActorKind")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("ActorLabel")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("IpHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("NewValue")
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OldValue")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("ProjectKey")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("RequestId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("TargetId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("TargetType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Action");
+
+                    b.HasIndex("ActorId", "OccurredAt");
+
+                    b.HasIndex("OccurredAt", "Id");
+
+                    b.HasIndex("TargetType", "TargetId");
+
+                    b.ToTable("audit_events", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_audit_events_actor_kind", "\"ActorKind\" IN ('user', 'cli', 'system')");
+
+                            t.HasCheckConstraint("ck_audit_events_user_actor", "\"ActorKind\" <> 'user' OR \"ActorId\" IS NOT NULL");
+                        });
+                });
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.BlockedCard", b =>
                 {
@@ -151,6 +226,96 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_business_profiles_rejection_reason", "\"Status\" <> 'Rejected' OR \"RejectionReason\" IS NOT NULL");
 
                             t.HasCheckConstraint("ck_business_profiles_status_requires_business", "\"Status\" IN ('None', 'Rejected') OR \"AccountType\" = 'Business'");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.CatalogCategory", b =>
+                {
+                    b.Property<string>("Code")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Code");
+
+                    b.HasIndex("Slug")
+                        .IsUnique();
+
+                    b.ToTable("categories", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_categories_code", "\"Code\" ~ '^[A-Z][A-Za-z0-9]{1,39}$'");
+
+                            t.HasCheckConstraint("ck_categories_name", "char_length(btrim(\"Name\")) BETWEEN 2 AND 60");
+
+                            t.HasCheckConstraint("ck_categories_slug", "\"Slug\" ~ '^[a-z0-9]+(-[a-z0-9]+)*$'");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.CatalogCity", b =>
+                {
+                    b.Property<string>("Code")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Code");
+
+                    b.HasIndex("Slug")
+                        .IsUnique();
+
+                    b.ToTable("cities", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_cities_code", "\"Code\" ~ '^[A-Z][A-Za-z0-9]{1,39}$'");
+
+                            t.HasCheckConstraint("ck_cities_name", "char_length(btrim(\"Name\")) BETWEEN 2 AND 60");
+
+                            t.HasCheckConstraint("ck_cities_slug", "\"Slug\" ~ '^[a-z0-9]+(-[a-z0-9]+)*$'");
                         });
                 });
 
@@ -374,11 +539,15 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("BumpedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Category>("Category")
-                        .HasColumnType("category");
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
 
-                    b.Property<City>("City")
-                        .HasColumnType("city");
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
 
                     b.Property<Condition>("Condition")
                         .HasColumnType("condition");
@@ -492,6 +661,8 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(0);
 
                     b.HasKey("Id");
+
+                    b.HasIndex("City");
 
                     b.HasIndex("ReviewAssigneeId")
                         .HasFilter("\"ReviewAssigneeId\" IS NOT NULL");
@@ -616,6 +787,41 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_messages_text_length", "char_length(\"Text\") <= 2000");
                         });
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.MfaChallenge", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<byte[]>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("mfa_challenges", (string)null);
                 });
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.ModerationLog", b =>
@@ -764,8 +970,10 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
 
-                    b.Property<City>("City")
-                        .HasColumnType("city");
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -813,10 +1021,80 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
                     b.HasKey("UserId");
 
+                    b.HasIndex("City");
+
                     b.ToTable("profiles", null, t =>
                         {
                             t.HasCheckConstraint("ck_profiles_display_name_length", "char_length(\"DisplayName\") <= 60");
                         });
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.ProjectRoleAssignment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("GrantedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("GrantedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProjectKey")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_project_role_assignments_single_owner")
+                        .HasFilter("\"Role\" = 'Owner'");
+
+                    b.HasIndex("UserId", "ProjectKey")
+                        .IsUnique();
+
+                    b.ToTable("project_role_assignments", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_project_role_assignments_role", "\"Role\" IN ('Moderator', 'Admin', 'Owner')");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.RecoveryCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<byte[]>("CodeHash")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("UsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CodeHash")
+                        .IsUnique();
+
+                    b.ToTable("user_recovery_codes", (string)null);
                 });
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.RefreshToken", b =>
@@ -848,6 +1126,9 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(39)");
 
                     b.Property<DateTimeOffset?>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("MfaVerifiedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("OsFamily")
@@ -1018,6 +1299,64 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.RoleChange", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ActorLabel")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("AuditEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("NewRole")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OldRole")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ProjectKey")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OccurredAt");
+
+                    b.HasIndex("UserId", "OccurredAt");
+
+                    b.ToTable("role_changes", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_role_changes_source", "\"Source\" IN ('ui', 'cli')");
+                        });
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.SavedSearch", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1103,10 +1442,20 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("GenesisMarket.Domain.Entities.Subcategory", b =>
                 {
                     b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("integer");
 
-                    b.Property<Category>("Category")
-                        .HasColumnType("category");
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1129,294 +1478,336 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         new
                         {
                             Id = 1,
-                            Category = Category.RealEstate,
+                            Category = "RealEstate",
+                            IsActive = true,
                             Name = "Квартиры",
                             Slug = "kvartiry"
                         },
                         new
                         {
                             Id = 2,
-                            Category = Category.RealEstate,
+                            Category = "RealEstate",
+                            IsActive = true,
                             Name = "Дома, дачи, коттеджи",
                             Slug = "doma"
                         },
                         new
                         {
                             Id = 3,
-                            Category = Category.RealEstate,
+                            Category = "RealEstate",
+                            IsActive = true,
                             Name = "Комнаты",
                             Slug = "komnaty"
                         },
                         new
                         {
                             Id = 4,
-                            Category = Category.RealEstate,
+                            Category = "RealEstate",
+                            IsActive = true,
                             Name = "Земельные участки",
                             Slug = "zemelnye-uchastki"
                         },
                         new
                         {
                             Id = 5,
-                            Category = Category.RealEstate,
+                            Category = "RealEstate",
+                            IsActive = true,
                             Name = "Гаражи и машиноместа",
                             Slug = "garazhi"
                         },
                         new
                         {
                             Id = 6,
-                            Category = Category.RealEstate,
+                            Category = "RealEstate",
+                            IsActive = true,
                             Name = "Коммерческая недвижимость",
                             Slug = "kommercheskaya"
                         },
                         new
                         {
                             Id = 7,
-                            Category = Category.Transport,
+                            Category = "Transport",
+                            IsActive = true,
                             Name = "Легковые автомобили",
                             Slug = "legkovye-avto"
                         },
                         new
                         {
                             Id = 8,
-                            Category = Category.Transport,
+                            Category = "Transport",
+                            IsActive = true,
                             Name = "Грузовики и спецтехника",
                             Slug = "gruzoviki"
                         },
                         new
                         {
                             Id = 9,
-                            Category = Category.Transport,
+                            Category = "Transport",
+                            IsActive = true,
                             Name = "Мотоциклы и мототехника",
                             Slug = "mototsikly"
                         },
                         new
                         {
                             Id = 10,
-                            Category = Category.Transport,
+                            Category = "Transport",
+                            IsActive = true,
                             Name = "Запчасти и аксессуары",
                             Slug = "zapchasti"
                         },
                         new
                         {
                             Id = 11,
-                            Category = Category.Transport,
+                            Category = "Transport",
+                            IsActive = true,
                             Name = "Водный транспорт",
                             Slug = "vodnyy-transport"
                         },
                         new
                         {
                             Id = 12,
-                            Category = Category.Electronics,
+                            Category = "Electronics",
+                            IsActive = true,
                             Name = "Телефоны",
                             Slug = "telefony"
                         },
                         new
                         {
                             Id = 13,
-                            Category = Category.Electronics,
+                            Category = "Electronics",
+                            IsActive = true,
                             Name = "Ноутбуки",
                             Slug = "noutbuki"
                         },
                         new
                         {
                             Id = 14,
-                            Category = Category.Electronics,
+                            Category = "Electronics",
+                            IsActive = true,
                             Name = "Компьютеры и комплектующие",
                             Slug = "kompyutery"
                         },
                         new
                         {
                             Id = 15,
-                            Category = Category.Electronics,
+                            Category = "Electronics",
+                            IsActive = true,
                             Name = "Телевизоры и проекторы",
                             Slug = "tv"
                         },
                         new
                         {
                             Id = 16,
-                            Category = Category.Electronics,
+                            Category = "Electronics",
+                            IsActive = true,
                             Name = "Фото и видео",
                             Slug = "foto-video"
                         },
                         new
                         {
                             Id = 17,
-                            Category = Category.Electronics,
+                            Category = "Electronics",
+                            IsActive = true,
                             Name = "Аудиотехника",
                             Slug = "audio"
                         },
                         new
                         {
                             Id = 18,
-                            Category = Category.Home,
+                            Category = "Home",
+                            IsActive = true,
                             Name = "Мебель",
                             Slug = "mebel"
                         },
                         new
                         {
                             Id = 19,
-                            Category = Category.Home,
+                            Category = "Home",
+                            IsActive = true,
                             Name = "Бытовая техника",
                             Slug = "bytovaya-tehnika"
                         },
                         new
                         {
                             Id = 20,
-                            Category = Category.Home,
+                            Category = "Home",
+                            IsActive = true,
                             Name = "Ремонт и стройка",
                             Slug = "remont-stroyka"
                         },
                         new
                         {
                             Id = 21,
-                            Category = Category.Home,
+                            Category = "Home",
+                            IsActive = true,
                             Name = "Сад и огород",
                             Slug = "sad-ogorod"
                         },
                         new
                         {
                             Id = 22,
-                            Category = Category.Home,
+                            Category = "Home",
+                            IsActive = true,
                             Name = "Посуда и товары для дома",
                             Slug = "posuda"
                         },
                         new
                         {
                             Id = 23,
-                            Category = Category.Fashion,
+                            Category = "Fashion",
+                            IsActive = true,
                             Name = "Мужская одежда",
                             Slug = "muzhskaya-odezhda"
                         },
                         new
                         {
                             Id = 24,
-                            Category = Category.Fashion,
+                            Category = "Fashion",
+                            IsActive = true,
                             Name = "Женская одежда",
                             Slug = "zhenskaya-odezhda"
                         },
                         new
                         {
                             Id = 25,
-                            Category = Category.Fashion,
+                            Category = "Fashion",
+                            IsActive = true,
                             Name = "Обувь",
                             Slug = "obuv"
                         },
                         new
                         {
                             Id = 26,
-                            Category = Category.Fashion,
+                            Category = "Fashion",
+                            IsActive = true,
                             Name = "Аксессуары",
                             Slug = "aksessuary"
                         },
                         new
                         {
                             Id = 27,
-                            Category = Category.Kids,
+                            Category = "Kids",
+                            IsActive = true,
                             Name = "Детская одежда и обувь",
                             Slug = "detskaya-odezhda"
                         },
                         new
                         {
                             Id = 28,
-                            Category = Category.Kids,
+                            Category = "Kids",
+                            IsActive = true,
                             Name = "Игрушки",
                             Slug = "igrushki"
                         },
                         new
                         {
                             Id = 29,
-                            Category = Category.Kids,
+                            Category = "Kids",
+                            IsActive = true,
                             Name = "Коляски",
                             Slug = "kolyaski"
                         },
                         new
                         {
                             Id = 30,
-                            Category = Category.Kids,
+                            Category = "Kids",
+                            IsActive = true,
                             Name = "Детская мебель",
                             Slug = "detskaya-mebel"
                         },
                         new
                         {
                             Id = 31,
-                            Category = Category.Work,
+                            Category = "Work",
+                            IsActive = true,
                             Name = "Вакансии",
                             Slug = "vakansii"
                         },
                         new
                         {
                             Id = 32,
-                            Category = Category.Work,
+                            Category = "Work",
+                            IsActive = true,
                             Name = "Резюме",
                             Slug = "rezume"
                         },
                         new
                         {
                             Id = 33,
-                            Category = Category.Services,
+                            Category = "Services",
+                            IsActive = true,
                             Name = "Строительство и ремонт",
                             Slug = "stroitelstvo-remont"
                         },
                         new
                         {
                             Id = 34,
-                            Category = Category.Services,
+                            Category = "Services",
+                            IsActive = true,
                             Name = "Красота и здоровье",
                             Slug = "krasota-zdorovie"
                         },
                         new
                         {
                             Id = 35,
-                            Category = Category.Services,
+                            Category = "Services",
+                            IsActive = true,
                             Name = "Обучение и курсы",
                             Slug = "obuchenie"
                         },
                         new
                         {
                             Id = 36,
-                            Category = Category.Services,
+                            Category = "Services",
+                            IsActive = true,
                             Name = "Перевозки и грузчики",
                             Slug = "perevozki"
                         },
                         new
                         {
                             Id = 37,
-                            Category = Category.Services,
+                            Category = "Services",
+                            IsActive = true,
                             Name = "Ремонт техники",
                             Slug = "remont-tehniki"
                         },
                         new
                         {
                             Id = 38,
-                            Category = Category.Animals,
+                            Category = "Animals",
+                            IsActive = true,
                             Name = "Собаки",
                             Slug = "sobaki"
                         },
                         new
                         {
                             Id = 39,
-                            Category = Category.Animals,
+                            Category = "Animals",
+                            IsActive = true,
                             Name = "Кошки",
                             Slug = "koshki"
                         },
                         new
                         {
                             Id = 40,
-                            Category = Category.Animals,
+                            Category = "Animals",
+                            IsActive = true,
                             Name = "Птицы",
                             Slug = "ptitsy"
                         },
                         new
                         {
                             Id = 41,
-                            Category = Category.Animals,
+                            Category = "Animals",
+                            IsActive = true,
                             Name = "Товары для животных",
                             Slug = "tovary-dlya-zhivotnyh"
                         },
                         new
                         {
                             Id = 42,
-                            Category = Category.Other,
+                            Category = "Other",
+                            IsActive = true,
                             Name = "Разное",
                             Slug = "raznoe"
                         });
@@ -1488,13 +1879,6 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(0);
 
-                    b.Property<string>("Role")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)")
-                        .HasDefaultValue("User");
-
                     b.Property<Guid>("SecurityStamp")
                         .HasColumnType("uuid");
 
@@ -1513,6 +1897,31 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("users", (string)null);
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.UserTwoFactor", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("EnabledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("LastUsedTimeStep")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L);
+
+                    b.Property<byte[]>("SecretCipher")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("user_two_factor", (string)null);
                 });
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.VerificationCode", b =>
@@ -1627,6 +2036,18 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.Listing", b =>
                 {
+                    b.HasOne("GenesisMarket.Domain.Entities.CatalogCategory", null)
+                        .WithMany()
+                        .HasForeignKey("Category")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("GenesisMarket.Domain.Entities.CatalogCity", null)
+                        .WithMany()
+                        .HasForeignKey("City")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("GenesisMarket.Domain.Entities.User", "Owner")
                         .WithMany("Listings")
                         .HasForeignKey("OwnerId")
@@ -1674,6 +2095,15 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Navigation("Sender");
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.MfaChallenge", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.PasswordResetToken", b =>
                 {
                     b.HasOne("GenesisMarket.Domain.Entities.User", "User")
@@ -1687,6 +2117,12 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.Profile", b =>
                 {
+                    b.HasOne("GenesisMarket.Domain.Entities.CatalogCity", null)
+                        .WithMany()
+                        .HasForeignKey("City")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("GenesisMarket.Domain.Entities.User", "User")
                         .WithOne("Profile")
                         .HasForeignKey("GenesisMarket.Domain.Entities.Profile", "UserId")
@@ -1694,6 +2130,26 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.ProjectRoleAssignment", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.User", "User")
+                        .WithMany("ProjectRoles")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.RecoveryCode", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.UserTwoFactor", null)
+                        .WithMany("RecoveryCodes")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.RefreshToken", b =>
@@ -1743,6 +2199,26 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.Subcategory", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.CatalogCategory", null)
+                        .WithMany()
+                        .HasForeignKey("Category")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.UserTwoFactor", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.User", "User")
+                        .WithOne("TwoFactor")
+                        .HasForeignKey("GenesisMarket.Domain.Entities.UserTwoFactor", "UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.VerificationCode", b =>
                 {
                     b.HasOne("GenesisMarket.Domain.Entities.User", "User")
@@ -1779,7 +2255,16 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
                     b.Navigation("Profile");
 
+                    b.Navigation("ProjectRoles");
+
                     b.Navigation("RefreshTokens");
+
+                    b.Navigation("TwoFactor");
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.UserTwoFactor", b =>
+                {
+                    b.Navigation("RecoveryCodes");
                 });
 #pragma warning restore 612, 618
         }

@@ -53,6 +53,7 @@ public sealed class ChannelPublisher(
     IOptions<ChannelPublishingOptions> options,
     IOptions<TelegramOptions> telegramOptions,
     TimeProvider time,
+    ICatalogReferences references,
     ILogger<ChannelPublisher> logger) : IChannelPublisher
 {
     private const int MaxErrorLength = 2048;
@@ -148,7 +149,7 @@ public sealed class ChannelPublisher(
         if (photoKey is null)
             return await SkipAsync(item, "у объявления нет фото");
 
-        var caption = ChannelPostFormatter.BuildCaption(Content(listing), o.DescriptionMaxLength);
+        var caption = ChannelPostFormatter.BuildCaption(await ContentAsync(listing, ct), o.DescriptionMaxLength);
         // Фото — URL публичной выдачи API (ImagesController), не MinIO: хранилище в приватной сети.
         var photoUrl = $"{ApiBase(o)}/api/images/{photoKey}";
 
@@ -221,11 +222,12 @@ public sealed class ChannelPublisher(
         if (edit == PostEdit.Restore && !IsAnnounceable(listing))
             return;
 
+        var content = await ContentAsync(listing, ct);
         (string Caption, InlineButton? Button) post = edit switch
         {
             PostEdit.Sold => (ChannelPostFormatter.BuildSoldCaption(listing.Title), null),
             PostEdit.Removed => (ChannelPostFormatter.BuildRemovedCaption(listing.Title), null),
-            _ => (ChannelPostFormatter.BuildCaption(Content(listing), options.Value.DescriptionMaxLength),
+            _ => (ChannelPostFormatter.BuildCaption(content, options.Value.DescriptionMaxLength),
                 Button(options.Value, listing.Id))
         };
 
@@ -249,8 +251,9 @@ public sealed class ChannelPublisher(
         return ChannelPublishOutcome.Skipped;
     }
 
-    private static ChannelPostContent Content(Listing l) =>
-        new(l.Title, l.Description, l.Price, l.PriceType, l.City);
+    /// <summary>Содержимое поста: город — подписью из справочника («Тирасполь»), не кодом.</summary>
+    private async Task<ChannelPostContent> ContentAsync(Listing l, CancellationToken ct) =>
+        new(l.Title, l.Description, l.Price, l.PriceType, (await references.GetAsync(ct)).CityName(l.City));
 
     // Кнопка ведёт на редирект API, а не на сайт: /r/l живёт на API (у фронтенда такого маршрута нет),
     // и только так клик приходит с IP посетителя — через прокси Vercel у всех был бы один IP.

@@ -12,8 +12,9 @@ public sealed class CreateListingRequestValidator : AbstractValidator<CreateList
         RuleFor(x => x.Title).NotEmpty().MinimumLength(10).MaximumLength(100);
         RuleFor(x => x.Description).NotEmpty().MinimumLength(20).MaximumLength(5000);
         RuleFor(x => x.District).MaximumLength(100);
-        RuleFor(x => x.Category).IsInEnum();
-        RuleFor(x => x.City).IsInEnum();
+        // Существование и активность кода проверяет контроллер по справочнику из БД.
+        RuleFor(x => x.Category).NotEmpty().MaximumLength(40);
+        RuleFor(x => x.City).NotEmpty().MaximumLength(40);
         RuleFor(x => x.Condition).IsInEnum();
         RuleFor(x => x.PriceType).IsInEnum();
         RuleFor(x => x.Price)
@@ -32,8 +33,9 @@ public sealed class UpdateListingRequestValidator : AbstractValidator<UpdateList
         RuleFor(x => x.Title).NotEmpty().MinimumLength(10).MaximumLength(100);
         RuleFor(x => x.Description).NotEmpty().MinimumLength(20).MaximumLength(5000);
         RuleFor(x => x.District).MaximumLength(100);
-        RuleFor(x => x.Category).IsInEnum();
-        RuleFor(x => x.City).IsInEnum();
+        // Существование и активность кода проверяет контроллер по справочнику из БД.
+        RuleFor(x => x.Category).NotEmpty().MaximumLength(40);
+        RuleFor(x => x.City).NotEmpty().MaximumLength(40);
         RuleFor(x => x.Condition).IsInEnum();
         RuleFor(x => x.PriceType).IsInEnum();
         RuleFor(x => x.Price)

@@ -35,7 +35,7 @@ public interface IListingModerationPolicy
     /// физически, и штрафовать за это нельзя.
     /// </summary>
     PublishDecision Resolve(
-        User author, string title, string description, decimal? price, Category category, bool hasImages);
+        User author, string title, string description, decimal? price, string category, bool hasImages);
 }
 
 public sealed class ListingModerationPolicy(
@@ -53,7 +53,7 @@ public sealed class ListingModerationPolicy(
     private int RejectLookbackDays => hygiene.Value.RejectLookbackDays;
 
     public PublishDecision Resolve(
-        User author, string title, string description, decimal? price, Category category, bool hasImages)
+        User author, string title, string description, decimal? price, string category, bool hasImages)
     {
         var trust = AuthorTrust(author, out var trustSignals);
         var risk = ListingContentRisk.Evaluate(title, description, price, category, hasImages, _o);

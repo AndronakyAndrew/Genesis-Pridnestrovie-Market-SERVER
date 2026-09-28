@@ -1,4 +1,6 @@
 using GenesisMarket.Api.Auth;
+using GenesisMarket.Api.Auth.Roles;
+using GenesisMarket.Api.Auth.TwoFactor;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Security;
 using GenesisMarket.Domain.Entities;
@@ -31,6 +33,10 @@ public class AuthController(
     IPublicCodeGenerator publicCodes,
     VerificationService verification,
     LoginCodeService loginCodes,
+    IRoleStore roles,
+    TwoFactorService twoFactor,
+    MfaChallengeService mfaChallenges,
+    Listings.ICatalogReferences references,
     ILogger<AuthController> logger,
     IOptions<PhoneOptions> phoneOptions) : ApiControllerBase
 {
@@ -52,6 +58,9 @@ public class AuthController(
         if (phone is null)
             return Problem(title: "Некорректный номер телефона", statusCode: StatusCodes.Status400BadRequest);
 
+        if ((await references.GetAsync(ct)).WritableCity(request.City) is not { } city)
+            return Problem(title: "Неизвестный город", statusCode: StatusCodes.Status400BadRequest);
+
         var email = Normalize(request.Email);
 
         // Хеш считаем всегда — чтобы ответ на занятый email не отличался по времени.
@@ -64,14 +73,15 @@ public class AuthController(
             {
                 Email = email,
                 PasswordHash = passwordHash,
-                Role = UserRole.User,        // роль всегда User, поле из запроса игнорируется
+                // Роль не назначается вовсе: нет строки в project_role_assignments — значит User.
+                // Поля роли в запросе нет, и через регистрацию её не получить.
                 PhoneE164 = phone,
                 PhoneVerified = false,
                 PublicCode = await publicCodes.NextAsync(ct),
                 Profile = new Profile
                 {
                     DisplayName = request.DisplayName,
-                    City = request.City
+                    City = city
                 }
             };
             db.Users.Add(user);
@@ -117,8 +127,7 @@ public class AuthController(
         if (hasher.NeedsRehash(user.PasswordHash))
             user.PasswordHash = hasher.Hash(request.Password);
 
-        securityAudit.LoginSucceeded(user.Id);
-        return Ok(await IssueAsync(user, ip, ct));
+        return await CompleteFirstFactorAsync(user, ip, ct);
     }
 
     /// <summary>
@@ -161,8 +170,29 @@ public class AuthController(
             return Problem(title: LoginCodeError, statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        return await CompleteFirstFactorAsync(user, ip, ct);
+    }
+
+    /// <summary>
+    /// Второй шаг входа при включённой 2FA: билет из ответа 202 и код из приложения
+    /// (или резервный код). Лимит попыток — на самом билете; новый билет требует
+    /// нового входа первым фактором, а тот ограничен лимитом (IP, email).
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("2fa/verify")]
+    public async Task<ActionResult<AuthResponse>> VerifySecondFactor(MfaVerifyRequest request, CancellationToken ct)
+    {
+        var outcome = await mfaChallenges.CompleteAsync(request.ChallengeToken, request.Code, ct);
+        if (outcome is null)
+        {
+            securityAudit.LoginFailed();
+            return Problem(title: "Неверный код или истёк срок входа. Попробуйте ещё раз.",
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        var user = await db.Users.Include(u => u.Profile).FirstAsync(u => u.Id == outcome.UserId, ct);
         securityAudit.LoginSucceeded(user.Id);
-        return Ok(await IssueAsync(user, ip, ct));
+        return Ok(await IssueAsync(user, ip: ClientIp(), mfaVerified: true, ct));
     }
 
     [AllowAnonymous]
@@ -181,7 +211,8 @@ public class AuthController(
         if (user is null)
             return Problem(title: "Недействительный refresh-токен", statusCode: StatusCodes.Status401Unauthorized);
 
-        var access = tokenService.CreateAccessToken(user, outcome.SessionId);
+        var role = await roles.GetRoleAsync(user.Id, ct);
+        var access = tokenService.CreateAccessToken(user, role, outcome.SessionId, outcome.MfaVerified);
         return Ok(new AuthResponse(
             access.Value, access.ExpiresAt,
             outcome.NewRawToken!, outcome.ExpiresAt!.Value,
@@ -285,14 +316,32 @@ public class AuthController(
 
     // ---- helpers ----
 
-    private async Task<AuthResponse> IssueAsync(User user, string ip, CancellationToken ct)
+    /// <summary>
+    /// Первый фактор (пароль или код из письма) принят. Без 2FA — сразу сессия; с 2FA —
+    /// 202 и билет на второй шаг, токенов нет. Возможный rehash пароля сохраняется в
+    /// обоих ветках: билет тоже пишется через SaveChanges.
+    /// </summary>
+    private async Task<ActionResult<AuthResponse>> CompleteFirstFactorAsync(User user, string ip, CancellationToken ct)
+    {
+        if (await twoFactor.IsEnabledAsync(user.Id, ct))
+        {
+            var ticket = await mfaChallenges.CreateAsync(user.Id, ct);
+            return Accepted(new MfaChallengeResponse(true, ticket.Token, ticket.ExpiresAt));
+        }
+
+        securityAudit.LoginSucceeded(user.Id);
+        return Ok(await IssueAsync(user, ip, mfaVerified: false, ct));
+    }
+
+    private async Task<AuthResponse> IssueAsync(User user, string ip, bool mfaVerified, CancellationToken ct)
     {
         // IssueAsync вызывает SaveChanges — заодно сохранит возможный rehash пароля.
         // Сначала сессия: её идентификатор нужен access-токену (claim sid).
         var (refreshRaw, refreshExp, sessionId) =
-            await refreshTokens.IssueAsync(user.Id, SessionContextOf(ip), ct);
+            await refreshTokens.IssueAsync(user.Id, SessionContextOf(ip), mfaVerified, ct);
 
-        var access = tokenService.CreateAccessToken(user, sessionId);
+        var role = await roles.GetRoleAsync(user.Id, ct);
+        var access = tokenService.CreateAccessToken(user, role, sessionId, mfaVerified);
         return new AuthResponse(access.Value, access.ExpiresAt, refreshRaw, refreshExp, MapUser(user));
     }
 
@@ -309,7 +358,7 @@ public class AuthController(
         u.PublicCode,
         u.Email,
         u.Profile?.DisplayName ?? "",
-        u.Profile?.City ?? default,
+        u.Profile?.City ?? "",
         u.PhoneE164,
         u.PhoneVerified,
         u.CreatedAt,

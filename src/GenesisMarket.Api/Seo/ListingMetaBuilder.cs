@@ -29,8 +29,8 @@ public static class ListingMetaBuilder
         string Description,
         decimal? Price,
         PriceType PriceType,
-        Category Category,
-        City City,
+        string CategoryName,
+        string CityName,
         Condition Condition,
         ListingStatus Status,
         string SellerName);
@@ -43,7 +43,7 @@ public static class ListingMetaBuilder
         var isArchived = listing.Status is ListingStatus.Archived or ListingStatus.Sold;
 
         var priceLabel = FormatPrice(listing.PriceType, listing.Price);
-        var cityLabel = CatalogLabels.City(listing.City);
+        var cityLabel = listing.CityName;
 
         // title: «Заголовок — 15 000 руб. — Тирасполь | Местная площадка Genesis».
         var title = $"{listing.Title} — {priceLabel} — {cityLabel} | {siteName}";
@@ -103,7 +103,7 @@ public static class ListingMetaBuilder
             ["@type"] = "Product",
             ["name"] = listing.Title,
             ["description"] = JsonLdDescription(listing),
-            ["category"] = CatalogLabels.Category(listing.Category),
+            ["category"] = listing.CategoryName,
             ["offers"] = offers
         };
 

@@ -1,6 +1,8 @@
 using System.Buffers.Text;
 using System.Security.Cryptography;
 using System.Text;
+using GenesisMarket.Api.Auth.Roles;
+using GenesisMarket.Api.Auth.TwoFactor;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -20,7 +22,8 @@ public sealed record RefreshOutcome(
     Guid UserId,
     string? NewRawToken,
     DateTimeOffset? ExpiresAt,
-    Guid SessionId = default);
+    Guid SessionId = default,
+    bool MfaVerified = false);
 
 /// <summary>
 /// Всё, что известно о клиенте в момент выдачи токена. Сырой User-Agent сюда
@@ -33,8 +36,9 @@ public sealed record SessionContext(string? Ip, ClientAgent Agent)
 
 public interface IRefreshTokenService
 {
+    /// <summary>Новая сессия. <paramref name="mfaVerified"/> — вход прошёл второй фактор.</summary>
     Task<(string RawToken, DateTimeOffset ExpiresAt, Guid SessionId)> IssueAsync(
-        Guid userId, SessionContext context, CancellationToken ct);
+        Guid userId, SessionContext context, bool mfaVerified, CancellationToken ct);
 
     Task<RefreshOutcome> RotateAsync(string rawToken, SessionContext context, CancellationToken ct);
     Task<bool> RevokeAsync(string rawToken, CancellationToken ct);
@@ -42,29 +46,44 @@ public interface IRefreshTokenService
 
     /// <summary>Отзыв одной сессии владельцем. false — сессии нет или она чужая.</summary>
     Task<bool> RevokeSessionAsync(Guid userId, Guid sessionId, CancellationToken ct);
+
+    /// <summary>
+    /// Отметить живую сессию как прошедшую 2FA — после включения 2FA в этой же сессии
+    /// человек только что предъявил код, заставлять его входить заново незачем.
+    /// </summary>
+    Task MarkMfaVerifiedAsync(Guid userId, Guid sessionId, CancellationToken ct);
 }
 
 /// <summary>
 /// Refresh-токены: 32 случайных байта (base64url наружу), в БД — SHA-256 хеш.
 /// Ротация при каждом обновлении; повторное использование отозванного токена
 /// трактуется как кража — отзывается вся цепочка токенов пользователя.
+///
+/// Служебная сессия (роль Moderator и выше) короткая: не дольше
+/// <see cref="StaffSessionOptions.AbsoluteHours"/> от входа и не дольше
+/// <see cref="StaffSessionOptions.IdleMinutes"/> без активности — дальше только новый вход с 2FA.
 /// </summary>
 public sealed class RefreshTokenService(
     AppDbContext db,
     IIpHasher ipHasher,
     IOptions<JwtOptions> options,
+    IOptions<StaffSessionOptions> staffOptions,
+    IRoleStore roles,
     ILogger<RefreshTokenService> logger) : IRefreshTokenService
 {
+    private readonly StaffSessionOptions _staff = staffOptions.Value;
+
     private readonly int _lifetimeDays = options.Value.RefreshTokenDays;
     private readonly TimeSpan _reuseGrace =
         TimeSpan.FromSeconds(Math.Max(0, options.Value.RefreshReuseGraceSeconds));
 
     public async Task<(string RawToken, DateTimeOffset ExpiresAt, Guid SessionId)> IssueAsync(
-        Guid userId, SessionContext context, CancellationToken ct)
+        Guid userId, SessionContext context, bool mfaVerified, CancellationToken ct)
     {
         var (raw, hash) = Generate();
         var now = DateTimeOffset.UtcNow;
-        var expiresAt = now.AddDays(_lifetimeDays);
+        var isStaff = RolePermissions.IsStaff(await roles.GetRoleAsync(userId, ct));
+        var expiresAt = ExpiryFor(isStaff, sessionStartedAt: now, now);
 
         var token = new RefreshToken
         {
@@ -77,7 +96,8 @@ public sealed class RefreshTokenService(
             DeviceFamily = context.Agent.Device,
             BrowserFamily = context.Agent.Browser,
             OsFamily = context.Agent.Os,
-            IpPrefix = ClientFingerprint.IpPrefix(context.Ip)
+            IpPrefix = ClientFingerprint.IpPrefix(context.Ip),
+            MfaVerifiedAt = mfaVerified ? now : null
         };
         // Новая сессия: её идентификатор — идентификатор первой строки цепочки.
         token.SessionId = token.Id;
@@ -143,9 +163,20 @@ public sealed class RefreshTokenService(
     private async Task<RefreshOutcome> RotateActiveAsync(
         RefreshToken token, SessionContext context, CancellationToken ct)
     {
-        var (raw, newHash) = Generate();
         var now = DateTimeOffset.UtcNow;
-        var expiresAt = now.AddDays(_lifetimeDays);
+        var isStaff = RolePermissions.IsStaff(await roles.GetRoleAsync(token.UserId, ct));
+
+        // Служебная сессия: по истечении абсолютного срока или после простоя — только
+        // новый вход. Сессия гасится целиком, а не просто не обновляется: иначе
+        // устройство продолжало бы числиться активным в «Безопасности».
+        if (isStaff && StaffSessionExpired(token, now))
+        {
+            await RevokeSessionAsync(token.UserId, token.SessionId, ct);
+            return new RefreshOutcome(RefreshStatus.Invalid, Guid.Empty, null, null);
+        }
+
+        var (raw, newHash) = Generate();
+        var expiresAt = ExpiryFor(isStaff, token.SessionStartedAt, now);
         var newToken = new RefreshToken
         {
             UserId = token.UserId,
@@ -165,7 +196,10 @@ public sealed class RefreshTokenService(
             DeviceFamily = context.Agent.Device ?? token.DeviceFamily,
             BrowserFamily = context.Agent.Browser ?? token.BrowserFamily,
             OsFamily = context.Agent.Os ?? token.OsFamily,
-            IpPrefix = ClientFingerprint.IpPrefix(context.Ip) ?? token.IpPrefix
+            IpPrefix = ClientFingerprint.IpPrefix(context.Ip) ?? token.IpPrefix,
+
+            // Пройденный второй фактор — свойство сессии, а не строки цепочки.
+            MfaVerifiedAt = token.MfaVerifiedAt
         };
         db.RefreshTokens.Add(newToken);
 
@@ -173,8 +207,32 @@ public sealed class RefreshTokenService(
         token.ReplacedByTokenId = newToken.Id;
 
         await db.SaveChangesAsync(ct);
-        return new RefreshOutcome(RefreshStatus.Ok, token.UserId, raw, expiresAt, newToken.SessionId);
+        return new RefreshOutcome(RefreshStatus.Ok, token.UserId, raw, expiresAt, newToken.SessionId,
+            MfaVerified: newToken.MfaVerifiedAt is not null);
     }
+
+    public async Task MarkMfaVerifiedAsync(Guid userId, Guid sessionId, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        await db.RefreshTokens
+            .Where(t => t.UserId == userId && t.SessionId == sessionId && t.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.MfaVerifiedAt, now), ct);
+    }
+
+    /// <summary>Срок refresh-токена: обычный — скользящий, служебный — не дальше абсолютного срока сессии.</summary>
+    private DateTimeOffset ExpiryFor(bool isStaff, DateTimeOffset sessionStartedAt, DateTimeOffset now)
+    {
+        var regular = now.AddDays(_lifetimeDays);
+        if (!isStaff)
+            return regular;
+
+        var absolute = sessionStartedAt.AddHours(_staff.AbsoluteHours);
+        return absolute < regular ? absolute : regular;
+    }
+
+    private bool StaffSessionExpired(RefreshToken token, DateTimeOffset now) =>
+        now >= token.SessionStartedAt.AddHours(_staff.AbsoluteHours) ||
+        now >= (token.LastSeenAt ?? token.CreatedAt).AddMinutes(_staff.IdleMinutes);
 
     public async Task<bool> RevokeSessionAsync(Guid userId, Guid sessionId, CancellationToken ct)
     {

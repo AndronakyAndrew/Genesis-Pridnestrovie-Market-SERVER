@@ -13,12 +13,12 @@ public record CatalogQuery
     /// <summary>Полнотекстовый запрос. Длину сервер ограничивает 100 символами.</summary>
     public string? Q { get; init; }
 
-    public Category? Category { get; init; }
+    public string? Category { get; init; }
 
     /// <summary>FK подкатегории (query-параметр называется <c>subcategory</c>).</summary>
     public int? Subcategory { get; init; }
 
-    public List<City>? Cities { get; init; }
+    public List<string>? Cities { get; init; }
 
     public long? PriceFrom { get; init; }
     public long? PriceTo { get; init; }
@@ -53,8 +53,8 @@ public record ListingCardResponse(
     string Title,
     decimal? Price,
     PriceType PriceType,
-    City City,
-    Category Category,
+    string City,
+    string Category,
     string? FirstImageUrl,
     DateTimeOffset? PublishedAt,
     bool IsBumped,

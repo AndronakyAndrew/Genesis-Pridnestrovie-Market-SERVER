@@ -14,12 +14,12 @@ public sealed record SavedSearchQuery
     /// <summary>Полнотекстовый запрос. Нормализуется и ограничивается 100 символами, как в каталоге.</summary>
     public string? Q { get; init; }
 
-    public Category? Category { get; init; }
+    public string? Category { get; init; }
 
     /// <summary>FK подкатегории.</summary>
     public int? Subcategory { get; init; }
 
-    public List<City>? Cities { get; init; }
+    public List<string>? Cities { get; init; }
 
     public long? PriceFrom { get; init; }
     public long? PriceTo { get; init; }

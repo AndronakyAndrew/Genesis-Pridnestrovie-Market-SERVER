@@ -115,7 +115,7 @@ public sealed class ModerationOptions
     public int RiskyCategoryPoints { get; set; } = 20;
 
     /// <summary>Категории с исторически высокой долей мошенничества.</summary>
-    public Category[] RiskyCategories { get; set; } =
+    public string[] RiskyCategories { get; set; } =
         [Category.RealEstate, Category.Transport, Category.Work, Category.Services];
 
     /// <summary>Объявление без единой фотографии — слабый, но реальный признак пустышки.</summary>
