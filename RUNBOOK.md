@@ -33,17 +33,20 @@ docker exec genesis-postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
 
 ### Переменные окружения (`.env` на сервере)
 
-| Переменная | Обязательна | Зачем |
-|---|---|---|
-| `Security__TotpKey` | **да** — без неё API не стартует | Ключ шифрования секретов 2FA, 32 байта base64: `openssl rand -base64 32`. Хранить в менеджере паролей: смена ключа делает все 2FA нечитаемыми (потом только `reset-2fa` каждому) |
-| `Seo__WebBaseUrl` | да (уже задана) | Из неё строится ссылка приглашения `https://market.genesis-hq.com/invite/…`; пустая — выпуск ссылки отвечает 503 |
-| `Invitations__LinkLifetimeDays` | нет, 14 | Срок ссылки приглашения |
-| `Invitations__ClosedRetentionDays` | нет, 30 | Удаление «Истекло»/«Отозвано» |
-| `Invitations__AbandonedDraftDays` | нет, 60 | Удаление брошенных «Готовится» |
-| `Invitations__ConsentVersion` | нет, `2026-10-01` | Версия текста согласия; меняется **только вместе** с текстом на фронтенде |
-| `RateLimit__InvitationTokenPer10Minutes` | нет, 30 | Лимит ручек по токену приглашения на IP |
-| `TwoFactor__LockoutThreshold` | нет, 10 | Неверных кодов второго фактора подряд (по аккаунту) до блокировки |
-| `TwoFactor__LockoutMinutes` | нет, 15 | На сколько минут блокируется второй фактор |
+В `.env` пишутся имена переменных compose (левая колонка); `docker-compose.yml` пробрасывает
+их в приложение под именами конфигурации (правая).
+
+| Переменная в `.env` | Обязательна | В приложении | Зачем |
+|---|---|---|---|
+| `TOTP_KEY` | **да, новая** — без неё API не стартует | `Security__TotpKey` | Ключ шифрования секретов 2FA, 32 байта base64: `openssl rand -base64 32`. Хранить в менеджере паролей: смена ключа делает все 2FA нечитаемыми (потом только `reset-2fa` каждому) |
+| `SEO_WEB_BASE_URL` | да (уже задана) | `Seo__WebBaseUrl` | Из неё строится ссылка приглашения `https://market.genesis-hq.com/invite/…`; пустая — выпуск ссылки отвечает 503 |
+| `CORS_ALLOWED_ORIGINS` | да (уже задана) | `Cors__AllowedOrigins` | Только боевой origin фронтенда. Адрес превью Vercel — лишь временно, на время проверки |
+
+Настройки приглашений (`Invitations:*` — срок ссылки 14 дн., очистка 30/60 дн., версия согласия
+`2026-10-01`), лимит токена приглашения (`RateLimit:InvitationTokenPer10Minutes`, 30) и блокировка
+2FA (`TwoFactor:LockoutThreshold` 10, `TwoFactor:LockoutMinutes` 15) в `docker-compose.yml` не
+проброшены — на проде действуют значения по умолчанию из кода. Чтобы менять их через `.env`,
+сначала добавить строку в секцию `environment` сервиса `api`.
 
 Секретов в `appsettings*.json` нет и не добавляем — только `.env`.
 
