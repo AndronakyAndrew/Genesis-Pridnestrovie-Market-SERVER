@@ -91,8 +91,17 @@ public sealed class InvitationAcceptedHandler(
         await notifier.NotifyViaAsync(invitation.AcceptedByUserId!.Value, NotificationChannel.Email,
             $"Магазин «{invitation.ShopName}» подключён к Местной площадке Genesis",
             $"Вы приняли приглашение для магазина «{invitation.ShopName}». В вашем кабинете " +
-            $"{invitation.Drafts} черновиков товаров.\n\n" +
+            $"{invitation.Drafts} {Drafts(invitation.Drafts)} товаров.\n\n" +
             "Без вашего подтверждения ничего не публикуется: проверьте товары, укажите свои контакты " +
             "и отправьте выбранные объявления на публикацию." + link, ct);
+    }
+
+    /// <summary>«1 черновик», «3 черновика», «5 черновиков» — раньше письмо писало «1 черновиков».</summary>
+    public static string Drafts(int n)
+    {
+        var mod100 = Math.Abs(n) % 100;
+        var mod10 = mod100 % 10;
+        if (mod100 is > 10 and < 20) return "черновиков";
+        return mod10 switch { 1 => "черновик", >= 2 and <= 4 => "черновика", _ => "черновиков" };
     }
 }

@@ -397,6 +397,18 @@ public class SellerInvitationTests(AuthApiFactory factory) : IClassFixture<AuthA
         Assert.Equal(HttpStatusCode.OK, pwLogin.StatusCode);
     }
 
+    // ---- Письмо о принятии ----
+
+    [Theory]
+    [InlineData(1, "черновик")]
+    [InlineData(3, "черновика")]
+    [InlineData(5, "черновиков")]
+    [InlineData(11, "черновиков")]
+    [InlineData(21, "черновик")]
+    [InlineData(24, "черновика")]
+    public void Acceptance_email_declines_drafts_count(int n, string expected) =>
+        Assert.Equal(expected, GenesisMarket.Api.Outbox.InvitationAcceptedHandler.Drafts(n));
+
     // ---- Очистка ----
 
     [Fact]
