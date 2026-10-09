@@ -24,12 +24,12 @@ RUN dotnet publish src/GenesisMarket.Api/GenesisMarket.Api.csproj \
     /p:UseAppHost=false
 
 # ---- 2. final: только рантайм, без SDK, от непривилегированного пользователя ----
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-# База часовых поясов: в alpine её нет, и TimeZoneInfo не находит Europe/Chisinau —
-# без неё не посчитать окно публикации в канал (ChannelPublishing:WindowStart/WindowEnd).
-RUN apk add --no-cache tzdata
+# База часовых поясов и системные зависимости HEIF-декодера.
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata libheif1 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Непривилегированный пользователь (uid 64198 предопределён в образах .NET).
 USER $APP_UID

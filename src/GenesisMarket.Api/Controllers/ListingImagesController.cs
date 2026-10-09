@@ -101,7 +101,7 @@ public class ListingImagesController(
         }
         catch (UnsupportedImageFormatException)
         {
-            return Problem(title: "Поддерживаются только изображения JPEG, PNG и WebP",
+            return Problem(title: "Поддерживаются изображения JPEG, PNG, WebP и HEIC/HEIF",
                 statusCode: StatusCodes.Status415UnsupportedMediaType);
         }
         catch (ImageTooLargeException)

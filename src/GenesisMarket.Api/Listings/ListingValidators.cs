@@ -9,8 +9,8 @@ public sealed class CreateListingRequestValidator : AbstractValidator<CreateList
 {
     public CreateListingRequestValidator(IOptions<ListingOptions> options)
     {
-        RuleFor(x => x.Title).NotEmpty().MinimumLength(10).MaximumLength(100);
-        RuleFor(x => x.Description).NotEmpty().MinimumLength(20).MaximumLength(5000);
+        RuleFor(x => x.Title).NotEmpty().MinimumLength(5).MaximumLength(100);
+        RuleFor(x => x.Description).NotEmpty().MinimumLength(5).MaximumLength(5000);
         RuleFor(x => x.District).MaximumLength(100);
         // Существование и активность кода проверяет контроллер по справочнику из БД.
         RuleFor(x => x.Category).NotEmpty().MaximumLength(40);
@@ -30,8 +30,8 @@ public sealed class UpdateListingRequestValidator : AbstractValidator<UpdateList
 {
     public UpdateListingRequestValidator(IOptions<ListingOptions> options)
     {
-        RuleFor(x => x.Title).NotEmpty().MinimumLength(10).MaximumLength(100);
-        RuleFor(x => x.Description).NotEmpty().MinimumLength(20).MaximumLength(5000);
+        RuleFor(x => x.Title).NotEmpty().MinimumLength(5).MaximumLength(100);
+        RuleFor(x => x.Description).NotEmpty().MinimumLength(5).MaximumLength(5000);
         RuleFor(x => x.District).MaximumLength(100);
         // Существование и активность кода проверяет контроллер по справочнику из БД.
         RuleFor(x => x.Category).NotEmpty().MaximumLength(40);

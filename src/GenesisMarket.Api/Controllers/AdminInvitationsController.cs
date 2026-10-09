@@ -295,7 +295,7 @@ public class AdminInvitationsController(
                 return Problem(title: $"Не больше {options.Value.MaxPhotosPerDraft} фото на товар",
                     statusCode: StatusCodes.Status409Conflict);
             case PhotoUploadError.Unsupported:
-                return Problem(title: "Поддерживаются только изображения JPEG, PNG и WebP",
+                return Problem(title: "Поддерживаются изображения JPEG, PNG, WebP и HEIC/HEIF",
                     statusCode: StatusCodes.Status415UnsupportedMediaType);
             case PhotoUploadError.TooManyPixels:
                 return Problem(title: "Изображение слишком большое", statusCode: StatusCodes.Status400BadRequest);

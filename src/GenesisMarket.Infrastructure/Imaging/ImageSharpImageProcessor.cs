@@ -4,6 +4,7 @@ using SixLabors.ImageSharp.Formats.Webp;
 using SixLabors.ImageSharp.Memory;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using HeyRed.ImageSharp.Heif.Formats.Heif;
 
 namespace GenesisMarket.Infrastructure.Imaging;
 
@@ -31,9 +32,14 @@ public sealed class ImageSharpImageProcessor : IImageProcessor
     /// </summary>
     private const WebpEncodingMethod EncodingMethod = WebpEncodingMethod.Level2;
 
-    // format.Name у ImageSharp: "JPEG" / "PNG" / "WEBP".
+    private static readonly DecoderOptions DecoderOptions = new()
+    {
+        Configuration = new Configuration(new HeifConfigurationModule())
+    };
+
+    // format.Name у ImageSharp: "JPEG" / "PNG" / "WEBP" / "HEIF".
     private static readonly HashSet<string> AllowedFormats =
-        new(StringComparer.OrdinalIgnoreCase) { "JPEG", "PNG", "WEBP" };
+        new(StringComparer.OrdinalIgnoreCase) { "JPEG", "PNG", "WEBP", "HEIF", "HEIC" };
 
     static ImageSharpImageProcessor()
     {
@@ -55,7 +61,7 @@ public sealed class ImageSharpImageProcessor : IImageProcessor
         try
         {
             input.Position = 0;
-            format = await Image.DetectFormatAsync(input, ct);
+            format = await Image.DetectFormatAsync(DecoderOptions, input, ct);
         }
         catch (UnknownImageFormatException)
         {
@@ -70,7 +76,7 @@ public sealed class ImageSharpImageProcessor : IImageProcessor
         try
         {
             input.Position = 0;
-            info = await Image.IdentifyAsync(input, ct);
+            info = await Image.IdentifyAsync(DecoderOptions, input, ct);
         }
         catch (ImageFormatException)
         {
@@ -85,7 +91,7 @@ public sealed class ImageSharpImageProcessor : IImageProcessor
         try
         {
             input.Position = 0;
-            image = await Image.LoadAsync<Rgba32>(input, ct);
+            image = await Image.LoadAsync<Rgba32>(DecoderOptions, input, ct);
         }
         catch (ImageFormatException)
         {
