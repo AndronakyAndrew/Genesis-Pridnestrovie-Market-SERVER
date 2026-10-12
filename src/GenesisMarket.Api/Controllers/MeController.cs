@@ -128,7 +128,7 @@ public class MeController(
         }
         catch (UnsupportedImageFormatException)
         {
-            return Problem(title: "Поддерживаются JPEG, PNG, WebP и HEIC/HEIF",
+            return Problem(title: "Поддерживаются JPEG/JPG, PNG, WebP и HEIC/HEIF",
                 statusCode: StatusCodes.Status400BadRequest);
         }
         catch (ImageTooLargeException)

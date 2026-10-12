@@ -32,23 +32,25 @@ public sealed class ImageSharpImageProcessor : IImageProcessor
     /// </summary>
     private const WebpEncodingMethod EncodingMethod = WebpEncodingMethod.Level2;
 
-    private static readonly DecoderOptions DecoderOptions = new()
-    {
-        Configuration = new Configuration(new HeifConfigurationModule())
-    };
+    private static readonly DecoderOptions DecoderOptions;
 
-    // format.Name у ImageSharp: "JPEG" / "PNG" / "WEBP" / "HEIF".
+    // JPG — распространённый алиас JPEG; расширение не влияет на определение по содержимому.
+    // format.Name у ImageSharp: "JPEG" / "JPG" / "PNG" / "WEBP" / "HEIF".
     private static readonly HashSet<string> AllowedFormats =
-        new(StringComparer.OrdinalIgnoreCase) { "JPEG", "PNG", "WEBP", "HEIF", "HEIC" };
+        new(StringComparer.OrdinalIgnoreCase) { "JPEG", "JPG", "PNG", "WEBP", "HEIF", "HEIC" };
 
     static ImageSharpImageProcessor()
     {
         // Ограничиваем единичную аллокацию декодера — второй рубеж против
         // decompression bomb (первый — проверка объявленных размеров до декода).
-        Configuration.Default.MemoryAllocator = MemoryAllocator.Create(new MemoryAllocatorOptions
+        // Берём копию конфигурации со стандартными JPEG/PNG/WebP-декодерами и добавляем HEIF.
+        var configuration = Configuration.Default.Clone();
+        configuration.Configure(new HeifConfigurationModule());
+        configuration.MemoryAllocator = MemoryAllocator.Create(new MemoryAllocatorOptions
         {
             AllocationLimitMegabytes = 512
         });
+        DecoderOptions = new DecoderOptions { Configuration = configuration };
     }
 
     public async Task<ProcessedImage> ProcessAsync(Stream input, CancellationToken ct = default)
