@@ -58,7 +58,114 @@ public class ListingsController(
 
     private const int DefaultLimit = 20;
     private const int MaxLimit = 50;
+    private const int BusinessShowcaseLimit = 10;
+    private static readonly TimeSpan BusinessShowcaseCacheTtl = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan CountCacheTtl = TimeSpan.FromSeconds(60);
+
+    /// <summary>До десяти новых активных объявлений проверенных бизнесов и магазинов, принявших приглашение.</summary>
+    [AllowAnonymous]
+    [HttpGet("business-showcase")]
+    [ResponseCache(Duration = 60, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<BusinessShowcaseResponse>> GetBusinessShowcase(CancellationToken ct)
+    {
+        const string key = "catalog:business-showcase:v3";
+        if (!cache.TryGetValue(key, out BusinessShowcaseResponse? response) || response is null)
+        {
+            var eligibleCount = await db.Listings.AsNoTracking()
+                .CountAsync(l => l.Status == ListingStatus.Active
+                    && l.PublishedAt != null
+                    && l.ApprovedAt != null
+                    && l.Owner != null
+                    && ((l.Owner.BusinessProfile != null
+                            && l.Owner.BusinessProfile.AccountType == AccountType.Business
+                            && l.Owner.BusinessProfile.Status == BusinessVerificationStatus.Verified)
+                        || db.SellerInvitations.Any(i => i.Status == InvitationStatus.Accepted
+                            && i.AcceptedByUserId == l.OwnerId)), ct);
+
+            // SQL оставляет только две самые новые позиции каждого магазина и ограничивает
+            // всю выборку десятью строками, чтобы продавец с большим каталогом не вытеснил остальных.
+            var candidates = await db.Listings.AsNoTracking()
+                .Where(l => l.Status == ListingStatus.Active
+                    && l.PublishedAt != null
+                    && l.ApprovedAt != null
+                    && l.Owner != null
+                    && ((l.Owner.BusinessProfile != null
+                            && l.Owner.BusinessProfile.AccountType == AccountType.Business
+                            && l.Owner.BusinessProfile.Status == BusinessVerificationStatus.Verified)
+                        || db.SellerInvitations.Any(i => i.Status == InvitationStatus.Accepted
+                            && i.AcceptedByUserId == l.OwnerId))
+                    && db.Listings.Count(other => other.OwnerId == l.OwnerId
+                        && other.Status == ListingStatus.Active
+                        && other.PublishedAt != null
+                        && other.ApprovedAt != null
+                        && ((other.Owner != null
+                                && other.Owner.BusinessProfile != null
+                                && other.Owner.BusinessProfile.AccountType == AccountType.Business
+                                && other.Owner.BusinessProfile.Status == BusinessVerificationStatus.Verified)
+                            || db.SellerInvitations.Any(i => i.Status == InvitationStatus.Accepted
+                                && i.AcceptedByUserId == other.OwnerId))
+                        && (other.PublishedAt > l.PublishedAt
+                            || (other.PublishedAt == l.PublishedAt
+                                && other.Id.CompareTo(l.Id) > 0))) < 2)
+                .OrderByDescending(l => l.PublishedAt).ThenByDescending(l => l.Id)
+                .Select(l => new
+                {
+                    l.Id,
+                    l.OwnerId,
+                    l.Slug,
+                    l.Title,
+                    l.Price,
+                    l.PriceType,
+                    l.City,
+                    l.Category,
+                    l.PublishedAt,
+                    l.BumpedAt,
+                    l.ApprovedAt,
+                    l.FavoritesCount,
+                    l.IsExample,
+                    FirstImageUrl = l.Images.OrderBy(i => i.SortOrder).Select(i => i.ThumbKey).FirstOrDefault(),
+                    PublicCode = l.Owner!.PublicCode,
+                    ShopName = l.Owner.BusinessProfile != null
+                        && l.Owner.BusinessProfile.AccountType == AccountType.Business
+                        && l.Owner.BusinessProfile.Status == BusinessVerificationStatus.Verified
+                        ? l.Owner.BusinessProfile.ShopName
+                        : db.SellerInvitations
+                            .Where(i => i.Status == InvitationStatus.Accepted
+                                && i.AcceptedByUserId == l.OwnerId)
+                            .OrderByDescending(i => i.AcceptedAt)
+                            .Select(i => i.ShopName)
+                            .FirstOrDefault() ?? l.Owner.Profile!.DisplayName,
+                    AvatarUrl = l.Owner.Profile!.AvatarUrl,
+                    IsVerified = (l.Owner.BusinessProfile != null
+                            && l.Owner.BusinessProfile.AccountType == AccountType.Business
+                            && l.Owner.BusinessProfile.Status == BusinessVerificationStatus.Verified)
+                        || db.SellerInvitations.Any(i => i.Status == InvitationStatus.Accepted
+                            && i.AcceptedByUserId == l.OwnerId)
+                })
+                .Take(BusinessShowcaseLimit)
+                .ToListAsync(ct);
+
+            var items = candidates
+                .OrderByDescending(x => x.PublishedAt)
+                .ThenByDescending(x => x.Id)
+                .Take(BusinessShowcaseLimit)
+                .Select(x => new BusinessShowcaseItem(
+                    x.Id, x.Slug, x.Title, x.Price,
+                    x.PriceType, x.City, x.Category, x.FirstImageUrl,
+                    x.PublishedAt,
+                    IsBumped: !x.IsExample && x.BumpedAt is { } bumped
+                        && x.PublishedAt is { } published && bumped > published
+                        && bumped > (x.ApprovedAt ?? published),
+                    x.FavoritesCount, x.IsExample,
+                    TitleHighlight: null, IsFavorite: false, IsUnavailable: false,
+                    x.PublicCode, x.ShopName, x.AvatarUrl, x.IsVerified))
+                .ToList();
+            response = new BusinessShowcaseResponse(items, eligibleCount);
+            cache.Set(key, response, BusinessShowcaseCacheTtl);
+        }
+
+        return Ok(response);
+    }
 
     /// <summary>
     /// Каталог: только Active, курсорная пагинация, сортировка из белого списка.
