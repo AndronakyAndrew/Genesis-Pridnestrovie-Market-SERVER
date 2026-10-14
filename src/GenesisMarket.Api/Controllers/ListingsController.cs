@@ -1231,10 +1231,9 @@ public class ListingsController(
         int contactRevealCount, bool isFavorite, int? daysUntilArchive, string? canonicalUrl,
         bool isOwner, bool showRawText) => new(
         l.Id, l.Slug, l.Title,
-        // Телефон, ник и ссылка из описания вырезаются той же функцией, что и для
-        // поста в канале: иначе раскрытие контактов с его лимитом и журналом
-        // обходится чтением карточки, где ни лимита, ни журнала нет.
-        showRawText ? l.Description : ListingContentRisk.RedactContacts(l.Description),
+        // Телефоны и личные контакты скрываются, чтобы не обходить раскрытие
+        // контактов через карточку. Обычные веб-ссылки остаются видны.
+        showRawText ? l.Description : ListingContentRisk.RedactPrivateContactsKeepWebLinks(l.Description),
         l.Price, l.PriceType, l.Category,
         l.SubcategoryId, l.City, l.District, l.Condition, l.Status,
         l.ViewsCount, seller.PublicCode, l.CreatedAt, l.PublishedAt, contactRevealCount,

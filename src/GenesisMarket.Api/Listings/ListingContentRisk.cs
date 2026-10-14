@@ -51,6 +51,15 @@ public static partial class ListingContentRisk
     private static partial Regex ContactRedactionRegex();
 
     /// <summary>
+    /// Контакты для публичного описания объявления. Обычные веб-ссылки оставляем,
+    /// но телефон, почту, прямые ссылки на мессенджеры и @ники по-прежнему скрываем.
+    /// </summary>
+    [GeneratedRegex(
+        @"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}|\b(?:t|wa)\.me/\S*|@[a-z0-9_]{4,}",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    private static partial Regex PrivateContactRedactionRegex();
+
+    /// <summary>
     /// Текст без контактов: телефоны, ссылки, ники мессенджеров и почта заменяются на «…».
     /// Модерация пропускает объявление с контактом в тексте (это лишь баллы риска), а в публичный
     /// канал контакты продавца попадать не должны ни в каком виде. Таймаут регулярки — текст
@@ -64,6 +73,22 @@ public static partial class ListingContentRisk
         try
         {
             return PhoneLikeRegex().Replace(ContactRedactionRegex().Replace(text, "…"), "…");
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>Публичный текст объявления: сайт виден, личные контакты скрыты.</summary>
+    public static string RedactPrivateContactsKeepWebLinks(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        try
+        {
+            return PhoneLikeRegex().Replace(PrivateContactRedactionRegex().Replace(text, "…"), "…");
         }
         catch (RegexMatchTimeoutException)
         {
