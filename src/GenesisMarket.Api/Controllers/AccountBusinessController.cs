@@ -2,6 +2,7 @@ using FluentValidation;
 using GenesisMarket.Api.Business;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Security;
+using GenesisMarket.Api.Listings;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -23,7 +24,8 @@ namespace GenesisMarket.Api.Controllers;
 [Route("api/account/business")]
 public class AccountBusinessController(
     IBusinessAccountService business,
-    IValidator<SaveBusinessDetailsRequest> validator) : ApiControllerBase
+    IValidator<SaveBusinessDetailsRequest> validator,
+    ICatalogReferences references) : ApiControllerBase
 {
     /// <summary>Текущий режим, реквизиты и статус проверки. Без реквизитов — Private и Details = null (не 404).</summary>
     [HttpGet]
@@ -45,7 +47,18 @@ public class AccountBusinessController(
         if (!validation.IsValid)
             return this.ToProblem(validation);
 
-        var result = await business.SaveAsync(CurrentUserId()!.Value, BusinessInput.ToDetails(request), ct);
+        var userId = CurrentUserId()!.Value;
+        var profile = await business.FindAsync(userId, ct);
+        var details = BusinessInput.ToDetails(request);
+        if (request.ShopCity is not null)
+        {
+            var city = (await references.GetAsync(ct)).WritableCity(request.ShopCity, profile?.ShopCity);
+            if (city is null)
+                return Problem(title: "Неизвестный город магазина", statusCode: StatusCodes.Status400BadRequest);
+            details = details with { ShopCity = city };
+        }
+
+        var result = await business.SaveAsync(userId, details, ct);
         return result.Error is { } error
             ? this.ToProblem(error)
             : Ok(business.ToResponse(result.Profile, result.VerificationReset));
@@ -74,5 +87,15 @@ public class AccountBusinessController(
         return result.Error is { } error
             ? this.ToProblem(error)
             : Ok(business.ToResponse(result.Profile));
+    }
+
+    /// <summary>Очистить необязательный комплект реквизитов, сохранив бизнес-режим.</summary>
+    [HttpDelete("organization")]
+    public async Task<ActionResult<BusinessAccountResponse>> ClearOrganization(CancellationToken ct)
+    {
+        var result = await business.ClearOrganizationAsync(CurrentUserId()!.Value, ct);
+        return result.Error is { } error
+            ? this.ToProblem(error)
+            : Ok(business.ToResponse(result.Profile, result.VerificationReset));
     }
 }

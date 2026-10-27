@@ -36,9 +36,14 @@ public class BusinessProfileConfiguration : IEntityTypeConfiguration<BusinessPro
             .HasForeignKey<BusinessProfile>(x => x.UserId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        b.HasOne<CatalogCity>()
+            .WithMany()
+            .HasForeignKey(x => x.ShopCity)
+            .OnDelete(DeleteBehavior.Restrict);
+
         // Enum-ы режима и проверки — не native, хранятся строкой (как Role, ReportStatus).
         b.Property(x => x.AccountType).HasConversion<string>().HasMaxLength(16).IsRequired();
-        b.Property(x => x.LegalForm).HasConversion<string>().HasMaxLength(32).IsRequired();
+        b.Property(x => x.LegalForm).HasConversion<string>().HasMaxLength(32);
 
         // Статус — токен конкурентности: каждый UPDATE из SaveChanges получает
         // WHERE "Status" = <прочитанное значение>. Правка реквизитов, подача и
@@ -48,8 +53,10 @@ public class BusinessProfileConfiguration : IEntityTypeConfiguration<BusinessPro
         b.Property(x => x.Status).HasConversion<string>().HasMaxLength(16).IsRequired().IsConcurrencyToken();
 
         b.Property(x => x.ShopName).HasMaxLength(80).IsRequired();
-        b.Property(x => x.RegistrationNumber).HasMaxLength(32).IsRequired();
-        b.Property(x => x.PickupAddress).HasMaxLength(200).IsRequired();
+        b.Property(x => x.RegistrationNumber).HasMaxLength(32);
+        b.Property(x => x.PickupAddress).HasMaxLength(200);
+        b.Property(x => x.ShopCity).HasMaxLength(CatalogReferenceConfiguration.CodeMaxLength);
+        b.Property(x => x.IsInvitedStore).HasDefaultValue(false);
         b.Property(x => x.RejectionReason).HasMaxLength(500);
 
         // Вычисляемое — не колонки.

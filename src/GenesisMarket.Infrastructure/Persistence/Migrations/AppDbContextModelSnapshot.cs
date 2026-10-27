@@ -163,18 +163,20 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("IsInvitedStore")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<string>("LegalForm")
-                        .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
                     b.Property<string>("PickupAddress")
-                        .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
                     b.Property<string>("RegistrationNumber")
-                        .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
@@ -190,6 +192,10 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
                     b.Property<Guid?>("ReviewedByUserId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ShopCity")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
 
                     b.Property<string>("ShopName")
                         .IsRequired()
@@ -214,6 +220,8 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("ux_business_profiles_verified_registration_number")
                         .HasFilter("\"Status\" = 'Verified'");
+
+                    b.HasIndex("ShopCity");
 
                     b.HasIndex("Status", "SubmittedAt");
 
@@ -2214,6 +2222,11 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.BusinessProfile", b =>
                 {
+                    b.HasOne("GenesisMarket.Domain.Entities.CatalogCity", null)
+                        .WithMany()
+                        .HasForeignKey("ShopCity")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("GenesisMarket.Domain.Entities.User", "User")
                         .WithOne("BusinessProfile")
                         .HasForeignKey("GenesisMarket.Domain.Entities.BusinessProfile", "UserId")

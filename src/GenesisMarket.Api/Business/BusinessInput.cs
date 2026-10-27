@@ -43,9 +43,10 @@ public static partial class BusinessInput
 
     public static BusinessDetails ToDetails(SaveBusinessDetailsRequest r) => new(
         NormalizeText(r.ShopName),
-        r.LegalForm!.Value,
-        NormalizeRegistrationNumber(r.RegistrationNumber),
-        NormalizeText(r.PickupAddress));
+        r.LegalForm,
+        string.IsNullOrWhiteSpace(r.RegistrationNumber) ? null : NormalizeRegistrationNumber(r.RegistrationNumber),
+        string.IsNullOrWhiteSpace(r.PickupAddress) ? null : NormalizeText(r.PickupAddress),
+        r.ShopCity);
 }
 
 /// <summary>Скомпилированный шаблон регистрационного номера из <see cref="BusinessOptions"/>.</summary>
@@ -57,9 +58,9 @@ public sealed class RegistrationNumberRule(IOptions<BusinessOptions> options)
         TimeSpan.FromMilliseconds(100));
 
     /// <summary>Номер (уже нормализованный) соответствует формату.</summary>
-    public bool IsValid(string normalized)
+    public bool IsValid(string? normalized)
     {
-        if (normalized.Length is 0 or > BusinessInput.RegistrationNumberMax)
+        if (string.IsNullOrEmpty(normalized) || normalized.Length > BusinessInput.RegistrationNumberMax)
             return false;
         try
         {

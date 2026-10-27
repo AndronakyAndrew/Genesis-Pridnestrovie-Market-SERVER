@@ -32,6 +32,9 @@ public interface IBusinessAccountService
     /// <summary>Вернуться в Private (Verified снимается, Pending отзывается).</summary>
     Task<BusinessResult> DisableAsync(Guid userId, CancellationToken ct);
 
+    /// <summary>Очистить комплект реквизитов, сохранив бизнес-режим.</summary>
+    Task<BusinessResult> ClearOrganizationAsync(Guid userId, CancellationToken ct);
+
     /// <summary>Ответ владельцу с вычисленными CanEdit/CanSubmit/NextSubmitAllowedAt.</summary>
     BusinessAccountResponse ToResponse(BusinessProfile? profile, bool verificationReset = false);
 }
@@ -71,8 +74,9 @@ public sealed class BusinessAccountService(
         var now = clock.GetUtcNow();
         var profile = await FindAsync(userId, ct);
 
-        // Переход в Business без реквизитов невозможен: строка появляется только
-        // с полным набором реквизитов, а режим включается их сохранением.
+        // Подать на верификацию можно только для активного бизнес-профиля;
+        // приглашённый профиль без организации остаётся полноценным Business,
+        // но не пройдёт последующие проверки полноты ниже.
         if (profile is null || profile.AccountType != AccountType.Business)
             return BusinessResult.Fail(new BusinessError(StatusCodes.Status409Conflict,
                 BusinessErrorCodes.BusinessModeDisabled,
@@ -106,11 +110,26 @@ public sealed class BusinessAccountService(
                 RetryAt: allowedAt));
 
         // Формат — ещё раз: шаблон мог ужесточиться после сохранения реквизитов.
+        if (profile.LegalForm is null)
+            return BusinessResult.Fail(new BusinessError(StatusCodes.Status400BadRequest,
+                BusinessErrorCodes.LegalFormRequired,
+                "Выберите организационно-правовую форму", Field: "legalForm"));
+
+        if (profile.RegistrationNumber is null)
+            return BusinessResult.Fail(new BusinessError(StatusCodes.Status400BadRequest,
+                BusinessErrorCodes.RegistrationNumberRequired,
+                "Укажите регистрационный номер", Field: "registrationNumber"));
+
         if (!registrationNumber.IsValid(profile.RegistrationNumber))
             return BusinessResult.Fail(new BusinessError(StatusCodes.Status400BadRequest,
                 BusinessErrorCodes.RegistrationNumberFormat,
                 "Неверный формат регистрационного номера — исправьте реквизиты",
                 Field: "registrationNumber"));
+
+        if (profile.PickupAddress is null)
+            return BusinessResult.Fail(new BusinessError(StatusCodes.Status400BadRequest,
+                BusinessErrorCodes.PickupAddressRequired,
+                "Укажите адрес точки самовывоза", Field: "pickupAddress"));
 
         // Номер уже подтверждён у другого аккаунта — одобрить всё равно не выйдет
         // (уникальный индекс), незачем ставить заявку в очередь.
@@ -136,15 +155,35 @@ public sealed class BusinessAccountService(
         if (profile is null)
             return new BusinessResult(null);
 
+        if (profile.IsInvitedStore)
+            return BusinessResult.Fail(new BusinessError(StatusCodes.Status409Conflict,
+                BusinessErrorCodes.InvitedStoreCannotDisable,
+                "Магазинный аккаунт, созданный по приглашению, нельзя отключить"));
+
         profile.Disable(clock.GetUtcNow());
         return await SaveOrConflictAsync(profile, verificationReset: false, ct);
+    }
+
+    public async Task<BusinessResult> ClearOrganizationAsync(Guid userId, CancellationToken ct)
+    {
+        var profile = await FindAsync(userId, ct);
+        if (profile is null)
+            return new BusinessResult(null);
+
+        if (!profile.CanEditDetails)
+            return BusinessResult.Fail(new BusinessError(StatusCodes.Status409Conflict,
+                BusinessErrorCodes.DetailsLocked,
+                "Реквизиты на проверке у модератора — изменить их сейчас нельзя"));
+
+        var reset = profile.ClearOrganization(clock.GetUtcNow());
+        return await SaveOrConflictAsync(profile, reset, ct);
     }
 
     public BusinessAccountResponse ToResponse(BusinessProfile? p, bool verificationReset = false)
     {
         if (p is null)
             return new BusinessAccountResponse(
-                AccountType.Private, BusinessVerificationStatus.None, null, null, null, null,
+                AccountType.Private, false, null, null, BusinessVerificationStatus.None, null, null, null, null,
                 CanEdit: true, CanSubmit: false, NextSubmitAllowedAt: null);
 
         var now = clock.GetUtcNow();
@@ -155,6 +194,9 @@ public sealed class BusinessAccountService(
 
         return new BusinessAccountResponse(
             p.AccountType,
+            p.IsInvitedStore,
+            p.ShopName,
+            p.ShopCity,
             p.Status,
             new BusinessDetailsDto(p.ShopName, p.LegalForm, p.RegistrationNumber, p.PickupAddress),
             p.Status == BusinessVerificationStatus.Rejected ? p.RejectionReason : null,
@@ -163,7 +205,10 @@ public sealed class BusinessAccountService(
             p.CanEditDetails,
             canSubmit,
             nextSubmit > now ? nextSubmit : null,
-            verificationReset);
+            verificationReset,
+            p.HasCompleteDetails
+                ? new BusinessOrganizationDto(p.LegalForm!.Value, p.RegistrationNumber!, p.PickupAddress!)
+                : null);
     }
 
     /// <summary>

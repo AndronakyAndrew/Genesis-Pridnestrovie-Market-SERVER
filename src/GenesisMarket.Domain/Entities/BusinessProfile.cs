@@ -11,8 +11,8 @@ namespace GenesisMarket.Domain.Entities;
 /// CHECK-констрейнты этой строки; а users читается на каждом запросе
 /// (снимок SecurityStampValidator) и расти ради редкого режима не должен.
 ///
-/// Строки нет ⇒ аккаунт частный. Строка есть ⇒ реквизиты заполнены целиком
-/// (все поля NOT NULL): «Business без реквизитов» не представим в схеме.
+/// Строка нет ⇒ аккаунт частный. Магазины, возникшие из приглашений, могут
+/// существовать до заполнения юридических реквизитов.
 /// После возврата в Private строка остаётся — повторное включение не требует
 /// вводить всё заново.
 ///
@@ -32,13 +32,19 @@ public class BusinessProfile
     /// <summary>Публичное название магазина — отдаётся для бейджа, только когда бизнес подтверждён.</summary>
     public string ShopName { get; private set; } = null!;
 
-    public LegalForm LegalForm { get; private set; }
+    /// <summary>Город витрины, сохранённый из приглашения отдельно от личного города владельца.</summary>
+    public string? ShopCity { get; private set; }
+
+    /// <summary>Устойчивый признак принятого приглашения продавца.</summary>
+    public bool IsInvitedStore { get; private set; }
+
+    public LegalForm? LegalForm { get; private set; }
 
     /// <summary>Регистрационный номер ЕГРЮЛ/ЕГРИП ПМР в нормализованном виде (см. RegistrationNumber.Normalize).</summary>
-    public string RegistrationNumber { get; private set; } = null!;
+    public string? RegistrationNumber { get; private set; }
 
     /// <summary>Фактический адрес точки самовывоза.</summary>
-    public string PickupAddress { get; private set; } = null!;
+    public string? PickupAddress { get; private set; }
 
     public BusinessVerificationStatus Status { get; private set; }
 
@@ -64,26 +70,58 @@ public class BusinessProfile
 
     /// <summary>Подтверждённый бизнес: режим включён и проверка пройдена. Основание для бейджа.</summary>
     public bool IsVerifiedBusiness =>
-        AccountType == AccountType.Business && Status == BusinessVerificationStatus.Verified;
+        AccountType == AccountType.Business && Status == BusinessVerificationStatus.Verified && HasCompleteDetails;
 
     /// <summary>Реквизиты можно править всегда, кроме периода рассмотрения заявки.</summary>
     public bool CanEditDetails => Status != BusinessVerificationStatus.Pending;
 
+    /// <summary>Реквизиты полностью заполнены для отправки модератору.</summary>
+    public bool HasCompleteDetails => LegalForm is not null &&
+                                      !string.IsNullOrWhiteSpace(RegistrationNumber) &&
+                                      !string.IsNullOrWhiteSpace(PickupAddress);
+
     /// <summary>
-    /// Первое сохранение реквизитов — оно же включение бизнес-режима.
-    /// Реквизиты к этому моменту уже провалидированы.
+    /// Первое сохранение названия магазина — оно же включение бизнес-режима.
+    /// Переданные юридические поля к этому моменту уже провалидированы.
     /// </summary>
     public static BusinessProfile Create(Guid userId, BusinessDetails details, DateTimeOffset now) => new()
     {
         UserId = userId,
         AccountType = AccountType.Business,
         ShopName = details.ShopName,
+        ShopCity = details.ShopCity,
         LegalForm = details.LegalForm,
         RegistrationNumber = details.RegistrationNumber,
         PickupAddress = details.PickupAddress,
         Status = BusinessVerificationStatus.None,
         CreatedAt = now
     };
+
+    /// <summary>Создать минимальное состояние магазина без фиктивных юридических данных.</summary>
+    public static BusinessProfile CreateInvitedStore(Guid userId, string shopName, string shopCity, DateTimeOffset now) => new()
+    {
+        UserId = userId,
+        AccountType = AccountType.Business,
+        ShopName = shopName,
+        ShopCity = shopCity,
+        IsInvitedStore = true,
+        Status = BusinessVerificationStatus.None,
+        CreatedAt = now
+    };
+
+    /// <summary>Перевести существующий бизнес-профиль в состояние магазина без потери его реквизитов.</summary>
+    public void MarkAsInvitedStore(string shopName, string shopCity, DateTimeOffset now)
+    {
+        if (!IsInvitedStore)
+        {
+            // Существующие сведения не перезаписываются при принятии приглашения.
+            if (string.IsNullOrWhiteSpace(ShopName)) ShopName = shopName;
+            ShopCity ??= shopCity;
+            IsInvitedStore = true;
+        }
+        AccountType = AccountType.Business;
+        UpdatedAt = now;
+    }
 
     /// <summary>
     /// Сохранить реквизиты и (снова) включить бизнес-режим.
@@ -97,10 +135,19 @@ public class BusinessProfile
         if (!CanEditDetails)
             throw new InvalidOperationException("Реквизиты на проверке — правка запрещена.");
 
+        details = details with
+        {
+            LegalForm = details.LegalForm ?? LegalForm,
+            RegistrationNumber = details.RegistrationNumber ?? RegistrationNumber,
+            PickupAddress = details.PickupAddress ?? PickupAddress,
+            ShopCity = details.ShopCity ?? ShopCity
+        };
+
         var changed = details != CurrentDetails;
         var verificationReset = changed && Status == BusinessVerificationStatus.Verified;
 
         ShopName = details.ShopName;
+        ShopCity = details.ShopCity;
         LegalForm = details.LegalForm;
         RegistrationNumber = details.RegistrationNumber;
         PickupAddress = details.PickupAddress;
@@ -113,6 +160,26 @@ public class BusinessProfile
         return verificationReset;
     }
 
+    /// <summary>Очистить юридические реквизиты, не отключая бизнес-аккаунт.</summary>
+    public bool ClearOrganization(DateTimeOffset now)
+    {
+        if (!CanEditDetails)
+            throw new InvalidOperationException("Реквизиты на проверке — правка запрещена.");
+
+        var hadOrganization = LegalForm is not null || RegistrationNumber is not null || PickupAddress is not null;
+        if (!hadOrganization)
+            return false;
+
+        var verificationReset = Status == BusinessVerificationStatus.Verified;
+        LegalForm = null;
+        RegistrationNumber = null;
+        PickupAddress = null;
+        if (verificationReset)
+            Status = BusinessVerificationStatus.None;
+        UpdatedAt = now;
+        return verificationReset;
+    }
+
     /// <summary>Отправить на проверку: None | Rejected → Pending.</summary>
     public void Submit(DateTimeOffset now)
     {
@@ -120,6 +187,8 @@ public class BusinessProfile
             throw new InvalidOperationException("Бизнес-режим выключен.");
         if (Status is not (BusinessVerificationStatus.None or BusinessVerificationStatus.Rejected))
             throw new InvalidOperationException($"Подать заявку нельзя в статусе {Status}.");
+        if (!HasCompleteDetails)
+            throw new InvalidOperationException("Для подачи заявки заполните все юридические реквизиты.");
 
         Status = BusinessVerificationStatus.Pending;
         // Прошлая причина отказа относится к прошлой заявке; в журнале модерации она сохранена.
@@ -145,12 +214,13 @@ public class BusinessProfile
         UpdatedAt = now;
     }
 
-    public BusinessDetails CurrentDetails => new(ShopName, LegalForm, RegistrationNumber, PickupAddress);
+    public BusinessDetails CurrentDetails => new(ShopName, LegalForm, RegistrationNumber, PickupAddress, ShopCity);
 }
 
 /// <summary>Реквизиты бизнеса — уже нормализованные и провалидированные.</summary>
 public sealed record BusinessDetails(
     string ShopName,
-    LegalForm LegalForm,
-    string RegistrationNumber,
-    string PickupAddress);
+    LegalForm? LegalForm,
+    string? RegistrationNumber,
+    string? PickupAddress,
+    string? ShopCity = null);

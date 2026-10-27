@@ -30,15 +30,15 @@ public sealed class SaveBusinessDetailsRequestValidator : AbstractValidator<Save
             // Имя поля в ответе — camelCase, как в JSON запроса.
             .OverridePropertyName("shopName");
 
-        RuleFor(x => x.LegalForm)
-            .NotNull()
-                .WithErrorCode(BusinessErrorCodes.LegalFormRequired)
+        When(x => x.LegalForm is not null || !string.IsNullOrWhiteSpace(x.RegistrationNumber) ||
+                  !string.IsNullOrWhiteSpace(x.PickupAddress), () =>
+        {
+            RuleFor(x => x.LegalForm)
+                .NotNull().WithErrorCode(BusinessErrorCodes.LegalFormRequired)
                 .WithMessage("Выберите организационно-правовую форму")
-            .IsInEnum()
-                .WithErrorCode(BusinessErrorCodes.LegalFormRequired)
+                .IsInEnum().WithErrorCode(BusinessErrorCodes.LegalFormRequired)
                 .WithMessage("Выберите организационно-правовую форму")
-            // Имя поля в ответе — camelCase, как в JSON запроса.
-            .OverridePropertyName("legalForm");
+                .OverridePropertyName("legalForm");
 
         RuleFor(x => BusinessInput.NormalizeRegistrationNumber(x.RegistrationNumber))
             .NotEmpty()
@@ -63,5 +63,6 @@ public sealed class SaveBusinessDetailsRequestValidator : AbstractValidator<Save
                 .WithMessage("В адресе не должно быть телефона, ссылки или ника")
             // Имя поля в ответе — camelCase, как в JSON запроса.
             .OverridePropertyName("pickupAddress");
+        });
     }
 }
