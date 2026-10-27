@@ -49,7 +49,8 @@ public class ListingsController(
     IOptions<ListingOptions> options,
     IOptions<CatalogHygieneOptions> hygiene,
     IOptions<SeoOptions> seo,
-    ICatalogReferences references) : ApiControllerBase
+    ICatalogReferences references,
+    IListingLifecycleService lifecycle) : ApiControllerBase
 {
     // Статусы «в обороте» — учитываются в лимите и проверке дубликатов.
     private static readonly ListingStatus[] InCirculation =
@@ -628,6 +629,15 @@ public class ListingsController(
         if (!result.Succeeded)
             return Forbid();
 
+        // Для владельца одиночная ручка и bulk-archive используют один переход.
+        if (listing.OwnerId == CurrentUserId())
+        {
+            var archived = await lifecycle.ArchiveAsync(CurrentUserId()!.Value, id, ct);
+            return archived.Reason is null
+                ? NoContent()
+                : Problem(title: archived.ErrorTitle, statusCode: archived.HttpStatus);
+        }
+
         // Чужое объявление снимает сотрудник — это решение модерации: пишется в журнал
         // той же транзакцией, что и сам переход (SaveChanges ниже).
         if (listing.OwnerId != CurrentUserId())
@@ -650,38 +660,10 @@ public class ListingsController(
     public async Task<ActionResult<ListingResponse>> Publish(Guid id, CancellationToken ct)
     {
         var userId = CurrentUserId()!.Value;
-
-        var listing = await db.Listings.FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
-        if (listing is null)
-            return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
-
-        if (listing.Status != ListingStatus.Draft)
-            return Problem(title: "Объявление уже отправлено на публикацию",
-                statusCode: StatusCodes.Status409Conflict);
-
-        // Товар из приглашения готовил сотрудник: без согласия владельца на публикацию
-        // (текущей версии текста) объявление не выходит даже по прямому вызову этой ручки.
-        if (listing.SourceInvitationId is not null)
-        {
-            var version = HttpContext.RequestServices.GetRequiredService<IOptions<InvitationOptions>>().Value.ConsentVersion;
-            if (!await db.PublicationConsents.AnyAsync(c => c.ListingId == id && c.UserId == userId && c.Version == version, ct))
-                return Problem(title: "Подтвердите согласие на публикацию товара и своих контактных данных",
-                    statusCode: StatusCodes.Status409Conflict);
-        }
-
-        var (guard, author) = await PublishGuardAsync(userId, ct);
-        if (guard is not null)
-            return guard;
-
-        var decision = await ResolvePublishAsync(author, listing, ct);
-        listing.Publish(decision.Mode, DateTimeOffset.UtcNow, decision.Priority);
-
-        // Доверенный автор (Auto) — одобрено сразу, в очередь канала. Пре- и постмодерация ждут модератора.
-        await EnqueueChannelPublishAsync(listing, ct);
-
-        await db.SaveChangesAsync(ct);
-
-        return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct)));
+        var result = await lifecycle.PublishAsync(userId, id, ct);
+        if (result.Reason is not null && result.Reason != "moderation_required")
+            return Problem(title: result.ErrorTitle, statusCode: result.HttpStatus);
+        return Ok(await ToResponseAsync(result.Listing!, await RevealCountAsync(id, ct)));
     }
 
     /// <summary>
@@ -695,39 +677,13 @@ public class ListingsController(
     public async Task<ActionResult<ListingResponse>> Bump(Guid id, CancellationToken ct)
     {
         var userId = CurrentUserId()!.Value;
-        var now = DateTimeOffset.UtcNow;
-        var cooldown = TimeSpan.FromDays(hygiene.Value.BumpCooldownDays);
-
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-
-        // FOR UPDATE держит блокировку строки до конца транзакции. IgnoreQueryFilters —
-        // чтобы EF не оборачивал SQL подзапросом (тогда FOR UPDATE был бы не на верхнем уровне);
-        // мягкое удаление проверяем вручную ниже.
-        var listing = (await db.Listings
-            .FromSql($"SELECT * FROM listings WHERE \"Id\" = {id} FOR UPDATE")
-            .IgnoreQueryFilters()
-            .ToListAsync(ct)).FirstOrDefault();
-
-        if (listing is null || listing.DeletedAt != null || listing.OwnerId != userId)
-            return Problem(title: "Объявление не найдено", statusCode: StatusCodes.Status404NotFound);
-
-        if (listing.Status != ListingStatus.Active)
-            return Problem(title: "Поднять можно только активное объявление",
-                statusCode: StatusCodes.Status409Conflict);
-
-        if (listing.BumpedAt is { } last && now - last < cooldown)
-        {
-            var retryAfter = last + cooldown - now;
-            return TooManyRequests(
-                (int)Math.Ceiling(retryAfter.TotalSeconds),
-                title: $"Поднимать объявление можно раз в {hygiene.Value.BumpCooldownDays} дн.");
-        }
-
-        listing.Bump(now);
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-
-        return Ok(await ToResponseAsync(listing, await RevealCountAsync(listing.Id, ct)));
+        var result = await lifecycle.BumpAsync(userId, id, ct);
+        if (result.Reason == "bump_cooldown" && result.RetryAt is { } retryAt)
+            return TooManyRequests((int)Math.Ceiling((retryAt - DateTimeOffset.UtcNow).TotalSeconds),
+                result.ErrorTitle ?? "Поднятие пока недоступно");
+        if (result.Reason is not null)
+            return Problem(title: result.ErrorTitle, statusCode: result.HttpStatus);
+        return Ok(await ToResponseAsync(result.Listing!, await RevealCountAsync(id, ct)));
     }
 
     /// <summary>

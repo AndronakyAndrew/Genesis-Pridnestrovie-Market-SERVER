@@ -21,6 +21,7 @@ public static class ListingsServiceCollectionExtensions
         // Политика в БД не ходит и состояния не держит — синглтона достаточно.
         services.AddSingleton<IListingModerationPolicy, ListingModerationPolicy>();
         services.AddScoped<IListingViewCounter, ListingViewCounter>();
+        services.AddScoped<IListingLifecycleService, ListingLifecycleService>();
         services.AddScoped<IContactRevealService, ContactRevealService>();
         services.AddScoped<ILinkRedirectService, LinkRedirectService>();
         services.AddValidatorsFromAssemblyContaining<CreateListingRequestValidator>();

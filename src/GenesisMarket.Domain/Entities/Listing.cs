@@ -130,6 +130,18 @@ public class Listing : BaseEntity, IOwnedResource
     /// <summary>Метка мягкого удаления. Заполнена ⇒ объявление скрыто query-фильтром.</summary>
     public DateTimeOffset? DeletedAt { get; set; }
 
+    /// <summary>Скрыть объявление без физического удаления истории и связанной репутации.</summary>
+    public void SoftDelete(DateTimeOffset now)
+    {
+        if (DeletedAt is not null)
+            return;
+
+        if (Status != ListingStatus.Archived)
+            Archive(now);
+        DeletedAt = now;
+        UpdatedAt = now;
+    }
+
     // ---- Отклонение модератором ----
     // Втроём описывают последний отказ. Отдаются ТОЛЬКО владельцу: посторонним
     // знать, за что объявление сняли, незачем. Меняются только через Reject/
