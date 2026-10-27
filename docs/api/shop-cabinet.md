@@ -29,6 +29,34 @@
 
 Существующие маршруты сохраняются: `GET /api/me/2fa`, `POST /api/me/2fa/setup`, `POST /api/me/2fa/enable`, `POST /api/me/2fa/disable`, `POST /api/me/2fa/recovery-codes`, `GET /api/me/sessions`, `DELETE /api/me/sessions/{id}`. Город сессии равен `null`.
 
+`GET /api/me/2fa` отвечает `{ "enabled": false, "setupPending": false, "required": false, "recoveryCodesLeft": 0 }`. `POST /api/me/2fa/setup` не имеет тела и выдаёт `{ "secret": "…", "provisioningUri": "otpauth://…" }`; повторная настройка при включённой 2FA — `409`. `POST /api/me/2fa/enable`, `/disable` и `/recovery-codes` принимают `{ "code": "…" }`. Включение отвечает `{ "recoveryCodes": ["…"], "accessToken": "…", "accessTokenExpiresAt": "…" }`; перевыпуск отвечает `{ "recoveryCodes": ["…"] }`; отключение — `204`. Неверный код — `400`, превышение лимита проверки — `429`; служебному аккаунту отключение запрещено с `403`.
+
+`GET /api/me/sessions` отвечает массивом `{ "id", "deviceFamily", "browserFamily", "osFamily", "ipPrefix", "city": null, "createdAt", "lastSeenAt", "isCurrent" }`. `DELETE /api/me/sessions/{id}` отзывает только собственную сессию и отвечает `204`; неизвестная/чужая — `404`. Текущий access token действует до истечения срока, но refresh-токен сессии отзывается.
+
+Настройки аккаунта доступны владельцу как personal-, так и shop-аккаунта.
+
+`POST /api/account/email-change/send-code` принимает `{ "newEmail": "new@example.com" }`. Адрес обрезается и приводится к нижнему регистру; текущий адрес отклоняется с `409 email_same_as_current`. При свободном и занятом адресе возвращается одинаковый `200 { "message": "Если адрес можно использовать, код отправлен на него." }`; для занятого адреса письмо не отправляется. Для свободного адреса код отправляется на новый email. Повторная отправка ограничена общим cooldown кодов подтверждения.
+
+`POST /api/account/email-change/verify` принимает `{ "newEmail": "new@example.com", "code": "123456" }`. Успех: `{ "email": "new@example.com", "emailVerified": true, "accessToken": "…", "accessTokenExpiresAt": "…" }`. Новый email сразу подтверждается; код одноразовый. Сервер отзывает остальные сессии и refresh-токены, сохраняет текущую refresh-сессию, выдаёт ей новый access token и отправляет security-письмо на старый адрес. Если адрес заняли после отправки кода — `409 email_already_in_use`; параллельное изменение профиля — `409 email_change_conflict`.
+
+`GET /api/account/notification-preferences` возвращает `{ "groups": [{ "key": "activity", "description": "…", "enabled": true, "canDisable": true, "types": ["…"] }], "notifyVia": "Email" }`. Настройки применяются поверх существующего канала `Profile.NotifyVia`. `PUT` принимает только изменяемые настройки, например `{ "groups": { "activity": false, "reviews": true }, "notifyVia": "Telegram" }`; пропущенные группы не меняются. Неизвестный ключ даёт `400 unknown_notification_group`, попытка передать `security` — `400 security_group_managed_by_server`, неизвестный канал — `400 invalid_notification_channel`. Без строки настройки группа включена. Письмо-подтверждение получения обратной связи учитывает настройку `feedback`, только если email отправителя совпадает с email аккаунта; уведомление администратору не зависит от неё.
+
+Группы уведомлений:
+
+| Ключ | Смысл и включённые типы | Можно отключить |
+|---|---|---:|
+| `security` | Коды подтверждения email и входа, восстановление пароля, уведомление о смене email, подтверждение удаления. Сервер сейчас не отправляет отдельные оповещения о новом устройстве или сбросе 2FA; когда появятся, они относятся сюда. | Нет |
+| `activity` | Объявление одобрено/отклонено/возвращено на доработку, предупреждение об автоархивации, принятие приглашения магазина. | Да |
+| `reviews` | Новый отзыв о продавце. | Да |
+| `saved_searches` | Новые объявления по сохранённому поиску. | Да |
+| `feedback` | Подтверждение получения обращения отправителю, когда его email совпадает с email аккаунта. | Да |
+
+`POST /api/account/delete/send-code` отправляет одноразовый код на текущий email и отвечает `{ "message": "Код отправлен на email аккаунта.", "expiresAt": "…" }`. `POST /api/account/delete/confirm` принимает `{ "code": "123456", "twoFactorCode": "123456" }`; `twoFactorCode` требуется только при включённой 2FA и может быть TOTP либо recovery-кодом. Успех — `204 No Content`. Неверный код: `400 account_delete_code_invalid`, истёкший: `410 account_delete_code_expired`, исчерпаны попытки: `429 account_delete_code_attempts_exceeded`, отсутствует активный код: `400 account_delete_code_not_found`, отсутствует обязательный второй фактор: `400 second_factor_required`, неверен второй фактор: `400 invalid_second_factor`. Старый `DELETE /api/me` сохранён, но всегда отвечает `409 confirmation_required`; он не удаляет аккаунт без подтверждения.
+
+Дополнительные коды: для отправки email-кода слишком часто — `429 verification_code_cooldown` с `Retry-After`; временно недоступна почта — `503 email_delivery_unavailable`; некорректный новый адрес — `400 invalid_email`; запрос смены на текущий адрес — `409 email_same_as_current`; занятие адреса после отправки — `409 email_already_in_use`; параллельная смена аккаунта — `409 email_change_conflict`; отсутствие session id при смене — `409 session_refresh_required`. Для удаления блокировка проверки 2FA отвечает `429 second_factor_locked`. Все ошибки возвращают `application/problem+json` с полем `code`.
+
+Анонимизация shop-аккаунта удаляет бизнес-профиль и настройки витрины, архивирует активные объявления, сохраняет отзывы за обезличенным пользователем; публичный профиль магазина больше не выдаётся.
+
 #### Бизнес-аккаунт и организация
 
 Сохраняются `GET|PUT /api/account/business`, `POST /api/account/business/submit` и `POST /api/account/business/disable`.
