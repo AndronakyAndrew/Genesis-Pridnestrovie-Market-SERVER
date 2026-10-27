@@ -208,6 +208,13 @@ public sealed class InvitationService(
         if (won != 1)
             return new AcceptResult(AcceptOutcome.Lost);
 
+        // Витрина хранится отдельно и не заменяет личное имя/город владельца.
+        var businessProfile = await db.BusinessProfiles.FirstOrDefaultAsync(b => b.UserId == ownerId, ct);
+        if (businessProfile is null)
+            db.BusinessProfiles.Add(BusinessProfile.CreateInvitedStore(ownerId, found.ShopName, found.City, now));
+        else
+            businessProfile.MarkAsInvitedStore(found.ShopName, found.City, now);
+
         var drafts = await db.InvitationDrafts
             .Include(d => d.Photos)
             .Where(d => d.InvitationId == found.Id)

@@ -345,7 +345,8 @@ public class MeController(
     private Task<User?> LoadAsync(CancellationToken ct)
     {
         var userId = CurrentUserId()!.Value;
-        return db.Users.Include(u => u.Profile).FirstOrDefaultAsync(u => u.Id == userId, ct);
+        return db.Users.Include(u => u.Profile).Include(u => u.BusinessProfile)
+            .FirstOrDefaultAsync(u => u.Id == userId, ct);
     }
 
     private async Task<MeResponse> MapMeAsync(User u, CancellationToken ct) => new(
@@ -359,7 +360,12 @@ public class MeController(
         u.Profile?.Description,
         u.Profile?.ViberEnabled ?? false, u.Profile?.WhatsappEnabled ?? false,
         u.Profile?.ShowPhoneInListing ?? true,
-        u.CreatedAt, u.UpdatedAt, u.HasPassword);
+        u.CreatedAt, u.UpdatedAt, u.HasPassword,
+        u.BusinessProfile?.IsInvitedStore ?? false,
+        u.BusinessProfile?.IsInvitedStore == true ? u.BusinessProfile.ShopName : null,
+        u.BusinessProfile?.IsInvitedStore == true ? u.BusinessProfile.ShopCity : null,
+        u.BusinessProfile?.AccountType == GenesisMarket.Domain.Enums.AccountType.Business ? "shop" : "personal",
+        u.BusinessProfile is { AccountType: GenesisMarket.Domain.Enums.AccountType.Business, IsInvitedStore: false });
 
 
 }

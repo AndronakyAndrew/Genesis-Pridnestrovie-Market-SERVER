@@ -85,7 +85,7 @@ public class UsersController(
         // Реквизиты — только подтверждённого бизнеса. Вернувшийся в Private или
         // не прошедший проверку ничего из них публично не показывает.
         var business = user.BusinessProfile is { IsVerifiedBusiness: true } b
-            ? new PublicBusinessInfo(b.ShopName, b.LegalForm, b.RegistrationNumber, b.PickupAddress)
+            ? new PublicBusinessInfo(b.ShopName, b.LegalForm!.Value, b.RegistrationNumber!, b.PickupAddress!)
             : null;
 
         return Ok(new PublicProfileResponse(
@@ -106,7 +106,10 @@ public class UsersController(
             user.PhoneVerified,
             IsVerifiedBusiness: business is not null,
             Business: business,
-            EmailVerified: user.EmailVerified));
+            EmailVerified: user.EmailVerified,
+            IsInvitedStore: user.BusinessProfile?.IsInvitedStore ?? false,
+            ShopName: user.BusinessProfile?.IsInvitedStore == true ? user.BusinessProfile.ShopName : null,
+            ShopCity: user.BusinessProfile?.IsInvitedStore == true ? user.BusinessProfile.ShopCity : null));
     }
 
     private async Task<IActionResult> AvatarAsync(Expression<Func<Profile, bool>> match, CancellationToken ct)

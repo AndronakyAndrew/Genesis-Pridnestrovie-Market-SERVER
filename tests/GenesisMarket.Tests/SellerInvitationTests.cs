@@ -100,6 +100,34 @@ public class SellerInvitationTests(AuthApiFactory factory) : IClassFixture<AuthA
         var accept = await owner.PostAsync($"/api/invitations/{token}/accept", null);
         Assert.Equal(HttpStatusCode.OK, accept.StatusCode);
 
+        var me = await owner.GetFromJsonAsync<JsonElement>("/api/me");
+        Assert.True(me.GetProperty("isInvitedStore").GetBoolean());
+        Assert.Equal("shop", me.GetProperty("accountType").GetString());
+        Assert.False(me.GetProperty("canDisableBusiness").GetBoolean());
+        Assert.Equal("Магазин тестовый", me.GetProperty("shopName").GetString());
+        var business = await owner.GetFromJsonAsync<JsonElement>("/api/account/business");
+        Assert.Equal("Business", business.GetProperty("accountType").GetString());
+        Assert.Equal("None", business.GetProperty("status").GetString());
+        Assert.True(business.GetProperty("isInvitedStore").GetBoolean());
+        Assert.Null(business.GetProperty("details").GetProperty("legalForm").GetString());
+        Assert.Equal(JsonValueKind.Null, business.GetProperty("organization").ValueKind);
+        var publicProfile = await owner.GetFromJsonAsync<JsonElement>($"/api/users/{ownerId}/public");
+        Assert.True(publicProfile.GetProperty("isInvitedStore").GetBoolean());
+        Assert.Equal("Магазин тестовый", publicProfile.GetProperty("shopName").GetString());
+        Assert.Null(publicProfile.GetProperty("business").GetString());
+
+        var storeUpdate = await owner.PutAsJsonAsync("/api/account/business", new
+        {
+            shopName = "Новое название",
+            shopCity = "Bendery"
+        });
+        Assert.Equal(HttpStatusCode.OK, storeUpdate.StatusCode);
+        var updatedMe = await owner.GetFromJsonAsync<JsonElement>("/api/me");
+        Assert.Equal("Тестовый", updatedMe.GetProperty("displayName").GetString());
+        Assert.Equal("Tiraspol", updatedMe.GetProperty("city").GetString());
+        Assert.Equal("Новое название", updatedMe.GetProperty("shopName").GetString());
+        Assert.Equal("Bendery", updatedMe.GetProperty("shopCity").GetString());
+
         await using (var scope = Db(out var db))
         {
             var inv = await db.SellerInvitations.SingleAsync(i => i.Id == id);
@@ -227,6 +255,109 @@ public class SellerInvitationTests(AuthApiFactory factory) : IClassFixture<AuthA
         var token = await IssueLink(admin, id);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await admin.PostAsync($"/api/invitations/{token}/accept", null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Ordinary_business_mode_does_not_set_invited_store_marker()
+    {
+        var (user, _) = await User();
+        var save = await user.PutAsJsonAsync("/api/account/business", new
+        {
+            shopName = "Самостоятельный магазин",
+            legalForm = "IndividualEntrepreneur",
+            registrationNumber = "12345",
+            pickupAddress = "Центр, дом 1"
+        });
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+
+        var account = await user.GetFromJsonAsync<JsonElement>("/api/account/business");
+        Assert.Equal("Business", account.GetProperty("accountType").GetString());
+        Assert.False(account.GetProperty("isInvitedStore").GetBoolean());
+
+        var me = await user.GetFromJsonAsync<JsonElement>("/api/me");
+        Assert.False(me.GetProperty("isInvitedStore").GetBoolean());
+        Assert.Equal("shop", me.GetProperty("accountType").GetString());
+        Assert.True(me.GetProperty("canDisableBusiness").GetBoolean());
+
+        var disable = await user.PostAsync("/api/account/business/disable", null);
+        Assert.Equal(HttpStatusCode.OK, disable.StatusCode);
+        me = await user.GetFromJsonAsync<JsonElement>("/api/me");
+        Assert.Equal("personal", me.GetProperty("accountType").GetString());
+        Assert.False(me.GetProperty("canDisableBusiness").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Accepting_invitation_reuses_existing_business_profile_and_cannot_disable_store_mode()
+    {
+        var (admin, _) = await Staff(UserRole.Admin);
+        var id = await CreateInvitation(admin, "Лавка у рынка");
+        await AddDraft(admin, id);
+        var token = await IssueLink(admin, id);
+        var (owner, ownerId) = await User();
+
+        await using (var scope = Db(out var db))
+        {
+            db.BusinessProfiles.Add(BusinessProfile.Create(ownerId,
+                new BusinessDetails("Существующий магазин", LegalForm.IndividualEntrepreneur, "12345", "Центр, дом 1"),
+                DateTimeOffset.UtcNow));
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsync($"/api/invitations/{token}/accept", null)).StatusCode);
+        var disable = await owner.PostAsync("/api/account/business/disable", null);
+        Assert.Equal(HttpStatusCode.Conflict, disable.StatusCode);
+        Assert.Equal("invited_store_cannot_disable",
+            (await disable.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        await using (var scope = Db(out var db))
+        {
+            var profiles = await db.BusinessProfiles.Where(b => b.UserId == ownerId).ToListAsync();
+            var profile = Assert.Single(profiles);
+            Assert.True(profile.IsInvitedStore);
+            Assert.Equal("Существующий магазин", profile.ShopName);
+            Assert.Equal("12345", profile.RegistrationNumber);
+            Assert.Equal("Центр, дом 1", profile.PickupAddress);
+        }
+    }
+
+    [Fact]
+    public async Task Clearing_organization_resets_verification_and_hides_public_business_details()
+    {
+        var (owner, ownerId) = await User();
+        var (moderator, moderatorId) = await Staff(UserRole.Moderator);
+        var save = await owner.PutAsJsonAsync("/api/account/business", new
+        {
+            shopName = "Проверенный магазин",
+            legalForm = "IndividualEntrepreneur",
+            registrationNumber = "67890",
+            pickupAddress = "Центр, дом 2"
+        });
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+
+        await using (var scope = Db(out var db))
+        {
+            var profile = await db.BusinessProfiles.SingleAsync(x => x.UserId == ownerId);
+            db.Entry(profile).Property(x => x.Status).CurrentValue = BusinessVerificationStatus.Verified;
+            db.Entry(profile).Property(x => x.ReviewedAt).CurrentValue = DateTimeOffset.UtcNow;
+            db.Entry(profile).Property(x => x.ReviewedByUserId).CurrentValue = moderatorId;
+            await db.SaveChangesAsync();
+        }
+
+        var before = await factory.CreateClient().GetFromJsonAsync<JsonElement>($"/api/users/by-code/{(await owner.GetFromJsonAsync<JsonElement>("/api/me")).GetProperty("publicCode").GetString()}/public");
+        Assert.True(before.GetProperty("isVerifiedBusiness").GetBoolean());
+        Assert.Equal("Проверенный магазин", before.GetProperty("business").GetProperty("shopName").GetString());
+
+        var cleared = await owner.DeleteAsync("/api/account/business/organization");
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        var body = await cleared.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(body.GetProperty("verificationReset").GetBoolean());
+        Assert.Equal("None", body.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("organization").ValueKind);
+        Assert.Equal("Business", body.GetProperty("accountType").GetString());
+
+        var after = await factory.CreateClient().GetFromJsonAsync<JsonElement>($"/api/users/{ownerId}/public");
+        Assert.False(after.GetProperty("isVerifiedBusiness").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, after.GetProperty("business").ValueKind);
     }
 
     [Fact]
@@ -382,6 +513,12 @@ public class SellerInvitationTests(AuthApiFactory factory) : IClassFixture<AuthA
         anon.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", access);
 
         Assert.Equal(HttpStatusCode.OK, (await anon.PostAsync($"/api/invitations/{token}/accept", null)).StatusCode);
+
+        var storeAccount = await anon.GetFromJsonAsync<JsonElement>("/api/account/business");
+        Assert.Equal("Business", storeAccount.GetProperty("accountType").GetString());
+        Assert.True(storeAccount.GetProperty("isInvitedStore").GetBoolean());
+        Assert.Equal("Лавка у рынка", storeAccount.GetProperty("shopName").GetString());
+        Assert.Equal("Tiraspol", storeAccount.GetProperty("shopCity").GetString());
 
         var drafts = await anon.GetFromJsonAsync<JsonElement>("/api/me/invited-drafts");
         Assert.Single(drafts.GetProperty("items").EnumerateArray());

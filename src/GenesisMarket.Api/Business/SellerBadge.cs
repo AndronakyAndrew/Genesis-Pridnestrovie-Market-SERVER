@@ -17,10 +17,16 @@ public sealed record SellerBadge(string PublicCode, bool IsVerifiedBusiness, str
         u.PublicCode,
         u.BusinessProfile != null
             && u.BusinessProfile.AccountType == AccountType.Business
-            && u.BusinessProfile.Status == BusinessVerificationStatus.Verified,
+            && u.BusinessProfile.Status == BusinessVerificationStatus.Verified
+            && u.BusinessProfile.LegalForm != null
+            && u.BusinessProfile.RegistrationNumber != null
+            && u.BusinessProfile.PickupAddress != null,
         u.BusinessProfile != null
             && u.BusinessProfile.AccountType == AccountType.Business
             && u.BusinessProfile.Status == BusinessVerificationStatus.Verified
+            && u.BusinessProfile.LegalForm != null
+            && u.BusinessProfile.RegistrationNumber != null
+            && u.BusinessProfile.PickupAddress != null
             ? u.BusinessProfile.ShopName
             : null);
 }

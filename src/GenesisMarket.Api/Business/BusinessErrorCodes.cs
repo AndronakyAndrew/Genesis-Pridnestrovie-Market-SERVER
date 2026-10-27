@@ -28,6 +28,8 @@ public static class BusinessErrorCodes
     public const string DetailsLocked = "details_locked";
     /// <summary>Режим не включён: сначала сохранить реквизиты (409).</summary>
     public const string BusinessModeDisabled = "business_mode_disabled";
+    /// <summary>Приглашённый магазин не может отключить бизнес-режим (409).</summary>
+    public const string InvitedStoreCannotDisable = "invited_store_cannot_disable";
     public const string AlreadyPending = "already_pending";
     public const string AlreadyVerified = "already_verified";
     /// <summary>Подача раньше разрешённого момента (429, в ответе <c>retryAt</c>).</summary>

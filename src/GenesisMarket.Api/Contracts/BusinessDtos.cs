@@ -8,9 +8,10 @@ namespace GenesisMarket.Api.Contracts;
 /// автора решения здесь нет и быть не может — клиент не выставляет ни Verified,
 /// ни Rejected ни при каких условиях.
 ///
-/// Все поля обязательны; валидирует BusinessDetailsRequestValidator, ошибки —
-/// ValidationProblemDetails: <c>errors.{поле}</c> — текст, <c>codes.{поле}</c> —
-/// машинный код (<see cref="Business.BusinessErrorCodes"/>) для подсветки поля.
+/// Название магазина обязательно. Юридические поля можно оставить пустыми;
+/// если заполняется любое из них, валидатор требует корректный полный набор.
+/// Ошибки — ValidationProblemDetails: <c>errors.{поле}</c> — текст,
+/// <c>codes.{поле}</c> — машинный код (<see cref="Business.BusinessErrorCodes"/>).
 /// <see cref="LegalForm"/> nullable намеренно: иначе пропущенное поле молча
 /// превратилось бы в первый член enum (ИП).
 /// </summary>
@@ -18,11 +19,18 @@ public record SaveBusinessDetailsRequest(
     string? ShopName,
     LegalForm? LegalForm,
     string? RegistrationNumber,
-    string? PickupAddress);
+    string? PickupAddress,
+    string? ShopCity = null);
 
 /// <summary>Реквизиты в ответе владельцу и модератору.</summary>
 public record BusinessDetailsDto(
     string ShopName,
+    LegalForm? LegalForm,
+    string? RegistrationNumber,
+    string? PickupAddress);
+
+/// <summary>Необязательный комплект реквизитов организации.</summary>
+public record BusinessOrganizationDto(
     LegalForm LegalForm,
     string RegistrationNumber,
     string PickupAddress);
@@ -36,6 +44,9 @@ public record BusinessDetailsDto(
 /// </summary>
 public record BusinessAccountResponse(
     AccountType AccountType,
+    bool IsInvitedStore,
+    string? ShopName,
+    string? ShopCity,
     BusinessVerificationStatus Status,
     /// <summary>null — реквизиты ещё ни разу не сохранялись.</summary>
     BusinessDetailsDto? Details,
@@ -53,7 +64,8 @@ public record BusinessAccountResponse(
     /// true только в ответе на PUT, если правка сняла подтверждение (Verified → None):
     /// клиенту стоит сказать, что бейдж вернётся после повторной проверки.
     /// </summary>
-    bool VerificationReset = false);
+    bool VerificationReset = false,
+    BusinessOrganizationDto? Organization = null);
 
 /// <summary>
 /// Публичные сведения о подтверждённом бизнесе — в профиле продавца.

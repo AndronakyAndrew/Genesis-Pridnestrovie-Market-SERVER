@@ -32,7 +32,12 @@ public record MeResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset? UpdatedAt,
     /// <summary>false — аккаунт создан по приглашению без пароля: интерфейс предлагает его задать.</summary>
-    bool HasPassword);
+    bool HasPassword,
+    bool IsInvitedStore = false,
+    string? ShopName = null,
+    string? ShopCity = null,
+    string AccountType = "personal",
+    bool CanDisableBusiness = false);
 
 /// <summary>
 /// PATCH профиля. ФИКСИРОВАННЫЙ набор полей — защита от mass assignment:
@@ -123,4 +128,7 @@ public record PublicProfileResponse(
     /// Почта подтверждена — основание для галочки «Проверенный пользователь».
     /// Телефон для галочки не требуется; PhoneVerified остаётся отдельным фактом.
     /// </summary>
-    bool EmailVerified = false);
+    bool EmailVerified = false,
+    bool IsInvitedStore = false,
+    string? ShopName = null,
+    string? ShopCity = null);
