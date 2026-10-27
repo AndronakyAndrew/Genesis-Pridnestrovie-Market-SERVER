@@ -237,6 +237,26 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.AccountNotificationPreference", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("GroupKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<bool>("Enabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.HasKey("UserId", "GroupKey");
+
+                    b.ToTable("notification_preferences", (string)null);
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.CatalogCategory", b =>
                 {
                     b.Property<string>("Code")
@@ -2230,6 +2250,17 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.HasOne("GenesisMarket.Domain.Entities.User", "User")
                         .WithOne("BusinessProfile")
                         .HasForeignKey("GenesisMarket.Domain.Entities.BusinessProfile", "UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.AccountNotificationPreference", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 

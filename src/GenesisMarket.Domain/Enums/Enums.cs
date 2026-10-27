@@ -105,7 +105,11 @@ public enum VerificationChannel
     /// Одноразовый код входа на почту. Отдельный канал: код входа и код
     /// подтверждения почты не принимаются друг за друга и не делят кулдаун.
     /// </summary>
-    LoginEmail
+    LoginEmail,
+    /// <summary>Подтверждение смены адреса электронной почты аккаунта.</summary>
+    EmailChange,
+    /// <summary>Подтверждение удаления аккаунта.</summary>
+    AccountDeletion
 }
 
 /// <summary>

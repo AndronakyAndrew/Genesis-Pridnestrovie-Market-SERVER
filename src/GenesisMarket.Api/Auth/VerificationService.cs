@@ -38,6 +38,19 @@ public sealed class VerificationService(
         if (string.IsNullOrEmpty(target))
             return new SendResult(SendStatus.NoTarget);
 
+        return await SendToTargetAsync(userId, channel, target, ct);
+    }
+
+    /// <summary>
+    /// Тот же кодовый конвейер для адресов, которые ещё не записаны в users
+    /// (например, новый email при смене адреса).
+    /// </summary>
+    public async Task<SendResult> SendToTargetAsync(
+        Guid userId, VerificationChannel channel, string target, CancellationToken ct)
+    {
+        if (!await db.Users.AnyAsync(u => u.Id == userId && !u.IsDeleted, ct))
+            return new SendResult(SendStatus.NoTarget);
+
         // Кулдаун на повторную отправку по этому каналу.
         var last = await db.VerificationCodes
             .Where(c => c.UserId == userId && c.Channel == channel)
@@ -53,8 +66,15 @@ public sealed class VerificationService(
                     RetryAfterSeconds: (int)Math.Ceiling((cooldown - elapsed).TotalSeconds));
         }
 
+        var now = DateTimeOffset.UtcNow;
         var code = GenerateCode(_o.CodeLength);
-        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(_o.CodeTtlMinutes);
+        var expiresAt = now.AddMinutes(_o.CodeTtlMinutes);
+
+        // Активен только последний код в канале. Это исключает повторное
+        // использование ранее отправленного кода после нового запроса.
+        await db.VerificationCodes
+            .Where(c => c.UserId == userId && c.Channel == channel && c.ConsumedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.ConsumedAt, now), ct);
 
         db.VerificationCodes.Add(new VerificationCode
         {
@@ -91,8 +111,39 @@ public sealed class VerificationService(
         if (IsVerified(user, channel))
             return new VerifyResult(VerifyStatus.AlreadyVerified);
 
+        var target = TargetOf(user, channel);
+        if (string.IsNullOrEmpty(target))
+            return new VerifyResult(VerifyStatus.NoCode);
+
+        return await VerifyTargetAsync(userId, channel, target, code, markVerified: true, ct);
+    }
+
+    /// <summary>Проверить одноразовый код для заданного адреса/цели.</summary>
+    public Task<VerifyResult> VerifyTargetAsync(
+        Guid userId, VerificationChannel channel, string target, string code, CancellationToken ct) =>
+        VerifyTargetAsync(userId, channel, target, code, markVerified: false, ct);
+
+    /// <summary>Погасить все ещё действующие коды выбранных каналов.</summary>
+    public Task InvalidateAsync(Guid userId, CancellationToken ct, params VerificationChannel[] channels)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return db.VerificationCodes
+            .Where(c => c.UserId == userId && channels.Contains(c.Channel) && c.ConsumedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.ConsumedAt, now), ct);
+    }
+
+    private async Task<VerifyResult> VerifyTargetAsync(
+        Guid userId, VerificationChannel channel, string target, string code, bool markVerified, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted, ct);
+        if (user is null)
+            return new VerifyResult(VerifyStatus.NoCode);
+
+        if (markVerified && IsVerified(user, channel))
+            return new VerifyResult(VerifyStatus.AlreadyVerified);
+
         var entry = await db.VerificationCodes
-            .Where(c => c.UserId == userId && c.Channel == channel && c.ConsumedAt == null)
+            .Where(c => c.UserId == userId && c.Channel == channel && c.Target == target && c.ConsumedAt == null)
             .OrderByDescending(c => c.CreatedAt)
             .FirstOrDefaultAsync(ct);
 
@@ -105,27 +156,47 @@ public sealed class VerificationService(
 
         if (!CryptographicOperations.FixedTimeEquals(Hash(code), entry.CodeHash))
         {
-            entry.Attempts++;
-            await db.SaveChangesAsync(ct);
+            await db.VerificationCodes
+                .Where(c => c.Id == entry.Id && c.ConsumedAt == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Attempts, c => c.Attempts + 1), ct);
             return new VerifyResult(VerifyStatus.Invalid);
         }
 
-        SetVerified(user, channel);
-        entry.ConsumedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var consumed = await db.VerificationCodes
+            .Where(c => c.Id == entry.Id && c.ConsumedAt == null && c.ExpiresAt > now && c.Attempts < _o.MaxAttempts)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.ConsumedAt, now), ct);
+        if (consumed == 0)
+            return new VerifyResult(VerifyStatus.NoCode);
+
+        if (markVerified)
+            SetVerified(user, channel);
+        if (markVerified)
+            await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return new VerifyResult(VerifyStatus.Ok);
     }
 
-    private static bool IsVerified(User u, VerificationChannel ch) =>
-        ch == VerificationChannel.Email ? u.EmailVerified : u.PhoneVerified;
+    private static bool IsVerified(User u, VerificationChannel ch) => ch switch
+    {
+        VerificationChannel.Email => u.EmailVerified,
+        VerificationChannel.Phone => u.PhoneVerified,
+        _ => false
+    };
 
     private static string? TargetOf(User u, VerificationChannel ch) =>
-        ch == VerificationChannel.Email ? u.Email : u.PhoneE164;
+        ch switch
+        {
+            VerificationChannel.Email => u.Email,
+            VerificationChannel.Phone => u.PhoneE164,
+            _ => null
+        };
 
     private static void SetVerified(User u, VerificationChannel ch)
     {
         if (ch == VerificationChannel.Email) u.EmailVerified = true;
-        else u.PhoneVerified = true;
+        else if (ch == VerificationChannel.Phone) u.PhoneVerified = true;
     }
 
     internal static string GenerateCode(int length)

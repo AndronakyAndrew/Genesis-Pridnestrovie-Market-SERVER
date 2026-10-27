@@ -47,6 +47,9 @@ public interface IRefreshTokenService
     /// <summary>Отзыв одной сессии владельцем. false — сессии нет или она чужая.</summary>
     Task<bool> RevokeSessionAsync(Guid userId, Guid sessionId, CancellationToken ct);
 
+    /// <summary>Отозвать все refresh-токены, кроме цепочки текущей сессии.</summary>
+    Task RevokeOtherSessionsAsync(Guid userId, Guid currentSessionId, CancellationToken ct);
+
     /// <summary>
     /// Отметить живую сессию как прошедшую 2FA — после включения 2FA в этой же сессии
     /// человек только что предъявил код, заставлять его входить заново незачем.
@@ -245,6 +248,14 @@ public sealed class RefreshTokenService(
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), ct);
 
         return affected > 0;
+    }
+
+    public Task RevokeOtherSessionsAsync(Guid userId, Guid currentSessionId, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return db.RefreshTokens
+            .Where(t => t.UserId == userId && t.SessionId != currentSessionId && t.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), ct);
     }
 
     public async Task<bool> RevokeAsync(string rawToken, CancellationToken ct)
