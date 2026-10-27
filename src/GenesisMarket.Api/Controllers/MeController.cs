@@ -25,7 +25,6 @@ public class MeController(
     AppDbContext db,
     IObjectStorage storage,
     IRefreshTokenService refreshTokens,
-    SecurityStampValidator securityStamp,
     IOptions<PhoneOptions> phoneOptions,
     IImageProcessor imageProcessor,
     IRoleStore roles,
@@ -259,65 +258,10 @@ public class MeController(
     }
 
     [HttpDelete]
-    public async Task<IActionResult> DeleteMe(CancellationToken ct)
-    {
-        var userId = CurrentUserId()!.Value;
-        var user = await LoadAsync(ct);
-        if (user is null)
-            return Problem(title: "Пользователь не найден", statusCode: StatusCodes.Status404NotFound);
-
-        var now = DateTimeOffset.UtcNow;
-
-        // Всё в одной транзакции: анонимизация + архивация объявлений + отзыв токенов.
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-
-        user.IsDeleted = true;
-        user.Email = $"deleted-{user.Id}@invalid";
-        user.PhoneE164 = null;
-        user.PhoneVerified = false;
-        user.EmailVerified = false;
-        user.SecurityStamp = Guid.NewGuid();
-        user.UpdatedAt = now;
-
-        if (user.Profile is not null)
-        {
-            user.Profile.DisplayName = "Удалённый пользователь";
-            user.Profile.TelegramUsername = null;
-            // Файл аватара раньше оставался в хранилище навсегда: ссылку снимали,
-            // объект — нет. Заявка на удаление идёт в той же транзакции, что и
-            // анонимизация, тем же путём, что и DELETE /api/me/avatar.
-            EnqueueAvatarDeletion(user.Profile.AvatarUrl);
-            user.Profile.AvatarUrl = null;
-            // «О себе» — текст, написанный самим пользователем, в том числе о себе
-            // лично: при удалении аккаунта он стирается вместе с контактами.
-            user.Profile.Description = null;
-            user.Profile.UpdatedAt = now;
-        }
-
-        await db.SaveChangesAsync(ct);
-
-        // Бизнес-реквизиты (адрес точки, регистрационный номер ИП) — данные о человеке:
-        // при удалении аккаунта строка стирается целиком, а не анонимизируется.
-        // История решений модератора остаётся в moderation_logs: там Id, причина отказа
-        // и публичное название магазина — без номера и адреса.
-        await db.BusinessProfiles
-            .Where(b => b.UserId == userId)
-            .ExecuteDeleteAsync(ct);
-
-        await db.Listings
-            .Where(l => l.OwnerId == userId && l.Status == ListingStatus.Active)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(l => l.Status, ListingStatus.Archived)
-                .SetProperty(l => l.UpdatedAt, now), ct);
-
-        await refreshTokens.RevokeAllAsync(userId, ct);
-
-        await tx.CommitAsync(ct);
-
-        // Немедленно инвалидируем кэш — токены удалённого перестают работать сразу.
-        securityStamp.Invalidate(userId);
-        return NoContent();
-    }
+    public IActionResult DeleteMe() => ProblemWithCode(
+        StatusCodes.Status409Conflict,
+        "confirmation_required",
+        "Подтвердите удаление кодом из письма через /api/account/delete/confirm.");
 
     // ---- helpers ----
 
@@ -340,6 +284,13 @@ public class MeController(
             Type = OutboxMessage.DeleteImages,
             Payload = JsonSerializer.Serialize(new[] { objectKey })
         });
+    }
+
+    private ObjectResult ProblemWithCode(int status, string code, string title)
+    {
+        var problem = new ProblemDetails { Status = status, Title = title };
+        problem.Extensions["code"] = code;
+        return new ObjectResult(problem) { StatusCode = status };
     }
 
     private Task<User?> LoadAsync(CancellationToken ct)

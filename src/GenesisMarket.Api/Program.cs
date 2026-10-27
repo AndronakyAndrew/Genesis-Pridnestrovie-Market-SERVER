@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using GenesisMarket.Api.Accounts;
 using GenesisMarket.Api.Auth;
 using GenesisMarket.Api.Business;
 using GenesisMarket.Api.Cli;
@@ -103,6 +104,10 @@ try
 
     // ---- Собственная аутентификация: JWT + BCrypt (Identity не используем) ----
     builder.Services.AddGenesisAuth(builder.Configuration, builder.Environment);
+
+    // ---- Настройки уведомлений и подтверждённое удаление аккаунта ----
+    builder.Services.AddScoped<IAccountNotificationPreferences, AccountNotificationPreferences>();
+    builder.Services.AddScoped<IAccountDeletionService, AccountDeletionService>();
 
     // ---- Жизненный цикл объявлений (пороги, премодерация, просмотры, валидаторы) ----
     builder.Services.AddListingsFeature(builder.Configuration);

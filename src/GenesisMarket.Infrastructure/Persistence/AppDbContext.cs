@@ -44,6 +44,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<InvitationDraft> InvitationDrafts => Set<InvitationDraft>();
     public DbSet<InvitationDraftPhoto> InvitationDraftPhotos => Set<InvitationDraftPhoto>();
     public DbSet<PublicationConsent> PublicationConsents => Set<PublicationConsent>();
+    public DbSet<AccountNotificationPreference> NotificationPreferences => Set<AccountNotificationPreference>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

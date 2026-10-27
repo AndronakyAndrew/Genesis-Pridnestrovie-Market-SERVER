@@ -30,9 +30,25 @@ public sealed class VerificationEmailRenderer
         "Введите этот код на странице входа",
         "Если вы не пытались войти, просто проигнорируйте это письмо — без кода войти в аккаунт нельзя.");
 
+    private static readonly Copy EmailChange = new(
+        "Смена email",
+        "Подтверждение нового адреса почты",
+        "Введите этот код в настройках аккаунта",
+        "Если вы не запрашивали смену email, проигнорируйте это письмо — адрес не изменится.");
+
+    private static readonly Copy AccountDeletion = new(
+        "Удаление аккаунта",
+        "Подтверждение удаления аккаунта",
+        "Введите этот код на странице подтверждения удаления",
+        "Если вы не запрашивали удаление аккаунта, проигнорируйте это письмо.");
+
     public RenderedEmail RenderCodeEmail(string code) => Render(code, Confirm);
 
     public RenderedEmail RenderLoginCodeEmail(string code) => Render(code, Login);
+
+    public RenderedEmail RenderEmailChangeCodeEmail(string code) => Render(code, EmailChange);
+
+    public RenderedEmail RenderAccountDeletionCodeEmail(string code) => Render(code, AccountDeletion);
 
     private RenderedEmail Render(string code, Copy copy)
     {

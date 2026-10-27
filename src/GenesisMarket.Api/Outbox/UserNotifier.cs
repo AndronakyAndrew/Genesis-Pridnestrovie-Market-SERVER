@@ -1,3 +1,4 @@
+using GenesisMarket.Api.Accounts;
 using GenesisMarket.Domain.Enums;
 using GenesisMarket.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -13,31 +14,38 @@ namespace GenesisMarket.Api.Outbox;
 public interface IUserNotifier
 {
     /// <summary>Доставить уведомление каналом, выбранным пользователем в профиле (<c>NotifyVia</c>).</summary>
-    Task NotifyAsync(Guid userId, string subject, string body, CancellationToken ct);
+    Task NotifyAsync(Guid userId, string groupKey, string subject, string body, CancellationToken ct);
 
     /// <summary>
     /// Доставить уведомление явно заданным каналом (например, каналом сохранённого поиска,
     /// который может отличаться от профильного). Telegram без привязанного chatId деградирует к почте.
     /// </summary>
-    Task NotifyViaAsync(Guid userId, NotificationChannel preferred, string subject, string body, CancellationToken ct);
+    Task NotifyViaAsync(Guid userId, string groupKey, NotificationChannel preferred, string subject, string body, CancellationToken ct);
 }
 
 public sealed class UserNotifier(
     AppDbContext db,
+    IAccountNotificationPreferences preferences,
     IEnumerable<INotificationChannel> channels,
     ILogger<UserNotifier> logger) : IUserNotifier
 {
-    public Task NotifyAsync(Guid userId, string subject, string body, CancellationToken ct) =>
-        SendAsync(userId, preferred: null, subject, body, ct);
+    public Task NotifyAsync(Guid userId, string groupKey, string subject, string body, CancellationToken ct) =>
+        SendAsync(userId, groupKey, preferred: null, subject, body, ct);
 
     public Task NotifyViaAsync(
-        Guid userId, NotificationChannel preferred, string subject, string body, CancellationToken ct) =>
-        SendAsync(userId, preferred, subject, body, ct);
+        Guid userId, string groupKey, NotificationChannel preferred, string subject, string body, CancellationToken ct) =>
+        SendAsync(userId, groupKey, preferred, subject, body, ct);
 
     /// <param name="preferred">null ⇒ канал берётся из профиля (<c>NotifyVia</c>).</param>
     private async Task SendAsync(
-        Guid userId, NotificationChannel? preferred, string subject, string body, CancellationToken ct)
+        Guid userId, string groupKey, NotificationChannel? preferred, string subject, string body, CancellationToken ct)
     {
+        if (!await preferences.IsEnabledAsync(userId, groupKey, ct))
+        {
+            logger.LogInformation("Уведомление отключено настройкой: userId={UserId}, group={Group}", userId, groupKey);
+            return;
+        }
+
         var recipient = await db.Users.AsNoTracking()
             .Where(u => u.Id == userId && !u.IsDeleted)
             .Select(u => new

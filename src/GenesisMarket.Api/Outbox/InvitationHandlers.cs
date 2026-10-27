@@ -1,3 +1,4 @@
+using GenesisMarket.Api.Accounts;
 using GenesisMarket.Api.Seo;
 using GenesisMarket.Domain.Entities;
 using GenesisMarket.Domain.Enums;
@@ -88,7 +89,7 @@ public sealed class InvitationAcceptedHandler(
             ?? throw new OutboxPermanentException("Принятое приглашение не найдено.");
 
         var link = seo.Value.NormalizedBaseUrl is { } site ? $"\n\nОткрыть кабинет: {site}/profile/invited" : "";
-        await notifier.NotifyViaAsync(invitation.AcceptedByUserId!.Value, NotificationChannel.Email,
+        await notifier.NotifyViaAsync(invitation.AcceptedByUserId!.Value, NotificationGroups.Activity, NotificationChannel.Email,
             $"Магазин «{invitation.ShopName}» подключён к Местной площадке Genesis",
             $"Вы приняли приглашение для магазина «{invitation.ShopName}». В вашем кабинете " +
             $"{invitation.Drafts} {Drafts(invitation.Drafts)} товаров.\n\n" +

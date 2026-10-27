@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using GenesisMarket.Api.Accounts;
 using GenesisMarket.Api.Feedback;
 using GenesisMarket.Api.Outbox.Telegram;
 using GenesisMarket.Api.Telegram.Channel;
@@ -47,6 +48,7 @@ public sealed class ListingApprovedHandler(AppDbContext db, IUserNotifier notifi
             ?? throw new OutboxPermanentException("Объявление не найдено.");
 
         await notifier.NotifyAsync(listing.OwnerId,
+            NotificationGroups.Activity,
             "Объявление одобрено",
             $"Ваше объявление «{listing.Title}» одобрено и опубликовано.", ct);
     }
@@ -70,7 +72,7 @@ public sealed class ListingRejectedHandler(AppDbContext db, IUserNotifier notifi
         if (!string.IsNullOrWhiteSpace(p.Comment))
             body += $"\nКомментарий модератора: {p.Comment}";
 
-        await notifier.NotifyAsync(listing.OwnerId, "Объявление отклонено", body, ct);
+        await notifier.NotifyAsync(listing.OwnerId, NotificationGroups.Activity, "Объявление отклонено", body, ct);
     }
 
     /// <summary>
@@ -128,7 +130,7 @@ public sealed class ListingRevisionRequestedHandler(AppDbContext db, IUserNotifi
             body += $"\nКомментарий модератора: {p.Comment}";
         body += "\nОбъявление лежит в черновиках: исправьте его и опубликуйте снова.";
 
-        await notifier.NotifyAsync(listing.OwnerId, "Объявление нужно доработать", body, ct);
+        await notifier.NotifyAsync(listing.OwnerId, NotificationGroups.Activity, "Объявление нужно доработать", body, ct);
     }
 }
 
@@ -147,6 +149,7 @@ public sealed class ListingExpiringSoonHandler(AppDbContext db, IUserNotifier no
             ?? throw new OutboxPermanentException("Объявление не найдено.");
 
         await notifier.NotifyAsync(listing.OwnerId,
+            NotificationGroups.Activity,
             "Объявление скоро уйдёт в архив",
             $"Объявление «{listing.Title}» будет автоматически архивировано {p.ArchiveAt:dd.MM.yyyy}. " +
             "Поднимите его, чтобы продлить публикацию.", ct);
@@ -168,6 +171,7 @@ public sealed class NewReviewHandler(AppDbContext db, IUserNotifier notifier) : 
             ?? throw new OutboxPermanentException("Отзыв не найден или скрыт.");
 
         await notifier.NotifyAsync(review.TargetUserId,
+            NotificationGroups.Reviews,
             "Новый отзыв о вас",
             $"Вам оставили новый отзыв ({review.Rating}★) по объявлению «{review.Title}». " +
             "Загляните в профиль, чтобы посмотреть.", ct);
@@ -258,7 +262,7 @@ public sealed class SavedSearchMatchHandler(AppDbContext db, IUserNotifier notif
             ? NotificationChannel.Telegram
             : NotificationChannel.Email;
 
-        await notifier.NotifyViaAsync(search.UserId, channel,
+        await notifier.NotifyViaAsync(search.UserId, NotificationGroups.SavedSearches, channel,
             $"Новые объявления по поиску «{search.Name}»", body, ct);
     }
 
@@ -300,7 +304,10 @@ public sealed class DeleteObjectHandler(IObjectStorage storage) : IOutboxHandler
 /// диспетчера по общему расписанию); адресат/контент не зависят от состояния объявления,
 /// поэтому это единственный обработчик, которому не нужен <see cref="IUserNotifier"/>.
 /// </summary>
-public sealed partial class FeedbackReceivedHandler(AppDbContext db, IResendEmailService email) : IOutboxHandler
+public sealed partial class FeedbackReceivedHandler(
+    AppDbContext db,
+    IResendEmailService email,
+    IAccountNotificationPreferences preferences) : IOutboxHandler
 {
     public string Type => OutboxMessage.FeedbackReceived;
 
@@ -314,7 +321,15 @@ public sealed partial class FeedbackReceivedHandler(AppDbContext db, IResendEmai
         await email.SendFeedbackNotificationAsync(feedback, ct);
 
         if (LooksLikeEmail(feedback.Contact))
-            await email.SendFeedbackConfirmationAsync(feedback, ct);
+        {
+            var normalized = feedback.Contact.Trim().ToLowerInvariant();
+            var accountId = await db.Users.AsNoTracking()
+                .Where(u => !u.IsDeleted && u.Email == normalized)
+                .Select(u => (Guid?)u.Id)
+                .FirstOrDefaultAsync(ct);
+            if (accountId is null || await preferences.IsEnabledAsync(accountId.Value, NotificationGroups.Feedback, ct))
+                await email.SendFeedbackConfirmationAsync(feedback, ct);
+        }
     }
 
     // Простая проверка формата: телефоны (цифры, +, скобки, дефисы) её не проходят.

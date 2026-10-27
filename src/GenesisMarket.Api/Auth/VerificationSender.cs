@@ -27,6 +27,10 @@ public sealed class VerificationSender(
                 ct),
             VerificationChannel.Email => SendEmailAsync(target, emailRenderer.RenderCodeEmail(code), ct),
             VerificationChannel.LoginEmail => SendEmailAsync(target, emailRenderer.RenderLoginCodeEmail(code), ct),
+            VerificationChannel.EmailChange =>
+                SendEmailAsync(target, emailRenderer.RenderEmailChangeCodeEmail(code), ct),
+            VerificationChannel.AccountDeletion =>
+                SendEmailAsync(target, emailRenderer.RenderAccountDeletionCodeEmail(code), ct),
             _ => Task.CompletedTask
         };
 
