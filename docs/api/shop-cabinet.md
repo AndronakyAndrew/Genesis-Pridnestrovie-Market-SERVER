@@ -158,6 +158,85 @@
 | 409 | `already_pending`, `already_verified`, `registration_number_taken` | Конфликт состояния/данных |
 | 429 | `resubmit_cooldown` | Повторная подача пока запрещена; ответ включает `retryAt` |
 
+#### Ядро кабинета магазина
+
+Все маршруты ниже требуют Bearer-аутентификацию и `Business`; для `Private` возвращается `403 business_account_required`, а анонимный запрос получает `401`. Владелец всегда берётся из текущего пользователя. Ресурс по чужому ID неотличим от отсутствующего и возвращает `not_found`.
+
+`GET /api/shop/me` возвращает `publicCode` из пяти цифр, `shopName`, `city`, `avatarUrl`, `description`, `isInvitedStore`, `listingsCount`, `favoritesCount`, `ratingAverage`, `reviewsCount`, `trustBadges` и `hasOrganization`. `listingsCount` включает все неудалённые объявления владельца; `favoritesCount` — избранное самого владельца аккаунта. При отсутствии отзывов `ratingAverage` и `reviewsCount` равны `null`. Бейджи с ключами `email_verified` и `business_verified` формирует только сервер; подтверждённая почта показывает «Проверенный пользователь», а второй бейдж доступен только для `Verified` с полным комплектом реквизитов.
+
+`GET /api/shop/overview` отвечает формой:
+
+```json
+{
+  "counts": { "all": 8, "draft": 2, "review": 1, "active": 3, "sold": 1, "archived": 1, "rejected": 0 },
+  "withoutPhotoCount": 2,
+  "contactReveals": { "total": 40, "last7d": 7, "last30d": 18 },
+  "checklist": [
+    { "key": "logo", "done": true },
+    { "key": "publish_drafts", "done": false },
+    { "key": "pickup_address", "done": false },
+    { "key": "working_hours", "done": null },
+    { "key": "messengers", "done": true },
+    { "key": "photos", "done": false }
+  ],
+  "previewListings": [
+    { "id": "<guid>", "title": "Товар", "price": 250, "priceType": "Fixed", "thumbnailUrl": "https://…" }
+  ]
+}
+```
+
+Счётчики объявлений не включают мягко удалённые записи. `withoutPhotoCount` считает объявления `draft`, `review` (`PendingReview`) и `active` без изображений. `contactReveals` считает записи журнала раскрытия контактов объявлений магазина за всё время и за скользящие 7/30 дней. Это число событий раскрытия, а не уникальных людей: повторные открытия тоже учитываются. В чек-листе `logo` означает существующий аватар; `publish_drafts` — отсутствие черновиков; `pickup_address` — заполненный legacy `PickupAddress`; `messengers` — Telegram username или флаг Viber/WhatsApp; `photos` — нулевой `withoutPhotoCount`. Пока графика нет, `working_hours.done` равен `null`. У приглашённого магазина без реквизитов остальные пункты считаются так же.
+
+`previewListings` содержит до трёх последних активных объявлений; в шаге 5 закреплённые объявления будут идти первыми. `thumbnailUrl` — публичное превью изображения, `null`, если фото отсутствует.
+
+`GET /api/shop/listings` принимает `status=draft|review|active|sold|archived|rejected`, строку поиска `q`, `sort=new|price_asc`, `page` (с 1) и `pageSize` (по умолчанию 20, максимум 50). Неизвестные значения и page/pageSize меньше 1 дают `400 validation_failed`. Для `price_asc` пустая цена идёт после заполненных; внутри равной цены порядок — сначала новые. Ответ:
+
+```json
+{
+  "items": [{
+    "id": "<guid>", "publicCode": null, "title": "Товар", "category": "home",
+    "price": 250, "priceType": "Fixed", "status": "active", "city": "Tiraspol",
+    "createdAt": "…", "archivesAt": "…", "hasPhoto": true, "thumbnailUrl": "https://…"
+  }],
+  "total": 3, "page": 1, "pageSize": 20,
+  "counts": { "all": 8, "draft": 2, "review": 1, "active": 3, "sold": 1, "archived": 1, "rejected": 0 }
+}
+```
+
+У объявления нет отдельного пятизначного публичного кода, поэтому `publicCode` пока `null`. `archivesAt` вычисляет сервер для `active` как `coalesce(BumpedAt, PublishedAt, CreatedAt) + CatalogHygiene:ArchiveAfterDays`; для остальных статусов он `null`. `review` соответствует сохранённому статусу `PendingReview`. Постмодерация сохраняет фактический `active` и не меняет вкладку состояния объявления.
+
+Массовые запросы принимают `{ "ids": ["<guid>"] }`. Пустой список — `400 validation_failed`; больше 100 элементов запроса — `400 bulk_limit_exceeded`. Дубликаты схлопываются, ответ содержит ровно одну запись на уникальный ID в порядке первого появления:
+
+```json
+{
+  "items": [
+    { "id": "<guid>", "ok": true, "reason": null, "status": "active", "retryAt": null },
+    { "id": "<guid>", "ok": true, "reason": "moderation_required", "status": "review", "retryAt": null },
+    { "id": "<guid>", "ok": false, "reason": "bump_cooldown", "status": "active", "retryAt": "…" },
+    { "id": "<guid>", "ok": true, "reason": null, "status": null, "retryAt": null }
+  ]
+}
+```
+
+Доступные операции: `POST /api/shop/listings/bulk-publish`, `bulk-bump`, `bulk-archive`, `bulk-delete`. Действия не атомарны: отказ одного ID не отменяет остальные. Стабильные причины: `not_found`, `invalid_status`, `missing_requirements`, `bump_cooldown`, `moderation_required`. `moderation_required` — успешная публикация, ожидающая решения модератора: при премодерации сохранённый статус `review`; при постмодерации возвращается фактический статус `active` вместе с причиной `moderation_required`. Отсутствие фотографии само по себе не запрещает публикацию: применяется та же оценка риска и модерация, что и в одиночном маршруте. `retryAt` задаётся только для `bump_cooldown` и использует `CatalogHygiene:BumpCooldownDays`. `bulk-delete` выполняет мягкое удаление через `DeletedAt`, сохраняет строку и историю, скрывает её обычным query-фильтром и возвращает `status: null`; активное объявление перед скрытием переводится в архив для снятия с публикации в Telegram.
+
+#### Существующие маршруты, используемые кабинетом
+
+| Назначение | Метод и путь | Тело | Успешный ответ |
+|---|---|---|---|
+| Название магазина и город | `PUT /api/account/business` | `{ "shopName": "Лавка", "shopCity": "Tiraspol" }` (организационные поля можно опустить) | Бизнес-представление с `shopName`, `shopCity`, `details`, `organization`, `status` |
+| «О себе», контакты и мессенджеры | `PATCH /api/me` | `{ "description": "…", "phoneE164": "+373…", "telegramUsername": "shop", "viberEnabled": false, "whatsappEnabled": true }` | Обновлённый приватный профиль; возвращаются `description`, `phoneE164`, `telegramUsername`, `viberEnabled`, `whatsappEnabled` |
+| Загрузить логотип | `POST /api/me/avatar` multipart/form-data, поле `file` | Файл JPEG/JPG, PNG, WebP или HEIC/HEIF до 5 МБ | `{ "avatarUrl": "https://…" }` |
+| Удалить логотип | `DELETE /api/me/avatar` | Нет | `204 No Content` |
+| Создать объявление | `POST /api/listings` | `CreateListingRequest`: `title`, `description`, `price`, `priceType`, `category`, `subcategoryId`, `city`, `district`, `condition`, `publish` | `201 Created` и `ListingResponse` |
+| Изменить объявление | `PATCH /api/listings/{id}` | `UpdateListingRequest`: заголовок, описание, цена/тип, категория, подкатегория, город, район, состояние | `200 OK` и `ListingResponse` |
+| Снять с публикации / архивировать | `DELETE /api/listings/{id}` | Нет | `204 No Content` |
+| Опубликовать черновик | `POST /api/listings/{id}/publish` | Нет | `200 OK` и `ListingResponse`; может перейти в `PendingReview` |
+| Поднять | `POST /api/listings/{id}/bump` | Нет | `200 OK` и `ListingResponse`; cooldown отвечает `429` |
+| Отметить проданным | `POST /api/listings/{id}/mark-sold` | Нет | `200 OK` и `ListingResponse` |
+
+`PATCH /api/me` валидирует телефон через `PhoneNumber.Normalize` с учётом `Phone:AllowOtherCountries`; при смене номера сбрасывается `phoneVerified`. Для Telegram username сервер сейчас проверяет только максимальную длину DTO (64 символа); формат и наличие `@` не валидируются. `description` нормализуется и ограничена 300 символами. Чужое объявление для `PATCH` и действий владельца возвращает `404`; старые маршруты сохраняются и используются кабинетом.
+
 ## Решения
 
 1. business/disable: запрещён (409) для приглашённых магазинов, разрешён для аккаунтов, которые сами включили бизнес. Сервер отдаёт canDisableBusiness.
