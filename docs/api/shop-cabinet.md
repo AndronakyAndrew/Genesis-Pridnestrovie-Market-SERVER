@@ -250,7 +250,20 @@
 
 Коды ошибок: `400 pickup_points_limit`, `pickup_main_required`, `pickup_main_inactive`, `invalid_city`, `pickup_address_required`, `pickup_address_too_long`, `pickup_note_too_long`, `invalid_pickup_hours`, `invalid_pickup_break`, `invalid_conditions_note`, `conditions_note_too_long`, `duplicate_pickup_point_id`; `403 business_account_required`; `404 not_found`; `409 concurrent_change`.
 
-При миграции существующего `PickupAddress` создаётся одна активная основная точка, если у владельца ещё нет точек. Город — `ShopCity`, а если он равен `null`, `Profile.City`. Колонка `PickupAddress` остаётся независимой частью комплекта реквизитов и по-прежнему участвует в текущей подаче на верификацию; синхронизации с точками нет.
+При миграции существующего `PickupAddress` создаётся одна активная основная точка, если у владельца ещё нет точек. Город — `ShopCity`, а если он равен `null`, `Profile.City`. Если заполненный `PickupAddress` не имеет города ни в `ShopCity`, ни в `Profile.City`, миграция завершается ошибкой, не пропуская адрес молча. До применения миграции проверьте такие записи:
+
+```sql
+SELECT bp."UserId", bp."PickupAddress", bp."ShopCity", p."City" AS "ProfileCity"
+FROM business_profiles bp
+LEFT JOIN profiles p ON p."UserId" = bp."UserId"
+WHERE NULLIF(btrim(bp."PickupAddress"), '') IS NOT NULL
+  AND COALESCE(bp."ShopCity", p."City") IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM shop_pickup_points point WHERE point."OwnerId" = bp."UserId"
+  );
+```
+
+Колонка `PickupAddress` остаётся независимой частью комплекта реквизитов и по-прежнему участвует в текущей подаче на верификацию; синхронизации с точками нет.
 
 #### Ссылки магазина
 
