@@ -28,6 +28,14 @@ public sealed class ShopControllerTests(AuthApiFactory factory) : IClassFixture<
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal("business_account_required", body.RootElement.GetProperty("code").GetString());
+        var pickup = await personal.GetAsync("/api/shop/pickup-points");
+        Assert.Equal(HttpStatusCode.Forbidden, pickup.StatusCode);
+        using var pickupBody = JsonDocument.Parse(await pickup.Content.ReadAsStringAsync());
+        Assert.Equal("business_account_required", pickupBody.RootElement.GetProperty("code").GetString());
+        var links = await personal.GetAsync("/api/shop/links");
+        Assert.Equal(HttpStatusCode.Forbidden, links.StatusCode);
+        using var linksBody = JsonDocument.Parse(await links.Content.ReadAsStringAsync());
+        Assert.Equal("business_account_required", linksBody.RootElement.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -48,6 +56,7 @@ public sealed class ShopControllerTests(AuthApiFactory factory) : IClassFixture<
         Assert.Equal("false", me.RootElement.GetProperty("hasOrganization").GetRawText());
         Assert.True(me.RootElement.GetProperty("isInvitedStore").GetBoolean());
         Assert.Equal(5, me.RootElement.GetProperty("listingsCount").GetInt32());
+        Assert.Equal(0, me.RootElement.GetProperty("pickupPointsCount").GetInt32());
         Assert.Null(me.RootElement.GetProperty("ratingAverage").GetDoubleOrNull());
         Assert.Null(me.RootElement.GetProperty("reviewsCount").GetInt32OrNull());
 
@@ -63,7 +72,7 @@ public sealed class ShopControllerTests(AuthApiFactory factory) : IClassFixture<
         Assert.Equal(2, overview.RootElement.GetProperty("contactReveals").GetProperty("total").GetInt32());
         var hours = overview.RootElement.GetProperty("checklist").EnumerateArray()
             .Single(x => x.GetProperty("key").GetString() == "working_hours");
-        Assert.Equal(JsonValueKind.Null, hours.GetProperty("done").ValueKind);
+        Assert.False(hours.GetProperty("done").GetBoolean());
 
         using var all = JsonDocument.Parse(await (await client.GetAsync("/api/shop/listings?sort=price_asc&page=1&pageSize=2"))
             .Content.ReadAsStringAsync());
@@ -71,6 +80,13 @@ public sealed class ShopControllerTests(AuthApiFactory factory) : IClassFixture<
         Assert.Equal(2, all.RootElement.GetProperty("items").GetArrayLength());
         Assert.Equal(draft, all.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid());
         Assert.Equal("draft", all.RootElement.GetProperty("items")[0].GetProperty("status").GetString());
+
+        using var page2 = JsonDocument.Parse(await (await client.GetAsync("/api/shop/listings?sort=price_asc&page=2&pageSize=2"))
+            .Content.ReadAsStringAsync());
+        Assert.Equal(5, page2.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal(2, page2.RootElement.GetProperty("items").GetArrayLength());
+        Assert.NotEqual(all.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid(),
+            page2.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid());
 
         using var review = JsonDocument.Parse(await (await client.GetAsync("/api/shop/listings?status=review&q=ПРОВЕРКА"))
             .Content.ReadAsStringAsync());
@@ -141,6 +157,8 @@ public sealed class ShopControllerTests(AuthApiFactory factory) : IClassFixture<
         Assert.Equal(HttpStatusCode.BadRequest, empty.StatusCode);
         var tooMany = await client.PostAsJsonAsync("/api/shop/listings/bulk-archive", new { ids = Enumerable.Range(0, 101).Select(_ => Guid.NewGuid()) });
         Assert.Equal(HttpStatusCode.BadRequest, tooMany.StatusCode);
+        using var tooManyBody = JsonDocument.Parse(await tooMany.Content.ReadAsStringAsync());
+        Assert.Equal("bulk_limit_exceeded", tooManyBody.RootElement.GetProperty("code").GetString());
     }
 
     [Fact]

@@ -28,6 +28,25 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "pg_trgm");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.AccountNotificationPreference", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("GroupKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<bool>("Enabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.HasKey("UserId", "GroupKey");
+
+                    b.ToTable("notification_preferences", (string)null);
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.AuditEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -160,8 +179,16 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
+                    b.Property<string>("ConditionsNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Instagram")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
 
                     b.Property<bool>("IsInvitedStore")
                         .ValueGeneratedOnAdd()
@@ -214,6 +241,10 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Website")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.HasKey("UserId");
 
                     b.HasIndex("RegistrationNumber")
@@ -235,26 +266,6 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_business_profiles_status_requires_business", "\"Status\" IN ('None', 'Rejected') OR \"AccountType\" = 'Business'");
                         });
-                });
-
-            modelBuilder.Entity("GenesisMarket.Domain.Entities.AccountNotificationPreference", b =>
-                {
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("GroupKey")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<bool>("Enabled")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(true);
-
-                    b.HasKey("UserId", "GroupKey");
-
-                    b.ToTable("notification_preferences", (string)null);
                 });
 
             modelBuilder.Entity("GenesisMarket.Domain.Entities.CatalogCategory", b =>
@@ -1702,6 +1713,72 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.ShopPickupPoint", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Address")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Hours")
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsMain")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .IsConcurrencyToken()
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("City");
+
+                    b.HasIndex("OwnerId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_shop_pickup_points_one_main")
+                        .HasFilter("\"IsMain\" = TRUE");
+
+                    b.HasIndex("OwnerId", "SortOrder")
+                        .HasDatabaseName("ix_shop_pickup_points_owner_sort");
+
+                    b.ToTable("shop_pickup_points", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_shop_pickup_points_address", "char_length(btrim(\"Address\")) BETWEEN 1 AND 200");
+
+                            t.HasCheckConstraint("ck_shop_pickup_points_main_active", "NOT \"IsMain\" OR \"IsActive\"");
+
+                            t.HasCheckConstraint("ck_shop_pickup_points_note", "\"Note\" IS NULL OR char_length(\"Note\") <= 200");
+
+                            t.HasCheckConstraint("ck_shop_pickup_points_sort_order", "\"SortOrder\" >= 0");
+                        });
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.Subcategory", b =>
                 {
                     b.Property<int>("Id")
@@ -2240,6 +2317,17 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.ToTable("verification_codes", (string)null);
                 });
 
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.AccountNotificationPreference", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("GenesisMarket.Domain.Entities.BusinessProfile", b =>
                 {
                     b.HasOne("GenesisMarket.Domain.Entities.CatalogCity", null)
@@ -2250,17 +2338,6 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                     b.HasOne("GenesisMarket.Domain.Entities.User", "User")
                         .WithOne("BusinessProfile")
                         .HasForeignKey("GenesisMarket.Domain.Entities.BusinessProfile", "UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("GenesisMarket.Domain.Entities.AccountNotificationPreference", b =>
-                {
-                    b.HasOne("GenesisMarket.Domain.Entities.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
@@ -2540,6 +2617,21 @@ namespace GenesisMarket.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("City")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("GenesisMarket.Domain.Entities.ShopPickupPoint", b =>
+                {
+                    b.HasOne("GenesisMarket.Domain.Entities.CatalogCity", null)
+                        .WithMany()
+                        .HasForeignKey("City")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("GenesisMarket.Domain.Entities.BusinessProfile", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

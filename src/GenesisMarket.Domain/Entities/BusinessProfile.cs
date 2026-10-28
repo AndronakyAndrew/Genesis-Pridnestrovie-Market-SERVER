@@ -38,6 +38,15 @@ public class BusinessProfile
     /// <summary>Устойчивый признак принятого приглашения продавца.</summary>
     public bool IsInvitedStore { get; private set; }
 
+    /// <summary>Instagram handle без @ и домена.</summary>
+    public string? Instagram { get; private set; }
+
+    /// <summary>Нормализованный публичный URL сайта.</summary>
+    public string? Website { get; private set; }
+
+    /// <summary>Публичные условия получения заказа.</summary>
+    public string? ConditionsNote { get; private set; }
+
     public LegalForm? LegalForm { get; private set; }
 
     /// <summary>Регистрационный номер ЕГРЮЛ/ЕГРИП ПМР в нормализованном виде (см. RegistrationNumber.Normalize).</summary>
@@ -215,6 +224,19 @@ public class BusinessProfile
     }
 
     public BusinessDetails CurrentDetails => new(ShopName, LegalForm, RegistrationNumber, PickupAddress, ShopCity);
+
+    public void UpdatePublicLinks(string? instagram, string? website, DateTimeOffset now)
+    {
+        Instagram = instagram;
+        Website = website;
+        UpdatedAt = now;
+    }
+
+    public void UpdateConditionsNote(string? conditionsNote, DateTimeOffset now)
+    {
+        ConditionsNote = conditionsNote;
+        UpdatedAt = now;
+    }
 }
 
 /// <summary>Реквизиты бизнеса — уже нормализованные и провалидированные.</summary>

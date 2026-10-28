@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GenesisMarket.Domain.Enums;
 
 namespace GenesisMarket.Api.Contracts;
@@ -16,7 +17,8 @@ public sealed record ShopMeResponse(
     double? RatingAverage,
     int? ReviewsCount,
     IReadOnlyList<ShopTrustBadgeDto> TrustBadges,
-    bool HasOrganization);
+    bool HasOrganization,
+    int PickupPointsCount);
 
 public sealed record ShopListingCountsDto(
     int All,
@@ -75,3 +77,45 @@ public sealed record ShopBulkActionItemDto(
     DateTimeOffset? RetryAt);
 
 public sealed record ShopBulkActionResponse(IReadOnlyList<ShopBulkActionItemDto> Items);
+
+public sealed record ShopPickupPointsRequest
+{
+    public IReadOnlyList<ShopPickupPointInput>? Points { get; init; }
+
+    /// <summary>Undefined when omitted, null when explicitly cleared, string when set.</summary>
+    public JsonElement ConditionsNote { get; init; }
+}
+
+public sealed record ShopPickupPointInput(
+    Guid? Id,
+    string? City,
+    string? Address,
+    string? Note,
+    bool IsMain,
+    bool IsActive,
+    PickupHoursDto? Hours);
+
+public sealed record ShopPickupPointDto(
+    Guid Id,
+    string City,
+    string Address,
+    string? Note,
+    bool IsMain,
+    bool IsActive,
+    PickupHoursDto? Hours,
+    bool? OpenNow,
+    string? ClosesAt,
+    string? OpensAt);
+
+public sealed record PickupHoursDto(
+    IReadOnlyList<PickupDayHoursDto>? Days,
+    string? BreakFrom,
+    string? BreakTo);
+
+public sealed record PickupDayHoursDto(int Day, bool Closed, string? From, string? To);
+
+public sealed record ShopPickupPointsResponse(
+    IReadOnlyList<ShopPickupPointDto> Points,
+    string? ConditionsNote);
+
+public sealed record ShopLinksDto(string? Instagram, string? Website);

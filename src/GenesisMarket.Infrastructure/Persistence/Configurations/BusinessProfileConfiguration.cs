@@ -56,6 +56,9 @@ public class BusinessProfileConfiguration : IEntityTypeConfiguration<BusinessPro
         b.Property(x => x.RegistrationNumber).HasMaxLength(32);
         b.Property(x => x.PickupAddress).HasMaxLength(200);
         b.Property(x => x.ShopCity).HasMaxLength(CatalogReferenceConfiguration.CodeMaxLength);
+        b.Property(x => x.Instagram).HasMaxLength(30);
+        b.Property(x => x.Website).HasMaxLength(200);
+        b.Property(x => x.ConditionsNote).HasMaxLength(500);
         b.Property(x => x.IsInvitedStore).HasDefaultValue(false);
         b.Property(x => x.RejectionReason).HasMaxLength(500);
 
