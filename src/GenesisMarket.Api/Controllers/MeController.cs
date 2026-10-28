@@ -58,7 +58,12 @@ public class MeController(
                 return Problem(title: "Неизвестный город", statusCode: StatusCodes.Status400BadRequest);
             p.City = city;
         }
-        if (request.TelegramUsername is not null) p.TelegramUsername = request.TelegramUsername;
+        if (request.TelegramUsername is not null)
+        {
+            if (!TelegramUsernameNormalizer.TryNormalize(request.TelegramUsername, out var telegramUsername))
+                return InputProblem("invalid_telegram_username", "Укажите Telegram username длиной от 5 до 32 символов: буквы, цифры и подчёркивание.");
+            p.TelegramUsername = telegramUsername;
+        }
         if (request.ViberEnabled is { } viber) p.ViberEnabled = viber;
         if (request.WhatsappEnabled is { } whatsapp) p.WhatsappEnabled = whatsapp;
         if (request.ShowPhoneInListing is { } showPhone) p.ShowPhoneInListing = showPhone;
@@ -317,6 +322,13 @@ public class MeController(
         u.BusinessProfile?.IsInvitedStore == true ? u.BusinessProfile.ShopCity : null,
         u.BusinessProfile?.AccountType == GenesisMarket.Domain.Enums.AccountType.Business ? "shop" : "personal",
         u.BusinessProfile is { AccountType: GenesisMarket.Domain.Enums.AccountType.Business, IsInvitedStore: false });
+
+    private ObjectResult InputProblem(string code, string title)
+    {
+        var problem = new ProblemDetails { Status = StatusCodes.Status400BadRequest, Title = title };
+        problem.Extensions["code"] = code;
+        return BadRequest(problem);
+    }
 
 
 }

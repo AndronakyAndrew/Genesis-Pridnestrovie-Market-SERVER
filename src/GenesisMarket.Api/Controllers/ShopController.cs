@@ -49,6 +49,7 @@ public sealed class ShopController(
 
         var listingsCount = await db.Listings.CountAsync(l => l.OwnerId == userId, ct);
         var favoritesCount = await db.Favorites.CountAsync(f => f.UserId == userId, ct);
+        var pickupPointsCount = await db.ShopPickupPoints.CountAsync(p => p.OwnerId == userId, ct);
         var trustBadges = new List<ShopTrustBadgeDto>();
         if (user.EmailVerified)
             trustBadges.Add(new ShopTrustBadgeDto("email_verified", "Проверенный пользователь"));
@@ -67,7 +68,8 @@ public sealed class ShopController(
             user.ReviewsCount > 0 ? user.AverageRating : null,
             user.ReviewsCount > 0 ? user.ReviewsCount : null,
             trustBadges,
-            user.Business.HasCompleteDetails));
+            user.Business.HasCompleteDetails,
+            pickupPointsCount));
     }
 
     [HttpGet("overview")]
@@ -102,12 +104,21 @@ public sealed class ShopController(
             })
             .FirstAsync(ct);
 
+        var pickupPoints = await db.ShopPickupPoints.AsNoTracking()
+            .Where(x => x.OwnerId == userId)
+            .Select(x => new { x.IsMain, x.IsActive, x.Hours })
+            .ToListAsync(ct);
+        var hasPickup = pickupPoints.Count == 0
+            ? !string.IsNullOrWhiteSpace(account.Business.PickupAddress)
+            : pickupPoints.Any(x => x.IsActive);
+        var hasWorkingHours = pickupPoints.Any(x => x.IsMain && x.Hours is not null);
+
         ShopChecklistItemDto[] checklist =
         [
             new("logo", account.Avatar is not null),
             new("publish_drafts", counts.Draft == 0),
-            new("pickup_address", !string.IsNullOrWhiteSpace(account.Business.PickupAddress)),
-            new("working_hours", null),
+            new("pickup_address", hasPickup),
+            new("working_hours", hasWorkingHours),
             new("messengers", !string.IsNullOrWhiteSpace(account.Telegram)
                 || account.ViberEnabled || account.WhatsappEnabled),
             new("photos", withoutPhoto == 0)

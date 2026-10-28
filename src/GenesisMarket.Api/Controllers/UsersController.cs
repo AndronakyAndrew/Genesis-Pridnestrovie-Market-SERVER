@@ -1,4 +1,6 @@
 using System.Linq.Expressions;
+using System.Text.Json;
+using GenesisMarket.Api.Business;
 using GenesisMarket.Api.Contracts;
 using GenesisMarket.Api.Http;
 using GenesisMarket.Api.Profiles;
@@ -29,7 +31,8 @@ namespace GenesisMarket.Api.Controllers;
 public class UsersController(
     AppDbContext db,
     IObjectStorage storage,
-    IPublicCodeResolver publicCodes) : ApiControllerBase
+    IPublicCodeResolver publicCodes,
+    TimeProvider clock) : ApiControllerBase
 {
     /// <summary>Профиль по «ID профиля» — основной публичный адрес.</summary>
     [AllowAnonymous]
@@ -88,6 +91,32 @@ public class UsersController(
             ? new PublicBusinessInfo(b.ShopName, b.LegalForm!.Value, b.RegistrationNumber!, b.PickupAddress!)
             : null;
 
+        PublicShopPickupInfoDto? pickup = null;
+        ShopLinksDto? links = null;
+        if (user.BusinessProfile is { AccountType: AccountType.Business } shop)
+        {
+            var pickupRows = await db.ShopPickupPoints.AsNoTracking()
+                .Where(x => x.OwnerId == id && x.IsActive)
+                .OrderByDescending(x => x.IsMain)
+                .ThenBy(x => x.SortOrder)
+                .ThenBy(x => x.CreatedAt)
+                .Select(x => new { x.City, x.Address, x.Note, x.Hours })
+                .ToListAsync(ct);
+            if (pickupRows.Count > 0)
+            {
+                var now = clock.GetUtcNow();
+                pickup = new PublicShopPickupInfoDto(
+                    pickupRows.Select(x =>
+                    {
+                        var hours = x.Hours is null ? null : JsonSerializer.Deserialize<PickupHoursDto>(x.Hours);
+                        var state = PickupSchedule.Evaluate(hours, now);
+                        return new PublicShopPickupPointDto(x.City, x.Address, x.Note, hours, state.OpenNow);
+                    }).ToList(),
+                    shop.ConditionsNote);
+            }
+            links = new ShopLinksDto(shop.Instagram, shop.Website);
+        }
+
         return Ok(new PublicProfileResponse(
             // «ID профиля» — то, чем продавца называют в переписке и в поддержке.
             user.PublicCode,
@@ -109,7 +138,9 @@ public class UsersController(
             EmailVerified: user.EmailVerified,
             IsInvitedStore: user.BusinessProfile?.IsInvitedStore ?? false,
             ShopName: user.BusinessProfile?.IsInvitedStore == true ? user.BusinessProfile.ShopName : null,
-            ShopCity: user.BusinessProfile?.IsInvitedStore == true ? user.BusinessProfile.ShopCity : null));
+            ShopCity: user.BusinessProfile?.IsInvitedStore == true ? user.BusinessProfile.ShopCity : null,
+            Pickup: pickup,
+            Links: links));
     }
 
     private async Task<IActionResult> AvatarAsync(Expression<Func<Profile, bool>> match, CancellationToken ct)

@@ -54,7 +54,7 @@ public record UpdateMeRequest(
     [MinLength(2), MaxLength(60)] string? DisplayName,
     string? City,
     [MaxLength(20)] string? PhoneE164,
-    [MaxLength(64)] string? TelegramUsername,
+    string? TelegramUsername,
     [MaxLength(300)] string? Description,
     bool? ViberEnabled,
     bool? WhatsappEnabled,
@@ -131,4 +131,17 @@ public record PublicProfileResponse(
     bool EmailVerified = false,
     bool IsInvitedStore = false,
     string? ShopName = null,
-    string? ShopCity = null);
+    string? ShopCity = null,
+    PublicShopPickupInfoDto? Pickup = null,
+    ShopLinksDto? Links = null);
+
+public record PublicShopPickupInfoDto(
+    IReadOnlyList<PublicShopPickupPointDto> Points,
+    string? ConditionsNote);
+
+public record PublicShopPickupPointDto(
+    string City,
+    string Address,
+    string? Note,
+    PickupHoursDto? Hours,
+    bool? OpenNow);
